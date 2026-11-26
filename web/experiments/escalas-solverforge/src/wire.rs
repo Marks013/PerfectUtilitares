@@ -316,12 +316,14 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
                 "HOURS_ONLY_GRID_CONFLICT")?;
             Arc::from(vec![catalogue.binary_search(&saved_work).map_err(|_|"HOURS_ONLY_GRID_CONFLICT")?])
         }else{
-            if !cache.contains_key(&key) {
-                let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, p.rules, deadline)
-                    .ok_or("MAPPING_TIMEOUT")?;
-                cache.insert(key, Arc::from(allowed));
+            match cache.entry(key) {
+                std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let allowed = allowed_indices(&catalogue, days, (lock_work,lock_off), p.cap, comparable, p.rules, deadline)
+                        .ok_or("MAPPING_TIMEOUT")?;
+                    Arc::clone(entry.insert(Arc::from(allowed)))
+                }
             }
-            cache[&key].clone()
         };
         check(!allowed.is_empty(),"NO_PERSONAL_PATTERN")?;
         let initial_index=if seed_known==full_mask(days) {catalogue.binary_search(&seed_work).ok().filter(|j|allowed.binary_search(j).is_ok())} else {None};

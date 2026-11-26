@@ -15,8 +15,8 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
     for person in &plan.employees {
         if let Some(mask) = person.mask() {
             let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 28]);
-            for day in 0..person.facts.days {
-                if worked(mask, day) { sector[day] |= Presence::one(person.id); }
+            for (day, present) in sector.iter_mut().enumerate().take(person.facts.days) {
+                if worked(mask, day) { *present |= Presence::one(person.id); }
             }
         }
     }
@@ -47,13 +47,13 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
             }
             rank[4] = -person.rules.spacing(mask,person.locked_off,person.facts.days).1;
             rank[6] = -(((person.saved_work ^ mask) & person.saved_known).count_ones() as i64);
-            rank[7]=-person.rules.preferences(mask,person.facts.days);
+            rank[7] = -person.rules.preferences(mask,person.facts.days);
             if best.as_ref().is_none_or(|(old, _)| rank > *old) { best = Some((rank, index)); }
         }
         let Some((_, index)) = best else { return false; };
         selected.push(index);
-        for day in 0..person.facts.days {
-            if worked(person.catalog[index], day) { sector[day] |= bit; }
+        for (day, present) in sector.iter_mut().enumerate().take(person.facts.days) {
+            if worked(person.catalog[index], day) { *present |= bit; }
         }
     }
     if Instant::now() >= deadline { return false; }

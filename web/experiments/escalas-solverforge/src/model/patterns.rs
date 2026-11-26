@@ -104,8 +104,9 @@ pub fn catalog(days: usize) -> Vec<u32> {
 // Enumerate only prefixes compatible with the locks, streaks and Sunday
 // caps. Keep the original catalogue index and order; the complete legal()
 // predicate remains the last word. This is bounded to the current E2 horizon.
-pub fn allowed_indices(catalogue: &[u32], days: usize, locked_work: u32, locked_off: u32,
+pub fn allowed_indices(catalogue: &[u32], days: usize, locks: (u32,u32),
                        cap: usize, comparable: u32, rules:PersonalRules, deadline: std::time::Instant) -> Option<Vec<usize>> {
+    let (locked_work,locked_off)=locks;
     if !matches!(days, 7 | 28) || !matches!(cap, 1 | 2) { return None; }
     let domain=super::weekly_domain::WeeklyDomain::new(days/7,locked_work as u64,locked_off as u64,cap,comparable,rules)?;
     let (expected,_)=domain.count(deadline)?;
@@ -162,10 +163,10 @@ mod domain_tests {
                 let comparable = comparable & full_mask(days/7);
                 let expected: Vec<_> = all.iter().enumerate().filter_map(|(i,&m)|
                     legal(m, days, work, off, cap, comparable).then_some(i)).collect();
-                assert_eq!(allowed_indices(&all,days,work,off,cap,comparable,PersonalRules::default(),
+                assert_eq!(allowed_indices(&all,days,(work,off),cap,comparable,PersonalRules::default(),
                     Instant::now()+Duration::from_secs(10)).unwrap(),expected);
             }
-            assert!(allowed_indices(&all,days,0,0,1,0,PersonalRules::default(),Instant::now()).is_none());
+            assert!(allowed_indices(&all,days,(0,0),1,0,PersonalRules::default(),Instant::now()).is_none());
         }
     }
 }

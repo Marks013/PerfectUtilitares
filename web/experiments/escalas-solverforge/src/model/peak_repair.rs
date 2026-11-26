@@ -129,7 +129,7 @@ pub fn polish_peaks(plan:&mut Plan,deadline:Instant)->PeakRepairStats{
                         for to in week*7+1..week*7+6{
                             if worked(old,to){continue;}
                             if stats.attempted>=MAX_ATTEMPTS{stats.limit_reached=true;break 'sectors;}
-                            if stats.attempted%32==0&&Instant::now()>=deadline{stats.deadline_reached=true;break 'sectors;}
+                            if stats.attempted.is_multiple_of(32)&&Instant::now()>=deadline{stats.deadline_reached=true;break 'sectors;}
                             stats.attempted+=1;
                             let Some(index)=allowed_swap(p,old,from,to) else{continue;};
                             let Some(gain)=transfer_gain(&bands,from,to,att[from],att[to],bit) else{continue;};
@@ -192,7 +192,7 @@ mod tests{
         input["input"]["assignments"]=json!([]);
         for n in 1..3{
             let mut p=input["input"]["employees"][0].clone();
-            p["id"]=json!(format!("person-{n}"));p["name"]=json!(format!("Synthetic {n}"));
+            p["id"]=json!(format!("person-{n}"));p["name"]=json!(format!("Synthetic person {n}"));
             input["input"]["employees"].as_array_mut().unwrap().push(p);
         }
         // Two people take Sunday/Tuesday OFF, the third Monday/Friday.

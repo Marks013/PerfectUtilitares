@@ -21,8 +21,8 @@ fn sector_quality(plan:&Plan)->BTreeMap<usize,SectorQuality> {
         let mut present=0u32;
         for row in &rows {
             if let Some(mask)=row.mask {
-                for day in 0..facts.days {
-                    if worked(mask,day) {attendance[day]|=Presence::one(row.id);present|=1u32<<day;}
+                for (day, current) in attendance.iter_mut().enumerate().take(facts.days) {
+                    if worked(mask,day) {*current|=Presence::one(row.id);present|=1u32<<day;}
                 }
             }
         }

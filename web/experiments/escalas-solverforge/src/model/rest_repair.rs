@@ -65,7 +65,7 @@ fn single_preserves(p:&Employee,att:&[Presence;28],from:usize,to:usize)->bool{
 }
 fn attempt(stats:&mut RestRepairStats,deadline:Instant)->bool{
     if stats.attempted>=MAX_ATTEMPTS{stats.limit_reached=true;return false;}
-    if stats.attempted%64==0&&Instant::now()>=deadline{stats.deadline_reached=true;return false;}
+    if stats.attempted.is_multiple_of(64)&&Instant::now()>=deadline{stats.deadline_reached=true;return false;}
     stats.attempted+=1;true
 }
 
@@ -103,10 +103,9 @@ pub fn polish_rests(plan:&mut Plan,deadline:Instant)->RestRepairStats{
                             let Some(next)=index(p,new) else{continue;};
                             let after=quality(p,new);
                             if after[1]>before[1]||after>=before||!no_personal_regression(p,old,new){continue;}
-                            if single_preserves(p,&att,from,to){
-                                if best.as_ref().is_none_or(|(rank,_,_)|after<*rank){
-                                    best=Some((after,next,None));
-                                }
+                            if single_preserves(p,&att,from,to)
+                                && best.as_ref().is_none_or(|(rank,_,_)|after<*rank){
+                                best=Some((after,next,None));
                             }
                             for &j in group{
                                 if i==j{continue;}

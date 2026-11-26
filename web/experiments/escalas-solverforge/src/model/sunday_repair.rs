@@ -14,9 +14,9 @@ fn signature(mask:u32,days:usize)->u8 {
 }
 fn apply(att:&mut [Presence;28],p:&Employee,mask:u32,insert:bool) {
     let bit=Presence::one(p.id);
-    for day in 0..p.facts.days {
+    for (day,current) in att.iter_mut().enumerate().take(p.facts.days) {
         if worked(mask,day) {
-            if insert {att[day]|=bit;} else {att[day]&=!bit;}
+            if insert {*current|=bit;} else {*current&=!bit;}
         }
     }
 }
@@ -32,7 +32,7 @@ fn projections(domains:&[Vec<u8>],deadline:Instant)->Option<BTreeMap<[u8;4],Vec<
                 transitions+=1;
                 if transitions>MAX_TRANSITIONS || transitions%128==0 && Instant::now()>=deadline {return None;}
                 let mut key=counts;
-                for w in 0..4 {key[w]+= (sig>>w)&1;}
+                for (w,count) in key.iter_mut().enumerate() {*count+= (sig>>w)&1;}
                 next.entry(key).or_insert_with(||{
                     let mut result=choices.clone();result.push(sig);result
                 });
@@ -83,10 +83,10 @@ fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->
     // Precompute marginal gains for each 5x2 weekly bitmask. Four
     // table lookups replace scanning 28 days for every candidate.
     let mut weekly=[[[0i64;5];128];4];
-    for w in 0..p.facts.days/7{
+    for (w,table) in weekly.iter_mut().enumerate().take(p.facts.days/7){
         for mask in 0u32..128{
             if mask.count_ones()!=5||mask&64==0{continue;}
-            let row=&mut weekly[w][mask as usize];
+            let row=&mut table[mask as usize];
             for d in 0..7{
                 if !worked(mask,d){continue;}
                 let day=w*7+d;
@@ -107,9 +107,9 @@ fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->
             for i in 0..4{rank[i]+=row[i];}
             rank[5]+=row[4];
         }
-        rank[4]=-p.rules.spacing(mask,p.locked_off,p.facts.days).1;
-        rank[6]=-(((p.saved_work^mask)&p.saved_known).count_ones() as i64);
-        rank[7]=-p.rules.preferences(mask,p.facts.days);
+        rank[4] = -p.rules.spacing(mask,p.locked_off,p.facts.days).1;
+        rank[6] = -(((p.saved_work^mask)&p.saved_known).count_ones() as i64);
+        rank[7] = -p.rules.preferences(mask,p.facts.days);
         if best.is_none_or(|(prior,_)|rank>prior){best=Some((rank,i));}
     }
     best.map(|(_,i)|i)
@@ -207,7 +207,7 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28
             for (counts,choices) in &states{
                 evaluated+=1;stats.projections+=1;
                 if evaluated>MAX_PROJECTED_EVALUATIONS {stats.projection_limit_hits+=1;return None;}
-                if evaluated%128==0&&Instant::now()>=deadline{return None;}
+                if evaluated.is_multiple_of(128)&&Instant::now()>=deadline{return None;}
                 if counts.iter().map(|&n|n as u32).sum::<u32>()<old_count{continue;}
                 let mut sunday=state.sunday;
                 for w in 0..facts.days/7{

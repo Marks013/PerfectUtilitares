@@ -171,6 +171,15 @@ jobs:
               result=json.load(source)
           assert result["adaptiveGain"]["decision"]=="ADAPTIVE_GAIN_OBSERVED","ADAPTIVE_GAIN_NOT_PROVEN"
           PY
+      - name: Require zero candidate Clippy warnings
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_HOME="$RUNNER_TEMP/solverforge-cargo"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/solverforge-target"
+          manifest="$RUNNER_TEMP/solverforge-upstream/Cargo.toml"
+          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/forge-evidence/clippy-strict.txt"
       - name: Retain only aggregate evidence and public inventory
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

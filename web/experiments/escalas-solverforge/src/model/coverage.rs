@@ -68,8 +68,8 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
         let Some(mask) = member.mask else { continue; };
-        for day in 0..facts.days {
-            if worked(mask, day) { attendance[day] |= Presence::one(member.id); }
+        for (day, present) in attendance.iter_mut().enumerate().take(facts.days) {
+            if worked(mask, day) { *present |= Presence::one(member.id); }
         }
         let rest=member.rules.rest_quality(mask,member.locked_off,facts.days);
         for i in 0..4{cost[5+i]+=rest[i];}
