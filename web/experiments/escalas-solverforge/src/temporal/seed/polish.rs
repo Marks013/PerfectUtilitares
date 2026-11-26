@@ -22,9 +22,12 @@ fn rank(rows:&[Member],all:&[Member],indices:&[usize],global:Cost,
     }else{global};
     for (a,b) in cost.iter_mut().zip(global){*a+=b;}
     let mut present=0u64;let mut clock_tie=[0i64;2];
+    let mut timed_roles=BTreeMap::<usize,usize>::new();
+    for row in rows{if !row.untimed{*timed_roles.entry(row.role).or_default()+=1;}}
     for row in rows{
         let Some(p)=row.pattern else{continue;};
         if !row.untimed{present|=p.civil_work;}
+        if !timed_roles.get(&row.role).is_some_and(|&count|count>1){continue;}
         for &state in p.states.iter().take(facts.days){
             if let Some(c)=clock(&facts.clocks,state){
                 clock_tie[0]+=i64::from(c.end()-c.start()-c.paid);
@@ -99,6 +102,24 @@ pub(super) fn improve(plan:&mut TemporalPlan,deadline:Instant){
                 }
             }
             let before=rank(&rows,&all,&indices,global,false,opportunities);let before_pairs=pairs(&rows);let mut best=None;
+            // Do not prune an affordable complete two-person neighborhood.
+            // Small mixed/partial teams can need a partner absent from the
+            // eight best individual moves. Large teams retain the shortlist.
+            let mut pair_volume=0usize;
+            for (a,&i) in indices.iter().enumerate(){
+                if plan.employees[i].pinned{continue;}
+                for &j in indices.iter().skip(a+1){
+                    if !plan.employees[j].pinned{
+                        pair_volume=pair_volume.saturating_add(plan.employees[i].allowed.len()
+                            .saturating_mul(plan.employees[j].allowed.len()));
+                    }
+                }
+            }
+            if pair_volume<=MAX_EVALUATIONS.saturating_sub(evaluated){
+                for (slot,&i) in indices.iter().enumerate(){
+                    shortlist[slot]=plan.employees[i].allowed.iter().map(|&index|(before,index)).collect();
+                }
+            }
             'pairs: for (a,&person_a) in indices.iter().enumerate(){
                 if plan.employees[person_a].pinned{continue;}
                 for (b,&person_b) in indices.iter().enumerate().skip(a+1){
@@ -247,7 +268,10 @@ mod tests{
         let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
         super::super::construct(&mut plan,Instant::now()+Duration::from_secs(3));assert_eq!(evaluate(&plan)[0],0);
         for day in [0,7,14]{
-            assert!(plan.employees.iter().filter(|p|!p.untimed).any(|p|clock(&p.facts.clocks,p.catalog[p.pattern.unwrap()].states[day]).is_some()));
+            assert!(plan.employees.iter().filter(|p|!p.untimed).any(|p|clock(&p.facts.clocks,p.catalog[p.pattern.unwrap()].states[day]).is_some()),
+                "uncovered Sunday {day}; domains {:?}; selected {:?}; cost {:?}",
+                plan.employees.iter().map(|p|p.allowed.len()).collect::<Vec<_>>(),
+                plan.employees.iter().map(|p|p.catalog[p.pattern.unwrap()].states[..21].to_vec()).collect::<Vec<_>>(),evaluate(&plan));
         }
         let p=&plan.employees[1];let path=p.catalog[p.pattern.unwrap()];
         assert!(path.states[..3].iter().chain(&path.states[17..21]).all(|&s|s==16));assert_eq!(path.states[4],3);

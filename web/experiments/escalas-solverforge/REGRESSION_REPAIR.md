@@ -26,3 +26,9 @@ Local verification: 11 Python tests for the final qualification gate; 8 workflow
 Strict Clippy runs before measurements. Expensive later comparisons and the 32-repeat tail require successful expanded quality. The final explicit gate rejects missing, skipped, cancelled or failed required stages using original outcomes. All original benchmark commands, repetitions, controls and acceptance thresholds remain unchanged. Failed-run artifacts are still retained. A full successful qualification still executes every required stage.
 
 Until a new completed run passes all original gates, expanded noninferiority and global performance benefit remain unproven. No production merge or deployment is included.
+
+## Native qualification follow-up
+
+The first real ARM64 compilation on 69345b6 succeeded; 45 Python tests and 76 of 78 Rust tests passed. Two failures were preserved: the existing singleton first-reference clock invariant, and the new partial-employment Sunday-presence assertion. No test was disabled or its assertion weakened.
+
+Restrict collective clock-reach ties to roles with more than one timed employee; singleton ties retain the configured reference. Search the complete two-person selected neighborhood when its computed volume fits the original remaining evaluation cap, instead of unnecessarily pruning it to eight individual alternatives. Large neighborhoods retain bounded shortlists and the same deadline. Add sanitized synthetic state diagnostics to the unchanged Sunday assertion. These corrections need a new native run; no expanded qualification is inferred from compilation.

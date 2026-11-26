@@ -28,10 +28,17 @@ struct Sector{
 pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     let complete=plan.employees.iter().all(|p|p.pattern.is_some());
     let mut sectors=BTreeMap::<usize,Sector>::new();
+    let mut timed_roles=BTreeMap::<(usize,usize),usize>::new();
+    for person in &plan.employees{
+        if !person.untimed{*timed_roles.entry((person.sector,person.role)).or_default()+=1;}
+    }
     let mut order:Vec<_>=(0..plan.employees.len()).collect();
     order.sort_by_key(|&i|(plan.employees[i].allowed.len(),i));
     for i in order{
         let p=&plan.employees[i];
+        // Clock reach is a collective service tie. Without another timed
+        // colleague in this role, keep the configured reference on ties.
+        let pooled=timed_roles.get(&(p.sector,p.role)).is_some_and(|&count|count>1);
         let sector=sectors.entry(p.sector).or_insert_with(||Sector{
             facts:Arc::clone(&p.facts),counts:p.facts.bands.iter().map(Counts::new).collect(),presence:[0;MAX_DAYS],timed:[0;MAX_DAYS]
         });
@@ -71,8 +78,10 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                     }
                     if let Some(c)=clock(&sector.facts.clocks,state){
                         new_timed_days+=i64::from(sector.timed[day]==0);
-                        clock_preference[0]+=i64::from(c.end()-c.start()-c.paid);
-                        clock_preference[1]+=i64::from((sector.facts.closing-c.end()).max(0));
+                        if pooled{
+                            clock_preference[0]+=i64::from(c.end()-c.start()-c.paid);
+                            clock_preference[1]+=i64::from((sector.facts.closing-c.end()).max(0));
+                        }
                         clock_preference[2]+=i64::from(!p.preferred_clock[usize::from(state)]);
                         if sector.facts.weekday(day)==0{sunday_minutes+=i64::from(c.paid);}
                     }
