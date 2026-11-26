@@ -12,6 +12,7 @@ pub struct TemporalEmployee {
     pub cohort: usize,
     pub leader: bool,
     pub untimed: bool,
+    pub preferred_clock: [bool;16],
     pub tie_ranks: [i64;MAX_DAYS],
     pub facts: Arc<TemporalFacts>,
     pub catalog: Arc<Vec<Pattern>>,

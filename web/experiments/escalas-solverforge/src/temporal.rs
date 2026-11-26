@@ -186,8 +186,11 @@ fn dates(policy:&V,key:&str,calendar:&Calendar)->Result<BTreeSet<i32>>{
     }
     Ok(out)
 }
-fn code(row:&V,ids:&BTreeMap<String,u8>,pid:&str)->Result<Record>{
-    check(text(row,"employeeId")?==pid,"ASSIGNMENT_REFERENCE")?;
+fn code(row:&V,ids:&BTreeMap<String,u8>,pid:&str,scoped:bool)->Result<Record>{
+    // requestSolver deliberately removes employeeId from nested histories.
+    // Flat records still require identity; an explicitly supplied nested ID
+    // must agree with the enclosing person and cannot refer to a peer.
+    check(match row.get("employeeId"){None=>scoped,Some(v)=>v.as_str()==Some(pid)},"ASSIGNMENT_REFERENCE")?;
     // Metadata that cannot be round-tripped remains a hard admission barrier.
     for k in ["monthlyCarry","carriedHolidayRest"]{
         check(row.get(k).is_none(),"ASSIGNMENT_METADATA_UNSUPPORTED")?;
@@ -354,6 +357,8 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     type CohortKey=(usize,usize,bool,Vec<[(i32,i32);2]>,i32,i32);
     let mut cohorts=BTreeMap::<CohortKey,usize>::new();
     let assignment_rows=array(input,"assignments")?;
+    let mut assignments_by_person=BTreeMap::<&str,Vec<&V>>::new();
+    for row in assignment_rows{assignments_by_person.entry(text(row,"employeeId")?).or_default().push(row);}
     type CachedDomain=(Arc<Vec<Pattern>>,Arc<[usize]>);
     let mut domains=BTreeMap::<(Rules,Vec<Vec<u8>>),CachedDomain>::new();
     let rest_weight=1+(people.len()*days) as i64;
@@ -411,12 +416,16 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }else if mode=="REST_ONLY"{
             let mut durations=BTreeSet::new();options.retain(|&s|durations.insert(clock(&clocks,s).unwrap().paid));
         }
+        let mut preferred_clock=[false;16];
+        let mut duration_seen=BTreeSet::new();
+        for &state in &options{
+            if duration_seen.insert(clock(&clocks,state).unwrap().paid){preferred_clock[usize::from(state)]=true;}
+        }
         let allowed_clock=|s:u8|!untimed&&clock(&clocks,s).is_some_and(|c|if mixed{c.paid==540||c.paid==480&&c.paid<=daily}else{c.paid!=540&&c.paid<=daily});
         let mut old=[None;MAX_DAYS];
-        for row in assignment_rows{
-            if text(row,"employeeId")?!=pid{continue;}
+        for &row in assignments_by_person.get(pid).into_iter().flatten(){
             let d=relative(text(row,"date")?)?;check((0..days as i32).contains(&d),"DATE")?;
-            check(old[d as usize].replace(code(row,&ids,pid)?).is_none(),"DUPLICATE_ASSIGNMENT")?;
+            check(old[d as usize].replace(code(row,&ids,pid,false)?).is_none(),"DUPLICATE_ASSIGNMENT")?;
         }
         if mode=="HOURS_ONLY"{check(old[..days].iter().all(Option::is_some),"HOURS_ONLY_GRID")?;}
         let mut context=BTreeMap::new();
@@ -427,7 +436,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
                 let d=relative(text(row,"date")?)?;
                 check(if key=="planningFuture"{(days as i32..days as i32+21).contains(&d)}else{(-56..0).contains(&d)},"CONTEXT_DATE")?;
                 check(local.insert(d),"DUPLICATE_CONTEXT")?;
-                context.insert(d,code(row,&ids,pid)?.state);
+                context.insert(d,code(row,&ids,pid,true)?.state);
             }
         }
         let mut daily_options=vec![Vec::<u8>::new();days];
@@ -476,7 +485,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let pinned=allowed.len()==1;
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{0}else{hours},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,untimed,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader,untimed,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -720,6 +729,36 @@ mod tests{
         plan.employees[0].pattern=Some(late);
         assert_eq!(evaluate(&plan)[0],0);
         assert!(!guard.preserves(&plan));
+    }
+    #[test]
+    fn scoped_wire_history_uses_enclosing_person_and_rejects_wrong_identity(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["history"][0].as_object_mut().unwrap().remove("employeeId");
+        let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert!(plan.employees[0].catalog.iter().all(|p|p.states[0]==OFF));
+        data["input"]["employees"][0]["history"][0]["employeeId"]=json!("person-99");
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("ASSIGNMENT_REFERENCE")));
+        data["input"]["employees"][0]["history"][0].as_object_mut().unwrap().remove("employeeId");
+        data["input"]["assignments"]=json!([{"date":"2026-11-03","kind":"OFF","locked":true}]);
+        assert!(read(&data,Instant::now()+Duration::from_secs(5)).is_err());
+    }
+    #[test]
+    fn seed_prefers_first_clock_per_duration_only_when_coverage_ties(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["history"]=json!([]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        seed::construct(&mut plan,Instant::now()+Duration::from_secs(1));
+        assert!(!plan.employees[0].catalog[plan.employees[0].pattern.unwrap()].states.contains(&5));
+        data["input"]["demands"]=json!([{"id":"late","date":"2026-11-04","sector":"S","start":990,"end":1020,"minimum":1,"estimated":false}]);
+        // The ordinary early 8h shift ends at 960; the late one ends at 1020.
+        // Restrict Wednesday to 8h by locking the two long shifts elsewhere.
+        data["input"]["assignments"]=json!([
+            {"employeeId":"person-0","date":"2026-11-03","kind":"WORK","shiftId":"nine","locked":true},
+            {"employeeId":"person-0","date":"2026-11-06","kind":"WORK","shiftId":"nine","locked":true}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        seed::construct(&mut plan,Instant::now()+Duration::from_secs(1));
+        assert_eq!(plan.employees[0].catalog[plan.employees[0].pattern.unwrap()].states[3],5);
+        assert_eq!(evaluate(&plan)[0],0);
     }
     #[test]
     fn native_variable_shift_covers_confirmed_demand(){

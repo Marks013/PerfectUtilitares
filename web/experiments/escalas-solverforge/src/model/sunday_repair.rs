@@ -324,6 +324,75 @@ fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence
     Some((selected,att))
 }
 
+// Residual six-week shortage: search full legal witnesses rather than only
+// reconstructing the highest-ranked Sunday signatures. Precompute actual
+// day cost for both work states; verify role totals before every acceptance.
+fn residual_repair(plan:&mut Plan,members:&[usize],facts:&Sector,deadline:Instant,stats:&mut RepairStats)->bool{
+    let mut att=[Presence::EMPTY;42];
+    for &i in members{let p=&plan.employees[i];apply(&mut att,p,p.mask().unwrap(),true);}
+    let mut improved=false;
+    for _ in 0..2{
+        let mut changed=false;
+        for &i in members{
+            if Instant::now()>=deadline||sunday_cost(facts,&att)==[0,0]{return improved;}
+            let p=&plan.employees[i];
+            if p.pinned{continue;}
+            let old=p.mask().unwrap();let bit=Presence::one(p.id);
+            let mut cost=[[[0i64;5];2];42];let mut allowed=[[true;2];42];
+            for (d,states) in cost.iter_mut().enumerate().take(facts.days){
+                for (w,c) in states.iter_mut().enumerate(){
+                    let next=if w==1{att[d]|bit}else{att[d]&!bit};
+                    if !att[d].is_empty()&&next.is_empty(){allowed[d][w]=false;}
+                    c[2]=i64::from(facts.members>=2&&next.is_empty());
+                }
+            }
+            for b in &facts.bands{
+                for w in 0..2{
+                    let next=if w==1{att[b.day]|bit}else{att[b.day]&!bit};
+                    let g=b.gap(next);let c=&mut cost[b.day][w];
+                    if b.estimated{c[3]+=g*b.minutes;c[4]=c[4].max(g);if b.day.is_multiple_of(7){c[1]+=g*b.minutes;}}
+                    else{c[0]+=g*b.minutes;}
+                    if (!b.estimated||b.day.is_multiple_of(7))&&b.gap_components(next).iter().zip(b.gap_components(att[b.day])).any(|(a,b)|*a>b){
+                        allowed[b.day][w]=false;
+                    }
+                }
+            }
+            let score=|mask:u64|->Option<[i64;5]>{
+                let mut total=[0;5];
+                for (d,states) in cost.iter().enumerate().take(facts.days){
+                    let w=usize::from(worked(mask,d));
+                    if !allowed[d][w]{return None;}
+                    for k in 0..4{total[k]+=states[w][k];}
+                    total[4]=total[4].max(states[w][4]);
+                }
+                Some(total)
+            };
+            let before=score(old).expect("incumbent is admitted");
+            let mut best=None;
+            for (n,&index) in p.allowed.iter().enumerate(){
+                if n.is_multiple_of(128)&&Instant::now()>=deadline{return improved;}
+                let mask=p.catalog[index];
+                if mask==old||signature(mask,42).count_ones()<signature(old,42).count_ones(){continue;}
+                let Some(after)=score(mask) else{continue;};
+                if after[1]>=before[1]||after.iter().zip(before).any(|(a,b)|*a>b){continue;}
+                let personal=p.rules.rest_quality(mask,p.locked_off,facts.days);
+                if personal[0]>p.rules.rest_quality(old,p.locked_off,facts.days)[0]{continue;}
+                let rank=(after,personal,((p.saved_work^mask)&p.saved_known).count_ones(),p.rules.preferences(mask,facts.days));
+                if best.as_ref().is_some_and(|(prior,_)|rank>=*prior){continue;}
+                let mut trial=att;apply(&mut trial,p,old,false);apply(&mut trial,p,mask,true);
+                if role_totals_preserved(facts,&att,&trial){best=Some((rank,index));}
+            }
+            if let Some((_,index))=best{
+                apply(&mut att,p,old,false);apply(&mut att,p,p.catalog[index],true);
+                plan.employees[i].pattern=Some(index);
+                stats.reconstructed+=1;changed=true;improved=true;
+            }
+        }
+        if !changed{break;}
+    }
+    improved
+}
+
 pub fn repair(plan:&mut Plan,deadline:Instant)->RepairStats {
     let mut stats=RepairStats::default();
     if plan.employees.iter().any(|p|p.pattern.is_none()){return stats;}
@@ -366,10 +435,13 @@ pub fn repair(plan:&mut Plan,deadline:Instant)->RepairStats {
                 }
             }
         }
+        let mut changed=false;
         if let Some((_,selected))=best{
             for (&i,index) in members.iter().zip(selected){plan.employees[i].pattern=Some(index);}
-            stats.accepted+=1;
+            changed=true;
         }
+        if facts.days==42{changed|=residual_repair(plan,members,&facts,deadline,&mut stats);}
+        if changed{stats.accepted+=1;}
     }
     stats.deadline_reached=Instant::now()>=deadline;
     stats

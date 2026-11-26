@@ -56,6 +56,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                 if index.is_multiple_of(64)&&Instant::now()>=deadline{break;}
                 let mut score=p.pattern_cost(index);
                 let mut new_timed_days=0i64;let mut sunday_days=0i64;let mut sunday_load=0i64;let mut sunday_minutes=0i64;
+                let mut clock_changes=0i64;
                 for (day,&state) in p.catalog[index].states.iter().enumerate().take(p.facts.days){
                     for (cost,gain) in score[..6].iter_mut().zip(benefits[day][usize::from(state)]){*cost-=gain;}
                     if work(state){
@@ -64,6 +65,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                     }
                     if let Some(c)=clock(&sector.facts.clocks,state){
                         new_timed_days+=i64::from(sector.timed[day]==0);
+                        clock_changes+=i64::from(!p.preferred_clock[usize::from(state)]);
                         if day.is_multiple_of(7){sunday_minutes+=i64::from(c.paid);}
                     }
                 }
@@ -72,7 +74,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                 // timed days and prefer actual, balanced Sunday service
                 // before later soft penalties once demand gains tie.
                 let coverage:[i64;6]=std::array::from_fn(|j|score[j]);
-                let rank=(coverage,-new_timed_days,-sunday_days,sunday_load,-sunday_minutes,score);
+                let rank=(coverage,-new_timed_days,-sunday_days,sunday_load,-sunday_minutes,clock_changes,score);
                 if best.as_ref().is_none_or(|(old,_)|rank<*old){best=Some((rank,index));}
             }
             best.map_or(0,|(_,i)|i)
