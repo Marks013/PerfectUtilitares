@@ -2,7 +2,7 @@ import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
 from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock
-from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile, adaptive_gain
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -35,6 +35,20 @@ class EvidenceTests(unittest.TestCase):
         self.assertIsNone(tail_percentile(list(range(29))))
         self.assertEqual(tail_percentile(list(range(1,33))),31)
         with self.assertRaises(ValueError):verify_tail([])
+
+    def test_adaptive_gain_requires_full_pairs_and_product_noninferiority(self):
+        a={"productSeconds":12,"cgroup":{"cpuUsageUsec":11000000,"memoryPeakBytes":6000000}}
+        b={"productSeconds":2,"cgroup":{"cpuUsageUsec":1000000,"memoryPeakBytes":5000000},
+            "forge":{"nativeSearch":True,"resultSource":"NATIVE"}}
+        comparisons={k:{"comparable":32,"regressions":0,"retained":0} for k in ("ortools","timefold","native-12")}
+        rows=[(copy.deepcopy(a),copy.deepcopy(b)) for _ in range(32)]
+        self.assertEqual(adaptive_gain(rows,comparisons)["decision"],"ADAPTIVE_GAIN_OBSERVED")
+        self.assertEqual(adaptive_gain(rows[:-1],comparisons)["decision"],"ADAPTIVE_GAIN_NOT_PROVEN")
+        comparisons["timefold"]["retained"]=1
+        self.assertEqual(adaptive_gain(rows,comparisons)["decision"],"ADAPTIVE_GAIN_NOT_PROVEN")
+        comparisons["timefold"]["retained"]=0
+        for _,candidate in rows:candidate["productSeconds"]=11
+        self.assertEqual(adaptive_gain(rows,comparisons)["decision"],"ADAPTIVE_GAIN_NOT_PROVEN")
 
     def test_curve_requires_full_balanced_evidence(self):
         with self.assertRaises(ValueError):verify_curve([])
@@ -71,10 +85,13 @@ class EvidenceTests(unittest.TestCase):
         profile={"includedOnWire":10,"activePositions":70}
         row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"ADAPTIVE","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
-             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":1,"initialCost":[0]*11,"finalCost":[0]*11,
-             "nativeCost":[0,1,0,0,0,0,0,0,0,0,0],"stagnationApplied":True,"resultSource":"SEED_RETAINED",
-             "repair":{"sectors":1,"projections":10,"reconstructed":2,"accepted":1,"deadlineReached":False,"projectionLimitHits":0}},
-             "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":1.3}
+             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":1,"initialCost":[0]*13,"finalCost":[0]*13,
+             "nativeCost":[0,1,0,0,0,0,0,0,0,0,0,0,0],"stagnationApplied":True,"resultSource":"SEED_RETAINED",
+             "repair":{"sectors":1,"projections":10,"reconstructed":2,"accepted":1,"deadlineReached":False,"projectionLimitHits":0,
+             "rest":{"attempted":1,"acceptedSingle":1,"acceptedPair":0,"beforePairs":1,"afterPairs":0,
+                 "deadlineReached":False,"limitReached":False}}},
+             "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0,"restAudit":{"correctableExcess":0,
+                 "adjustablePairs":0,"concentration":0,"weeklyRepetitions":0}}},"processSeconds":1.3}
         native(row,profile,adaptive=True)
         for key,value in (("resultSource","NATIVE"),("nativeCost",None),("nativeSearch",False)):
             invalid=copy.deepcopy(row);invalid["forge"][key]=value
@@ -86,7 +103,7 @@ class EvidenceTests(unittest.TestCase):
         profile={"includedOnWire":10,"activePositions":70}
         row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"SEED_ONLY","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
-             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":0,"initialCost":[0]*11,"finalCost":[0]*11},
+             "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":0,"initialCost":[0]*13,"finalCost":[0]*13},
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":.2}
         with self.assertRaises(ValueError):native(row,profile,True)
 

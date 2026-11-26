@@ -201,7 +201,7 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
         const t = value.solverforge;
         const integer = (x: unknown) => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
         const duration = (x: unknown) => typeof x === "number" && Number.isFinite(x) && x >= 0;
-        const vector = (x: unknown) => Array.isArray(x) && x.length === 11 && x.every(integer);
+        const vector = (x: unknown) => Array.isArray(x) && x.length === 13 && x.every(integer);
         if (!t || t.version !== "0.31.2" || t.mode !== (seedOnly ? "SEED_ONLY" : adaptive ? "ADAPTIVE" : "NATIVE")
           || t.partialModel !== true || t.budgetSeconds !== budgetSeconds || typeof t.nativeSearch !== "boolean" || typeof t.seedComplete !== "boolean"
           || typeof t.stagnationApplied !== "boolean" || t.stagnationApplied && (!adaptive || !t.nativeSearch)

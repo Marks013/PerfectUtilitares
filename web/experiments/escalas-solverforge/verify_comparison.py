@@ -164,21 +164,35 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
           and type(t.get("seedComplete")) is bool and all(numeric(t.get(k)) for k in ("mapSeconds", "seedSeconds", "searchSeconds")),
           "NATIVE_TELEMETRY")
     for name in ("initialCost", "finalCost"):
-        check(isinstance(t.get(name), list) and len(t[name]) == 11 and all(integer(v) for v in t[name]), "COST_VECTOR")
+        check(isinstance(t.get(name), list) and len(t[name]) == 13 and all(integer(v) for v in t[name]), "COST_VECTOR")
     check(t["finalCost"][0] == 0 and t["finalCost"][3] == row["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],
           "NATIVE_SCORE_DRIFT")
     check(t["mapSeconds"] + t["seedSeconds"] + t["searchSeconds"] <= row["processSeconds"] + .01, "NATIVE_TIMING")
+    # Cross-check every represented rest-quality term with the independent
+    # product evaluator. No candidate-internal metric can certify itself.
+    metrics=row["finalAssessment"]["metrics"]
+    rest=metrics.get("restAudit")
+    check(isinstance(rest,dict) and all(integer(rest.get(k)) for k in
+          ("correctableExcess","adjustablePairs","concentration","weeklyRepetitions"))
+          and t["finalCost"][5:9]==[rest[k] for k in
+          ("correctableExcess","adjustablePairs","concentration","weeklyRepetitions")],"REST_QUALITY_DRIFT")
     repair=t.get("repair")
     check(isinstance(repair,dict) and all(integer(repair.get(k)) for k in ("sectors","projections","reconstructed","accepted","projectionLimitHits"))
           and type(repair.get("deadlineReached")) is bool and repair["accepted"]<=repair["sectors"]
           and repair["accepted"]<=repair["reconstructed"] and repair["projectionLimitHits"]<=repair["sectors"],
           "REPAIR_TELEMETRY")
+    rr=repair.get("rest")
+    check(isinstance(rr,dict) and all(integer(rr.get(k)) for k in
+        ("attempted","acceptedSingle","acceptedPair","beforePairs","afterPairs"))
+        and rr["attempted"]<=200000 and rr["acceptedSingle"]+rr["acceptedPair"]<=rr["attempted"]
+        and rr["afterPairs"]<=rr["beforePairs"] and (not t["seedComplete"] or rr["afterPairs"]==t["initialCost"][6])
+        and type(rr.get("deadlineReached")) is bool and type(rr.get("limitReached")) is bool,"REST_REPAIR_TELEMETRY")
     attempted = t["nativeSearch"]
     source = t.get("resultSource")
     check(type(t.get("stagnationApplied")) is bool and (not t["stagnationApplied"] or adaptive and attempted),"STAGNATION")
     if attempted:
         cost=t.get("nativeCost")
-        check(isinstance(cost,list) and len(cost)==11 and all(integer(v) for v in cost) and t["searchSeconds"]>0,"NATIVE_COST")
+        check(isinstance(cost,list) and len(cost)==13 and all(integer(v) for v in cost) and t["searchSeconds"]>0,"NATIVE_COST")
     else:
         check(t.get("nativeCost") is None and t["searchSeconds"]==0,"NATIVE_NOT_ATTEMPTED")
     if seed:
@@ -414,6 +428,34 @@ def tail_percentile(values):
     return sorted(values)[math.ceil(.95*len(values))-1] if len(values)>=30 else None
 
 
+def adaptive_gain(paired,comparisons):
+    """Pre-registered proof: 32 valid pairs, no product veto, >=25% median
+    paired product gain, >=25% p95 reduction and no median CPU increase.
+    Report all outcomes; do not infer a production deployment decision."""
+    check(len(paired)<=32,"ADAPTIVE_SAMPLE_COUNT")
+    full=[a["productSeconds"] for a,b in paired]
+    adaptive=[b["productSeconds"] for a,b in paired]
+    latency=paired_stats(full,adaptive)
+    cpu=paired_stats([a["cgroup"]["cpuUsageUsec"]/1e6 for a,b in paired],
+                     [b["cgroup"]["cpuUsageUsec"]/1e6 for a,b in paired])
+    p95_base=tail_percentile(full) if len(paired)==32 else None
+    p95_candidate=tail_percentile(adaptive) if len(paired)==32 else None
+    p95_reduction=100*(p95_base-p95_candidate)/p95_base if p95_base else None
+    comparable=(len(paired)==32 and all(comparisons.get(name,{}).get("comparable")==32
+        and comparisons[name]["regressions"]==0 and comparisons[name]["retained"]==0
+        for name in ("ortools","timefold","native-12")))
+    approved=(comparable and latency["reductionPercentP50"] is not None
+        and latency["reductionPercentP50"]>=25 and p95_reduction is not None
+        and p95_reduction>=25 and cpu["deltaP50"]<=0)
+    return {"decision":"ADAPTIVE_GAIN_OBSERVED" if approved else "ADAPTIVE_GAIN_NOT_PROVEN",
+        "pairedSamples":len(paired),"productNoninferior":comparable,"productLatency":latency,"cpu":cpu,
+        "nativeP95Seconds":p95_base,"adaptiveP95Seconds":p95_candidate,"p95ReductionPercent":p95_reduction,
+        "nativeAttempts":sum(b["forge"]["nativeSearch"] for a,b in paired),
+        "seedRetained":sum(b["forge"]["resultSource"]=="SEED_RETAINED" for a,b in paired),
+        "maxPeakMemoryBytes":max((b["cgroup"]["memoryPeakBytes"] for a,b in paired),default=None),
+        "productionCertified":False}
+
+
 def verify_tail(rows):
     names=("ortools","timefold","native-12","adaptive")
     check(len(rows)==128 and all(isinstance(r,dict) for r in rows),"TAIL_COUNT")
@@ -450,7 +492,7 @@ def verify_tail(rows):
     for name in names:
         accepted=[r for r,ok in records[name] if ok]
         comparisons={}
-        for control,field in (("ortools","againstOrtools"),("timefold","againstTimefold")):
+        for control,field in (("ortools","againstOrtools"),("timefold","againstTimefold"),("native-12","againstNative12")):
             for i,(r,ok) in enumerate(records[name]):
                 other,other_ok=records[control][i]
                 pair_detail(r[field],other,r,profile,ok and other_ok)
@@ -467,9 +509,16 @@ def verify_tail(rows):
             "comparisons":comparisons}
     complete=all(v["validNew"]==32 for v in reports.values())
     noninferior=complete and all(c["comparable"]==32 and c["regressions"]==0 and c["retained"]==0
-        for name in ("native-12","adaptive") for c in reports[name]["comparisons"].values())
+        for name in ("native-12","adaptive") for key,c in reports[name]["comparisons"].items()
+        if name=="adaptive" or key!="native-12")
+    # Only the adaptive variant is required to be noninferior to native-12.
+    # Native-12 and adaptive are also evaluated against both frozen controls.
+    native_rows=records["native-12"]
+    adaptive_rows=records["adaptive"]
+    paired=[(a,b) for (a,ok_a),(b,ok_b) in zip(native_rows,adaptive_rows) if ok_a and ok_b]
+    gains=adaptive_gain(paired,reports["adaptive"]["comparisons"])
     return {"decision":"E2_TAIL_NONINFERIORITY_OBSERVED" if noninferior else "E2_TAIL_REVIEW_REQUIRED",
-            "tailSampleSufficient":complete,"productionCertified":False,"variants":reports}
+            "tailSampleSufficient":complete,"productionCertified":False,"variants":reports,"adaptiveGain":gains}
 
 
 if __name__ == "__main__":

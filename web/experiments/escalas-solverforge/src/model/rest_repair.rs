@@ -33,7 +33,8 @@ fn secondary(p:&Employee,mask:u32)->(i64,i64,i64){
 fn no_personal_regression(p:&Employee,old:u32,new:u32)->bool{
     // Do not erase a lower-ranked user's preferred days or saved work
     // in this optional repair. The native optimizer can still explore them.
-    quality(p,new)[0]<=quality(p,old)[0]&&secondary(p,new)<=secondary(p,old)
+    let a=secondary(p,old);let b=secondary(p,new);
+    quality(p,new)[0]<=quality(p,old)[0]&&b.0<=a.0&&b.1<=a.1&&b.2<=a.2
 }
 fn sum_quality(a:[i64;4],b:[i64;4])->[i64;4]{
     std::array::from_fn(|i|a[i]+b[i])

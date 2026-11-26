@@ -84,7 +84,9 @@ async function main() {
       }
       const cp=round.find(x=>x.variant==="ortools")!.trial;
       const java=round.find(x=>x.variant==="timefold")!.trial;
-      for(const item of round) console.log(JSON.stringify({...item.record,againstOrtools:compare(cp,item.trial),againstTimefold:compare(java,item.trial)}));
+      const full=round.find(x=>x.variant==="native-12")!.trial;
+      for(const item of round) console.log(JSON.stringify({...item.record,againstOrtools:compare(cp,item.trial),
+        againstTimefold:compare(java,item.trial),againstNative12:compare(full,item.trial)}));
     }
     if(source().revision!==snapshot.revision) throw Error("FORGE_SOURCE_DRIFT");
     return;

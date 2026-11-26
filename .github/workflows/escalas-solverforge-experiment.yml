@@ -50,6 +50,7 @@ jobs:
           python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
           # Corpus must be byte-identical to the independently pinned Java test.
           test "$(git hash-object experiments/escalas-solverforge/src/e2-wire-contract.json)" = "6f0f97b8aaadfe1c94034937ff4f134fb4f388a5"
+          test "$(git hash-object experiments/escalas-solverforge/src/e3a-fixed-clock-contract.json)" = "2972584ac91979b65bb7782aa8374fcbb86f7b90"
           node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
       - name: Install reviewed Rust toolchain and native musl linker
         shell: bash
@@ -143,8 +144,8 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/forge-evidence"
           python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
-      - name: Qualified 32-repeat tail latency and quality comparison
-        if: ${{ !cancelled() && steps.quality.outcome == 'success' && steps.security.outcome == 'success' }}
+      - name: Independent 32-repeat tail latency and adaptive qualification
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
