@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap,BTreeSet};
 use std::time::Instant;
 use crate::model::PersonalRules;
-use super::{ABS,Clock,HOL,MAX_DAYS,OFF,Pattern,Record,Result,check,clock,work};
+use super::{ABS,Clock,HOL,INACTIVE,MAX_DAYS,OFF,Pattern,Record,Result,check,clock,work};
 
 const MAX_WEEK:usize=30_000;
 pub(super) const PATH_LIMIT:usize=384;
@@ -15,10 +15,12 @@ pub(super) struct Rules{
     pub days:usize,pub personal:PersonalRules,pub fixed:u8,pub cap:i32,
     pub weeks:Vec<(usize,usize)>,pub targets:[i32;6],pub mixed:[bool;6],pub offset:usize,pub cutover:bool,
     pub weekly_limit:i32,pub inter:i32,pub weekly_rest:i32,pub untimed:bool,
+    pub active_start:i32,pub active_end:i32,
     pub hours_only:bool,pub closed:[bool;MAX_DAYS],pub holiday:[bool;MAX_DAYS],
     pub old:[Option<Record>;MAX_DAYS],pub context:BTreeMap<i32,u8>,pub visible:[bool;MAX_DAYS],
 }
 impl Rules{
+    fn employed(&self,d:i32)->bool{(self.active_start..=self.active_end).contains(&d)}
     fn weekday(&self,d:i32)->usize{(d+self.offset as i32).rem_euclid(7) as usize}
     fn week_legal(&self,week:usize,states:&[u8],clocks:&[Clock])->bool{
         let count=states.iter().filter(|&&s|work(s)).count() as i32;
@@ -28,8 +30,8 @@ impl Rules{
         let weekdays=states.iter().enumerate().filter(|(d,s)|**s==HOL&&self.weekday((a+*d) as i32)!=0).count() as i32;
         let sunday=states.iter().enumerate().filter(|(d,s)|**s==HOL&&self.weekday((a+*d) as i32)==0).count() as i32;
         let minutes:i32=states.iter().filter_map(|&s|clock(clocks,s)).map(|c|c.paid).sum();
-        let complete=states.len()==7;
-        let first_partial=self.cutover&&week==0;
+        let complete=states.len()==7&&!states.contains(&INACTIVE);
+        let first_partial=self.cutover&&week==0&&!states.contains(&INACTIVE);
         let target=self.targets[week];
         if count>5||!self.untimed&&minutes>target.min(self.weekly_limit){return false;}
         if !absent&&(complete||first_partial){
@@ -39,14 +41,15 @@ impl Rules{
         !(self.mixed[week]&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2)
     }
     fn mutable(&self,d:usize)->bool{
-        !self.closed[d]&&self.fixed&(1<<self.weekday(d as i32))==0&&self.old[d].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL)
+        self.employed(d as i32)&&!self.closed[d]&&self.fixed&(1<<self.weekday(d as i32))==0&&self.old[d].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL)
     }
     pub fn legal_prefix(&self,states:&[u8],clocks:&[Clock])->bool{
         let len=states.len() as i32;let horizon=self.days as i32;
         if len==0||len>horizon||!self.weeks.iter().any(|&(_,b)|b==states.len())
             ||!self.weeks.iter().enumerate().filter(|(_,(_,b))|*b<=states.len()).all(|(i,&(a,b))|self.week_legal(i,&states[a..b],clocks)){return false;}
         let full=len==horizon;
-        let state=|d:i32|if (0..len).contains(&d){Some(states[d as usize])}
+        let state=|d:i32|if !self.employed(d){None}
+            else if (0..len).contains(&d){Some(states[d as usize])}
             else if d<0||full&&d>=horizon{self.context.get(&d).copied()}else{None};
         let max=i32::from(self.personal.max_run);
         for start in -max..len{
@@ -84,7 +87,7 @@ impl Rules{
         if full&&!self.hours_only&&!self.personal.consecutive&&self.fixed.count_ones()<2{
             let mut groups=BTreeMap::<u8,(usize,u8)>::new();
             for &(a,b) in &self.weeks{
-                if b-a!=7{continue;}
+                if b-a!=7||states[a..b].contains(&INACTIVE){continue;}
                 let part=&states[a..b];
                 if self.holiday[a..b].iter().any(|&x|x)||self.old[a..b].iter().flatten().any(|r|r.locked==Some(true)||matches!(r.state,ABS|HOL)){continue;}
                 let imposed=self.closed[a..b].iter().enumerate().fold(self.fixed,|m,(d,c)|if *c{m|1<<d}else{m});
@@ -105,7 +108,10 @@ impl Rules{
         let changes=active.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;
         cost[15]=active.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<self.weekday(*d as i32))!=0).count() as i64;
-        if self.personal.prefer_consecutive{cost[15]+=(self.days-1) as i64-active.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;}
+        if self.personal.prefer_consecutive{
+            let opportunities=active.windows(2).filter(|w|!w.contains(&INACTIVE)).count();
+            cost[15]+=opportunities as i64-active.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;
+        }
         // Rest quality follows the original second-OFF month ownership.
         // [monthly excess, monthly adjustable, horizon adjustable,
         //  padding before visible month, padding after visible month].
@@ -113,7 +119,7 @@ impl Rules{
         if self.personal.adjustable(){
             let mut imposed=0;
             let first_visible=self.visible.iter().position(|&v|v).unwrap_or(0);
-            let state=|d:i32|if (0..self.days as i32).contains(&d){Some(active[d as usize])}else{self.context.get(&d).copied()};
+            let state=|d:i32|if !self.employed(d){None}else if (0..self.days as i32).contains(&d){Some(active[d as usize])}else{self.context.get(&d).copied()};
             for d in 0..=self.days{
                 if state(d as i32-1)!=Some(OFF)||state(d as i32)!=Some(OFF){continue;}
                 let mutable=d<self.days&&self.mutable(d)||d>0&&self.mutable(d-1);
@@ -128,7 +134,7 @@ impl Rules{
         let mut rates=[None;2];let mut sunday_opportunities=0u64;
         for weekday in 0..7{
             let prior:Vec<_>=self.context.iter().filter(|(d,s)|(-21..0).contains(*d)&&self.weekday(**d)==weekday&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
-            let actual=(0..self.days).filter(|&d|self.weekday(d as i32)==weekday);
+            let actual=(0..self.days).filter(|&d|self.employed(d as i32)&&self.weekday(d as i32)==weekday);
             let opportunities=prior.len() as i64+actual.clone().filter(|&d|active[d]!=ABS).count() as i64;
             let rests=prior.iter().filter(|&&s|s==OFF).count() as i64+actual.clone().filter(|&d|active[d]==OFF).count() as i64;
             let deviation=(7*rests-2*opportunities).abs();

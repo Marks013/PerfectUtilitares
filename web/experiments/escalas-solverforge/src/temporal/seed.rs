@@ -3,7 +3,7 @@
 //! receives the full selected domain and the independent score is recomputed.
 use std::{collections::BTreeMap,sync::Arc,time::Instant};
 use crate::temporal_domain::TemporalPlan;
-use super::{Band,MAX_DAYS,TemporalFacts,clock,work};
+use super::{Band,INACTIVE,MAX_DAYS,TemporalFacts,clock,work};
 
 struct Counts{
     total:i64,roles:Vec<i64>,
@@ -58,6 +58,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                 let mut new_timed_days=0i64;let mut sunday_days=0i64;let mut sunday_load=0i64;let mut sunday_minutes=0i64;
                 let mut clock_changes=0i64;
                 for (day,&state) in p.catalog[index].states.iter().enumerate().take(p.facts.days){
+                    if state==INACTIVE{continue;}
                     for (cost,gain) in score[..6].iter_mut().zip(benefits[day][usize::from(state)]){*cost-=gain;}
                     if work(state){
                         score[11]+=sector.presence[day];
@@ -85,7 +86,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             if clock(&sector.facts.clocks,state).is_some(){sector.timed[day]+=1;}
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
-            if band.clock_mask&(1u16<<pattern.states[band.day])!=0{count.insert(band,p.role);}
+            if work(pattern.states[band.day])&&band.clock_mask&(1u16<<pattern.states[band.day])!=0{count.insert(band,p.role);}
         }
         plan.employees[i].pattern=Some(choice);
     }
