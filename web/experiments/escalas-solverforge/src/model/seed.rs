@@ -64,5 +64,7 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
 // Preserve a complete greedy roster if optional repair is interrupted.
 pub fn seed(plan: &mut Plan, deadline: Instant) -> (bool,super::sunday_repair::RepairStats) {
     if !greedy(plan,deadline) {return (false,super::sunday_repair::RepairStats{deadline_reached:Instant::now()>=deadline,..Default::default()});}
-    (true,super::sunday_repair::repair(plan,deadline))
+    let mut stats=super::sunday_repair::repair(plan,deadline);
+    stats.rest=super::rest_repair::polish_rests(plan,deadline);
+    (true,stats)
 }

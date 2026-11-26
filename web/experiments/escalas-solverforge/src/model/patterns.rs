@@ -34,8 +34,8 @@ impl PersonalRules {
         let pairs=pair_starts.count_ones() as i64;
         let fixed=(off&(off>>1)&imposed&(imposed>>1)).count_ones() as i64;
         let mut weeks=0u32;
-        for i in 0..days-1{
-            if worked(pair_starts,i){weeks|=1<<((i+1)/7);}
+        for week in 0..days/7{
+            if ((pair_starts<<1)>>(week*7))&127!=0{weeks|=1<<week;}
         }
         [(pairs+fixed-2).max(0)-(fixed-2).max(0),pairs,pairs*(pairs-1)/2,
             (weeks&(weeks>>1)).count_ones() as i64]

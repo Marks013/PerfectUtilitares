@@ -110,7 +110,11 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
             "seedComplete":seed_complete,"nativeSearch":attempted,"entities":people,"positions":positions,
             "stagnationApplied":stagnation_applied,"nativeCost":native_cost,
             "repair":{"sectors":repair.sectors,"projections":repair.projections,"reconstructed":repair.reconstructed,
-                "accepted":repair.accepted,"deadlineReached":repair.deadline_reached,"projectionLimitHits":repair.projection_limit_hits},
+                "accepted":repair.accepted,"deadlineReached":repair.deadline_reached,"projectionLimitHits":repair.projection_limit_hits,
+                "rest":{"attempted":repair.rest.attempted,"acceptedSingle":repair.rest.accepted_single,
+                    "acceptedPair":repair.rest.accepted_pair,"beforePairs":repair.rest.before_pairs,
+                    "afterPairs":repair.rest.after_pairs,"deadlineReached":repair.rest.deadline_reached,
+                    "limitReached":repair.rest.limit_reached}},
             "resultSource":if seed_only {"CONSTRUCTOR_ONLY"} else if retained {"SEED_RETAINED"} else {"NATIVE"},
             "initialized":initialized,"allowedPatterns":patterns,"initialCost":initial_cost,"finalCost":cost,
             "partialModel":true,"budgetSeconds":budget.as_secs()}})

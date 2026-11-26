@@ -121,6 +121,7 @@ pub struct RepairStats {
     pub accepted:usize,
     pub deadline_reached:bool,
     pub projection_limit_hits:usize,
+    pub rest:super::rest_repair::RestRepairStats,
 }
 
 const BEAM_WIDTH:usize=16;

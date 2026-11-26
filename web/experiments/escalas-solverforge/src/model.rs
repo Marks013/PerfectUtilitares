@@ -6,6 +6,7 @@ mod incremental;
 mod patterns;
 mod presence;
 mod seed;
+mod rest_repair;
 mod sunday_repair;
 mod weekly_domain;
 
