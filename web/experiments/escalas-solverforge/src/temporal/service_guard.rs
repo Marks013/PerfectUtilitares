@@ -21,7 +21,7 @@ impl Snapshot{
         for (sector,people) in groups{
             let facts=&people[0].facts;
             let mut edges=BTreeSet::from([facts.closing-60,facts.closing]);
-            for c in facts.clocks.iter(){for (a,b) in c.segments{edges.insert(a);edges.insert(b);}}
+            for c in facts.clocks.iter(){for &(a,b) in &c.segments{edges.insert(a);edges.insert(b);}}
             for b in &facts.bands{edges.insert(b.start);edges.insert(b.end);}
             let edges:Vec<_>=edges.into_iter().collect();
             let mut counts=BTreeMap::<(usize,usize,usize),i64>::new();

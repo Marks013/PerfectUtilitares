@@ -1,6 +1,6 @@
 //! SF54d/e: bounded temporal horizon, synthetic-only, not a production adapter.
 //! OFF, ABSENCE and HOLIDAY are separate states; work is a concrete clock.
-//! Only admitted, synthetic, same-civil-day shifts before the transition date.
+//! Admitted synthetic same-civil-day shifts, with explicit paid and service geometry.
 use std::collections::{BTreeMap,BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration,Instant};
@@ -38,11 +38,50 @@ const OBJECTIVES:[(&str,&str);16]=[
     ("PREFERENCES","SCOPED"),("TIE_BREAK","SCOPED_ORIGINAL_SHA256"),
 ];
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
-struct Clock {id:String,segments:[(i32,i32);2],paid:i32}
+struct Clock {id:String,segments:Vec<(i32,i32)>,paid:i32,start:i32,end:i32}
 impl Clock {
-    fn start(&self)->i32{self.segments[0].0}
-    fn end(&self)->i32{self.segments[1].1}
+    fn start(&self)->i32{self.start}
+    fn end(&self)->i32{self.end}
     fn covers(&self,a:i32,b:i32)->bool{self.segments.iter().any(|&(s,e)|s<=a&&b<=e)}
+}
+// One unpaid meal; optional paid pauses inside the two paid blocks.
+// Same civil day and store closing remain hard admission boundaries.
+// Only the exact original WORK/BREAK/WORK geometry qualifies for 9h mixed.
+fn read_clock(row:&V,closing:i32,daily:i32,meal:i32,limit_blocks:bool)->Result<Clock>{
+    let raw=array(row,"segments")?;
+    check((3..=12).contains(&raw.len()),"CLOCK_KIND")?;
+    check(text(&raw[0],"kind")?=="WORK"&&text(raw.last().unwrap(),"kind")?=="WORK","CLOCK_KIND")?;
+    let mut service=Vec::<(i32,i32)>::new();
+    let start=number(&raw[0],"start")?;
+    let mut end=start;
+    let mut paid=0;
+    let mut unpaid=0;
+    let mut meal_count=0;
+    let mut blocks=[0;2];
+    for segment in raw{
+        let a=number(segment,"start")?;
+        let b=number(segment,"end")?;
+        check(range(a,0,1439)&&range(b,1,1440)&&a==end&&a<b&&b<=closing,"CLOCK_GEOMETRY")?;
+        let duration=b-a;
+        match text(segment,"kind")?{
+            "WORK"=>{
+                paid+=duration;
+                blocks[meal_count]+=duration;
+                // Contiguous WORK segments are one service interval.
+                if let Some(last)=service.last_mut().filter(|last|last.1==a){last.1=b;}
+                else{service.push((a,b));}
+            },
+            "PAID_BREAK"=>{paid+=duration;blocks[meal_count]+=duration;},
+            "BREAK"=>{check(meal_count==0,"CLOCK_MEAL_COUNT")?;meal_count=1;unpaid=duration;},
+            _=>return Err("CLOCK_KIND")
+        }
+        end=b;
+    }
+    let long=raw.len()==3&&blocks==[270,270]&&unpaid==180&&service.len()==2;
+    check(meal_count==1&&unpaid>=meal&&end-start<=1080
+        &&(long||matches!(paid,480|504|528)&&paid<=daily&&unpaid<=120)
+        &&(!limit_blocks||blocks.into_iter().max().unwrap_or(0)<=270),"CLOCK_GEOMETRY")?;
+    Ok(Clock{id:identifier(row,"id")?.to_string(),segments:service,paid,start,end})
 }
 fn clock(clocks:&[Clock],state:u8)->Option<&Clock>{state.checked_sub(3).and_then(|i|clocks.get(i as usize))}
 fn work(state:u8)->bool{state>=3}
@@ -338,17 +377,9 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     check(clock_rows.len()<=12,"CLOCK_LIMIT")?;
     let mut clocks=Vec::new();let mut ids=BTreeMap::new();
     for row in clock_rows{
-        let seg=array(row,"segments")?;
-        check(seg.len()==3&&text(&seg[0],"kind")?=="WORK"&&text(&seg[1],"kind")?=="BREAK"&&text(&seg[2],"kind")?=="WORK","CLOCK_KIND")?;
-        let a=number(&seg[0],"start")?;let b=number(&seg[0],"end")?;
-        let c=number(&seg[1],"start")?;let d=number(&seg[1],"end")?;
-        let e=number(&seg[2],"start")?;let f=number(&seg[2],"end")?;
-        check([a,b,c,d,e,f].iter().all(|&v|range(v,0,1440))&&a<b&&b==c&&c<d&&d==e&&e<f&&f<=closing,"CLOCK_GEOMETRY")?;
-        let minutes=b-a+f-e;let long=b-a==270&&d-c==180&&f-e==270;
-        check((long||matches!(minutes,480|504|528)&&minutes<=daily&&d-c<=120)&&d-c>=meal
-            &&(!limit_blocks||(b-a).max(f-e)<=270),"CLOCK_GEOMETRY")?;
-        let id=identifier(row,"id")?.to_string();check(ids.insert(id.clone(),(clocks.len()+3) as u8).is_none(),"DUPLICATE_CLOCK")?;
-        clocks.push(Clock{id,segments:[(a,b),(e,f)],paid:minutes});
+        let c=read_clock(row,closing,daily,meal,limit_blocks)?;
+        check(ids.insert(c.id.clone(),(clocks.len()+3) as u8).is_none(),"DUPLICATE_CLOCK")?;
+        clocks.push(c);
     }
     let clocks=Arc::new(clocks);
     let people=array(input,"employees")?;
@@ -399,7 +430,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
         let mut edges=BTreeSet::new();
         for &(a,b,_,_) in &demands{edges.insert(a);edges.insert(b);}
-        for clock in clocks.iter(){for (a,b) in clock.segments{edges.insert(a);edges.insert(b);}}
+        for clock in clocks.iter(){for &(a,b) in &clock.segments{edges.insert(a);edges.insert(b);}}
         let edges:Vec<_>=edges.into_iter().collect();
         for pair in edges.windows(2){
             let a=pair[0];let b=pair[1];let mut general=0;let mut floors=BTreeMap::<usize,i64>::new();
@@ -419,7 +450,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     service_bounds::read(input,&calendar,&sectors,&roles,&mut facts)?;
     let facts:Vec<_>=facts.into_iter().map(Arc::new).collect();
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
-    type CohortKey=(usize,usize,bool,Vec<[(i32,i32);2]>,[i32;6],i32);
+    type CohortKey=(usize,usize,bool,Vec<Vec<(i32,i32)>>,[i32;6],i32);
     let mut cohorts=BTreeMap::<CohortKey,usize>::new();
     let mut rest_groups=BTreeMap::<(usize,bool,[i32;6],i32),usize>::new();
     let assignment_rows=array(input,"assignments")?;
@@ -549,7 +580,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
                 if mode=="HOURS_ONLY"{out.retain(|&s|if work(r.state){work(s)&&(s==DUTY)==(r.state==DUTY)}else{s==r.state});}
             }
         }
-        let profile:Vec<_>=daily_options.iter().flatten().filter_map(|&s|clock(&clocks,s).map(|c|c.segments)).collect::<BTreeSet<_>>().into_iter().collect();
+        let profile:Vec<_>=daily_options.iter().flatten().filter_map(|&s|clock(&clocks,s).map(|c|c.segments.clone())).collect::<BTreeSet<_>>().into_iter().collect();
         let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,
             untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,visible:calendar.visible};
         rest_weight+=rules.pair_terms();
@@ -566,8 +597,14 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let pinned=allowed.len()==1;
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{[0;6]}else{targets},cap)).or_insert(next);
         let next=rest_groups.len();let rest_group=*rest_groups.entry((sector,untimed,if untimed{[0;6]}else{targets},cap)).or_insert(next);
+        // SHA ranks are immutable per person/date. Cache a compact sum
+        // per admitted path instead of scanning 42 cells on every score.
+        let ranks:[u16;MAX_DAYS]=std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d]) as u16}else{0});
+        let tie_costs:Arc<[u16]>=Arc::from(catalog.iter().map(|p|
+            p.states.iter().zip(ranks).filter(|(state,_)|**state==OFF).map(|(_,rank)|rank).sum::<u16>()
+        ).collect::<Vec<_>>());
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,rest_group,rest_weight:0,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,rest_group,rest_weight:0,preferred_clock,tie_costs,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -942,6 +979,51 @@ mod tests{
         data["input"]["storeClosingMinutes"]=json!(1200);
         assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_GEOMETRY")));
     }
+    #[test]
+    fn paid_pause_is_credited_but_never_provides_service(){
+        let mut data=fixture();
+        data["input"]["defaultWeeklyHours"]=json!(40);data["input"]["mixed42Sectors"]=json!([]);
+        data["input"]["employees"][0]["weeklyHours"]=json!(40);
+        data["input"]["employees"][0]["shiftIds"]=json!(["pause"]);
+        data["input"]["employees"][0]["history"]=json!([]);
+        data["input"]["shifts"]=json!([{"id":"pause","segments":[
+            {"kind":"WORK","start":420,"end":540},
+            {"kind":"PAID_BREAK","start":540,"end":555},
+            {"kind":"WORK","start":555,"end":660},
+            {"kind":"BREAK","start":660,"end":720},
+            {"kind":"WORK","start":720,"end":960}
+        ]}]);
+        data["input"]["assignments"]=json!([{"employeeId":"person-0","date":"2026-11-04","kind":"WORK","shiftId":"pause","locked":true}]);
+        data["input"]["demands"]=json!([
+            {"id":"pause","date":"2026-11-04","sector":"S","start":540,"end":555,"minimum":1,"estimated":false},
+            {"id":"service","date":"2026-11-04","sector":"S","start":555,"end":600,"minimum":1,"estimated":false}
+        ]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let p=&mut plan.employees[0];
+        assert_eq!(p.facts.clocks[0].paid,480);
+        assert_eq!(p.facts.clocks[0].segments.iter().map(|(a,b)|b-a).sum::<i32>(),465);
+        assert!(p.catalog.iter().all(|x|x.states[3]==3&&x.states[..7].iter().filter(|&&s|work(s)).count()==5));
+        p.pattern=Some(0);
+        assert_eq!(evaluate(&plan)[0],15);
+        data["input"]["demands"].as_array_mut().unwrap().remove(0);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        plan.employees[0].pattern=Some(0);
+        assert_eq!(evaluate(&plan)[0],0);
+        data["input"]["shifts"][0]["segments"][4]["end"]=json!(1500);
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_GEOMETRY")));
+    }
+
+    #[test]
+    fn cached_tie_cost_matches_original_hash_for_every_path(){
+        let plan=read(&fixture(),Instant::now()+Duration::from_secs(5)).unwrap();
+        let p=&plan.employees[0];
+        for (i,pattern) in p.catalog.iter().enumerate(){
+            let expected:i64=pattern.states[..p.facts.days].iter().enumerate()
+                .filter(|(_,s)|**s==OFF).map(|(d,_)|tie_rank::rank(&p.name_id,&p.facts.dates[d])).sum();
+            assert_eq!(p.pattern_cost(i)[16],expected);
+        }
+    }
+
     #[test]
     fn temporal_reversible_coverage_matches_full_oracle_at_scale(){
         for people in [115,250]{

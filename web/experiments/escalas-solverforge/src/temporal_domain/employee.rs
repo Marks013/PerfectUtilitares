@@ -1,6 +1,6 @@
 use solverforge::prelude::*;
 use std::sync::Arc;
-use crate::temporal::{TemporalFacts, Pattern, Member, MAX_DAYS, OFF, Cost};
+use crate::temporal::{TemporalFacts, Pattern, Member, MAX_DAYS, Cost};
 
 #[planning_entity]
 pub struct TemporalEmployee {
@@ -17,7 +17,7 @@ pub struct TemporalEmployee {
     pub preferred_clock: [bool;16],
     pub rest_group: usize,
     pub rest_weight: i64,
-    pub tie_ranks: [i64;MAX_DAYS],
+    pub tie_costs: Arc<[u16]>,
     pub facts: Arc<TemporalFacts>,
     pub catalog: Arc<Vec<Pattern>>,
     pub allowed: Arc<[usize]>,
@@ -33,7 +33,7 @@ impl TemporalEmployee {
     pub fn pattern_cost(&self,index:usize)->Cost{
         let p=&self.catalog[index];let mut cost=p.personal;
         cost[8]=self.rest_weight*p.rest[0]+p.rest[1];
-        cost[16]=p.states.iter().zip(self.tie_ranks).filter(|(state,_)|**state==OFF).map(|(_,rank)|rank).sum();
+        cost[16]=i64::from(self.tie_costs[index]);
         cost
     }
     pub fn member(&self)->Member {

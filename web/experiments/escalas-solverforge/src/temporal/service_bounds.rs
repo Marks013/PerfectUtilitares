@@ -42,7 +42,7 @@ pub(super) fn read(input:&V,calendar:&Calendar,sectors:&BTreeMap<String,usize>,r
         check(range(start,0,1439)&&range(end,1,1440)&&start<end&&range(minimum,1,10500),"SERVICE_INTERVAL")?;
         let f=&mut facts[sector];
         let mut edges=BTreeSet::from([start,end]);
-        for c in f.clocks.iter(){for (a,b) in c.segments{
+        for c in f.clocks.iter(){for &(a,b) in &c.segments{
             if start<a&&a<end{edges.insert(a);}
             if start<b&&b<end{edges.insert(b);}
         }}
