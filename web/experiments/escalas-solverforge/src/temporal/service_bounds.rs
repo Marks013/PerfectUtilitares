@@ -57,6 +57,7 @@ pub(super) fn read(input:&V,calendar:&Calendar,sectors:&BTreeMap<String,usize>,r
     Ok(())
 }
 pub(super) fn deficit(facts:&TemporalFacts,attendance:&[[Presence;16];MAX_DAYS],role_members:&BTreeMap<usize,Presence>)->i64{
+    if facts.protected_days==0&&facts.protected_bands.is_empty(){return 0;}
     let mut missing=0i64;
     for (d,states) in attendance.iter().enumerate().take(facts.days){
         if facts.protected_days&(1u64<<d)!=0&&states[3..15].iter().all(|p|p.is_empty()){missing+=1;}

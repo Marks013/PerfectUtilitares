@@ -7,6 +7,8 @@ import { newInput,newEmployee } from "../../../src/components/escalas/workspace-
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
 import { generationScenarioBasis } from "../../../src/lib/escalas/hours-reference";
 import { restPairSummary } from "../../../src/lib/escalas/rest-quality";
+import { inferLeadership } from "../../../src/lib/escalas/leadership";
+import { movementLevel } from "../../../src/lib/escalas/movement";
 import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import type { EscalaInput } from "../../../src/lib/escalas/types";
 import { arch } from "node:os";
@@ -314,6 +316,47 @@ function combinedChecks(scenario:Scenario,trial:Trial){
   }
   return true;
 }
+// Independently reconstruct the original adjustable pair opportunity
+// coefficient from the frozen worker envelope, not from Rust telemetry.
+function temporalRestWeightAudit(frozen:string){
+  const input=JSON.parse(frozen).input as EscalaInput;
+  const days=dateRange(input.startDate,input.endDate),visible=new Set(visibleDates(input));
+  const saved=new Map(input.assignments.map(a=>[`${a.employeeId}\0${a.date}`,a]));
+  let count=1;
+  for(const person of input.employees){
+    if(person.planningEnabled===false||person.offMode!=="VARIABLE"||person.offPattern!=="ANY")continue;
+    const mutable=days.map(day=>{
+      const old=saved.get(`${person.id}\0${day}`);
+      return day>=person.activeFrom&&(!person.activeUntil||day<=person.activeUntil)
+        &&!input.policy.closedDates.includes(day)&&!person.fixedOffDays.includes(dayOfWeek(day))
+        &&!old?.locked&&old?.kind!=="ABSENCE"&&old?.kind!=="HOLIDAY";
+    });
+    for(const [i,day] of days.entries()){
+      if(visible.has(day)&&(mutable[i]||(i>0&&mutable[i-1])))count++;
+    }
+  }
+  return count;
+}
+function temporalLeadershipAudit(frozen:string,trial:Trial){
+  if(!valid(trial)||!trial.proposal)return null;
+  const input=JSON.parse(frozen).input as EscalaInput;
+  const employees=input.employees.filter(p=>p.planningEnabled!==false);
+  const presence=new Set(trial.proposal.assignments.filter(a=>a.kind==="WORK"||a.kind==="DUTY").map(a=>`${a.employeeId}\0${a.date}`));
+  const weights={LOW:1,NORMAL:2,HIGH:3};
+  let missing=0;
+  for(const sector of new Set(employees.map(p=>p.sector))){
+    const leaders=employees.filter(p=>{
+      const responsibility=p.leadership??inferLeadership(p);
+      return responsibility&&responsibility.role!=="NONE"&&responsibility.sectors.includes(sector);
+    });
+    for(const day of dateRange(input.startDate,input.endDate)){
+      if(input.policy.closedDates.includes(day))continue;
+      const level=movementLevel(input,sector,day);
+      if(level&&!leaders.some(p=>presence.has(`${p.id}\0${day}`)))missing+=weights[level];
+    }
+  }
+  return missing;
+}
 function temporalTieAudit(trial:Trial){
   if(!valid(trial)||!trial.proposal)return null;
   return trial.proposal.assignments.reduce((sum,a)=>sum+(a.kind==="OFF"?parseInt(digest(a.employeeId+":"+a.date).slice(0,6),16)%97:0),0);
@@ -401,6 +444,7 @@ async function main() {
           round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
             identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
             featureChecks:temporalChecks(name,scenario,trial),tieBreakAudit:temporalTieAudit(trial),
+            restWeightAudit:temporalRestWeightAudit(frozen),leadershipAudit:temporalLeadershipAudit(frozen,trial),
             scaleCoverageAudit:scaleCoverageAudit(trial),scaleRestAudit:scaleRestAudit(trial),
             comparisonCoverageAudit:cutover?scaleCoverageAudit(trial,true):null,...record}});
         }

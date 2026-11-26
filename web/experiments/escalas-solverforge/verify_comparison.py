@@ -684,8 +684,10 @@ def verify_temporal(rows):
                     verify_temporal_search(t)
                     rest=r["scaleRestAudit"]
                     check(integer(t.get("restWeight")) and 1<=t["restWeight"]<=1+people*days
+                          and t["restWeight"]==r.get("restWeightAudit")
                           and t.get("restPairs")==rest["adjustablePairs"] and t.get("restExcess")==rest["correctableExcess"]
                           and t["finalCost"][8]==t["restWeight"]*t["restExcess"]+t["restPairs"],"TEMPORAL_REST_SCORE")
+                    check(integer(r.get("leadershipAudit")) and t["finalCost"][9]==r["leadershipAudit"],"TEMPORAL_LEADERSHIP_SCORE")
                     objs=t.get("objectives")
                     check(isinstance(objs,list) and len(objs)==16 and tuple(o["name"] for o in objs)==TEMPORAL_OBJECTIVES,"TEMPORAL_OBJECTIVES")
                     for j,o in enumerate(objs):

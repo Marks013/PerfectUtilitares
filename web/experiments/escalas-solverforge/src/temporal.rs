@@ -157,9 +157,8 @@ fn rest_group_cost(rows:&[&Member],facts:&TemporalFacts)->i64{
         if facts.closed[day]{continue;}
         let (mut eligible,mut off)=(0i64,0i64);
         for row in rows{
-            if let Some(p)=row.pattern{
-                if p.states[day]!=ABS{eligible+=1;off+=i64::from(p.states[day]==OFF);}
-            }
+            if let Some(p)=row.pattern
+                &&p.states[day]!=ABS{eligible+=1;off+=i64::from(p.states[day]==OFF);}
         }
         if eligible>=2{total+=(7*off-2*eligible).abs();}
     }
@@ -187,8 +186,8 @@ fn global_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let rows:Vec<_>=members.collect();
     let mut out=[0;17];
     let Some(first)=rows.first() else{return out;};
-    let facts=rows.iter().map(|r|(r.sector,&r.facts)).collect::<BTreeMap<_,_>>();
-    if facts.values().any(|f|f.movement_enabled){
+    if rows.iter().any(|r|r.facts.movement_enabled){
+        let facts=rows.iter().map(|r|(r.sector,&r.facts)).collect::<BTreeMap<_,_>>();
         let present=leadership_presence(&rows);
         for (&sector,f) in &facts{
             for (day,&weight) in f.priority.iter().enumerate().take(f.days){
