@@ -4,11 +4,13 @@ mod coverage;
 mod guard;
 mod incremental;
 mod patterns;
+mod presence;
 mod seed;
 mod sunday_repair;
 
 pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
 pub use incremental::SectorAccumulator;
+pub use presence::Presence;
 pub use guard::SeedGuard;
 pub use patterns::{allowed_indices, catalog, full_mask, worked};
 #[cfg(test)]
@@ -32,11 +34,20 @@ mod tests {
     }
 
     #[test]
+    fn coverage_floors_support_250_people() {
+        let everyone=(0..250).fold(Presence::EMPTY,|a,i|a|Presence::one(i));
+        let role=Presence::one(64)|Presence::one(249);
+        let band=Band{day:0,minutes:60,estimated:true,minimum:250,eligible:everyone,role_floors:vec![(role,2)]};
+        assert_eq!(band.gap(everyone),0);
+        assert_eq!(band.gap(everyone&!role),2);
+        assert_eq!(band.gap_components(everyone&!Presence::one(249)),vec![1,1]);
+    }
+    #[test]
     fn role_and_general_floors_are_not_additive() {
-        let b = Band { day: 0, minutes: 60, estimated: true, minimum: 2, eligible: 3,
-            role_floors: vec![(1, 1), (2, 1)] };
-        assert_eq!(b.gap(1) * b.minutes, 60);
-        assert_eq!(b.gap(0) * b.minutes, 120);
-        assert_eq!(b.gap(3), 0);
+        let b = Band { day: 0, minutes: 60, estimated: true, minimum: 2, eligible: Presence::from_low(3),
+            role_floors: vec![(Presence::from_low(1), 1), (Presence::from_low(2), 1)] };
+        assert_eq!(b.gap(Presence::from_low(1)) * b.minutes, 60);
+        assert_eq!(b.gap(Presence::EMPTY) * b.minutes, 120);
+        assert_eq!(b.gap(Presence::from_low(3)), 0);
     }
 }

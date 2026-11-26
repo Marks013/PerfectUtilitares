@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::domain::Plan;
 use super::coverage::{Cost,Member,group_cost,validate_complete};
 use super::patterns::worked;
+use super::presence::Presence;
 
 struct SectorQuality {
     cost:Cost,
@@ -16,12 +17,12 @@ fn sector_quality(plan:&Plan)->BTreeMap<usize,SectorQuality> {
     }
     members.into_iter().map(|(sector,rows)|{
         let facts=&rows[0].facts;
-        let mut attendance=[0u64;28];
+        let mut attendance=[Presence::EMPTY;28];
         let mut present=0u32;
         for row in &rows {
             if let Some(mask)=row.mask {
                 for day in 0..facts.days {
-                    if worked(mask,day) {attendance[day]|=1u64<<row.id;present|=1u32<<day;}
+                    if worked(mask,day) {attendance[day]|=Presence::one(row.id);present|=1u32<<day;}
                 }
             }
         }

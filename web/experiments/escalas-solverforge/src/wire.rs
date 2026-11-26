@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::domain::{Employee, Plan};
-use crate::model::{Band, Sector, allowed_indices, catalog, full_mask};
+use crate::model::{Band, Sector, Presence, allowed_indices, catalog, full_mask};
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
@@ -213,11 +213,11 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             }
             if general==0 && floors.is_empty() {continue;}
             let eligible=people.iter().enumerate().filter(|(_,p)|p.sector==sector && p.segments.iter().any(|(s,e)|*s<=a&&*e>=b))
-                .fold(0u64,|m,(i,_)|m|(1u64<<i));
+                .fold(Presence::EMPTY,|m,(i,_)|m|Presence::one(i));
             let minimum=general.max(floors.values().sum());
             let role_floors=floors.into_iter().map(|(role,min)|{
                 let mask=people.iter().enumerate().filter(|(_,p)|p.sector==sector&&p.role==role)
-                    .fold(0u64,|m,(i,_)|m|(1u64<<i));(mask,min)
+                    .fold(Presence::EMPTY,|m,(i,_)|m|Presence::one(i));(mask,min)
             }).collect();
             facts[sector].bands.push(Band{day,minutes:(b-a) as i64,estimated,minimum,eligible,role_floors});
             bands+=1;check(bands<=12000,"BAND_LIMIT")?;

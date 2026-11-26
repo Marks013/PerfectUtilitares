@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 use crate::domain::Plan;
 use super::patterns::{rest_pairs, worked};
+use super::presence::Presence;
 
 // Greedy seed: only legal personal patterns, no CP-SAT/Timefold output.
 // Precompute marginal coverage gains for each civil day. Do not mutate the
@@ -10,20 +11,20 @@ use super::patterns::{rest_pairs, worked};
 fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
     if plan.employees.iter().all(|p| p.pattern.is_some()) { return true; }
     let mut selected = Vec::with_capacity(plan.employees.len());
-    let mut attendance = BTreeMap::<usize, [u64; 28]>::new();
+    let mut attendance = BTreeMap::<usize, [Presence; 28]>::new();
     for person in &plan.employees {
         if let Some(mask) = person.mask() {
-            let sector = attendance.entry(person.sector).or_insert([0; 28]);
+            let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 28]);
             for day in 0..person.facts.days {
-                if worked(mask, day) { sector[day] |= 1u64 << person.id; }
+                if worked(mask, day) { sector[day] |= Presence::one(person.id); }
             }
         }
     }
     for person in &plan.employees {
         if Instant::now() >= deadline { return false; }
         if let Some(index) = person.pattern { selected.push(index); continue; }
-        let sector = attendance.entry(person.sector).or_insert([0; 28]);
-        let bit = 1u64 << person.id;
+        let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 28]);
+        let bit = Presence::one(person.id);
         let mut hard = [0i64; 28];
         let mut gap = [0i64; 28];
         for band in &person.facts.bands {
@@ -40,7 +41,7 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
                 if !worked(mask, day) { continue; }
                 rank[0] += hard[day];
                 if day % 7 == 0 { rank[1] += gap[day]; }
-                rank[2] += if sector[day] == 0 { 1 } else { 0 };
+                rank[2] += if sector[day].is_empty() { 1 } else { 0 };
                 rank[3] += gap[day];
                 rank[5] -= sector[day].count_ones() as i64;
             }

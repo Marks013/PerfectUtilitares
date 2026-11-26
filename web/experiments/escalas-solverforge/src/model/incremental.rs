@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use super::coverage::{Cost, Member, Sector};
 use super::patterns::{rest_pairs, worked};
+use super::presence::Presence;
 use solverforge::stream::collector::Accumulator;
 
 #[derive(Clone, Copy, Default)]
@@ -22,7 +23,7 @@ pub struct SectorAccumulator {
     rows: BTreeMap<usize, Member>,
     facts: Option<Arc<Sector>>,
     bands_by_day: [Vec<usize>; 28],
-    attendance: [u64; 28],
+    attendance: [Presence; 28],
     day_costs: [DayCost; 28],
     personal: Cost,
     cohorts: BTreeMap<usize,CohortStats>,
@@ -46,7 +47,7 @@ impl SectorAccumulator {
     fn apply(&mut self, member:&Member, insert:bool) {
         let Some(mask)=member.mask else {return;};
         let days=member.facts.days;
-        let bit=1u64<<member.id;
+        let bit=Presence::one(member.id);
         let sign=if insert {1} else {-1};
         for day in 0..days {
             if !worked(mask,day) {continue;}
@@ -91,7 +92,7 @@ impl SectorAccumulator {
             cost[3]+=d.estimated;
             if day%7==0 {cost[1]+=d.estimated;}
             cost[4]=cost[4].max(d.peak);
-            if facts.members>=2 && self.attendance[day]==0 {cost[2]+=1;}
+            if facts.members>=2 && self.attendance[day].is_empty() {cost[2]+=1;}
         }
         for stats in self.cohorts.values() {
             if stats.members<2 {continue;}
@@ -149,8 +150,8 @@ mod tests {
     fn every_incremental_state_matches_independent_full_score() {
         for days in [7,28] {
             let facts=Arc::new(Sector{days,members:5,bands:(0..days).flat_map(|day| [
-                Band{day,minutes:60,estimated:true,minimum:3,eligible:31,role_floors:vec![(3,1),(28,1)]},
-                Band{day,minutes:30,estimated:false,minimum:1,eligible:15,role_floors:vec![]}
+                Band{day,minutes:60,estimated:true,minimum:3,eligible:Presence::from_low(31),role_floors:vec![(Presence::from_low(3),1),(Presence::from_low(28),1)]},
+                Band{day,minutes:30,estimated:false,minimum:1,eligible:Presence::from_low(15),role_floors:vec![]}
             ]).collect()});
             let all=catalog(days);
             let mut acc=SectorAccumulator::default();

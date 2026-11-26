@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::domain::Plan;
 use super::patterns::{legal, rest_pairs, worked};
+use super::presence::Presence;
 
 // Only November E2, 7 or 28 days, <=50 synthetic people, fixed clock.
 // Each legal value is an index into the common enumerated pattern catalogue.
@@ -12,20 +13,20 @@ pub struct Band {
     pub minutes: i64,
     pub estimated: bool,
     pub minimum: i64,
-    pub eligible: u64,
-    pub role_floors: Vec<(u64, i64)>,
+    pub eligible: Presence,
+    pub role_floors: Vec<(Presence, i64)>,
 }
 
 impl Band {
     // The first entry is the general/combined headcount deficit; subsequent
     // entries preserve every role floor independently for selection guards.
-    pub fn gap_components(&self, attended:u64)->Vec<i64>{
+    pub fn gap_components(&self, attended:Presence)->Vec<i64>{
         let presence=attended&self.eligible;
         std::iter::once((self.minimum-presence.count_ones() as i64).max(0))
             .chain(self.role_floors.iter().map(|(eligible,minimum)|
                 (*minimum-(presence&eligible).count_ones() as i64).max(0))).collect()
     }
-    pub fn gap(&self, attended: u64) -> i64 {
+    pub fn gap(&self, attended: Presence) -> i64 {
         let presence = attended & self.eligible;
         let total = (self.minimum - presence.count_ones() as i64).max(0);
         let roles: i64 = self.role_floors.iter()
@@ -59,14 +60,14 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let mut rows = rows.into_iter();
     let Some(first) = rows.next() else { return [0; 9]; };
     let facts = &first.facts;
-    let mut attendance = [0u64; 28];
+    let mut attendance = [Presence::EMPTY; 28];
     let mut cost = [0i64; 9];
     // Compare equivalent roles and admissible clocks, as CP-SAT does.
     let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
         let Some(mask) = member.mask else { continue; };
         for day in 0..facts.days {
-            if worked(mask, day) { attendance[day] |= 1u64 << member.id; }
+            if worked(mask, day) { attendance[day] |= Presence::one(member.id); }
         }
         let pairs = rest_pairs(mask, member.locked_off, facts.days);
         let imposed_pairs = (member.locked_off & (member.locked_off >> 1)).count_ones() as i64;
@@ -97,7 +98,7 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
             cost[4] = cost[4].max(gap);
         } else { cost[0] += gap * band.minutes; }
     }
-    if facts.members >= 2 { cost[2] = attendance[..facts.days].iter().filter(|&&v| v == 0).count() as i64; }
+    if facts.members >= 2 { cost[2] = attendance[..facts.days].iter().filter(|v| v.is_empty()).count() as i64; }
     for (rates, eligible, worked, members) in cohorts.values() {
         if *members < 2 { continue; }
         if let (Some(lo),Some(hi))=(rates.iter().min(),rates.iter().max()) { cost[7] += hi-lo; }
