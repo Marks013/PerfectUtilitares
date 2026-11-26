@@ -166,10 +166,11 @@ export function measureReferences(scenario: Scenario) {
  * E2 fixtures only. Stable sorted ordinals, no employee/sector names or dates.
  * Role/time guards are still checked by the real TS comparator.
  */
-function auditSectorMetrics(input: EscalaInput, quality: ReturnType<typeof coverageQuality>) {
+function auditSectorMetrics(input: EscalaInput, estimatedQuality: ReturnType<typeof coverageQuality>) {
   const dates = dateRange(input.startDate, input.endDate);
   if (input.branchCode !== "SYNTH" || input.startDate !== "2026-11-01" || input.visibleMonth
     || (dates.length !== 7 && dates.length !== 28)) return undefined;
+  const quality = input.demands.every(d => d.estimated === true) ? estimatedQuality : coverageQuality(input);
   const visible = new Set(visibleDates(input));
   const sectors = [...new Set([...input.employees.map(p => p.sector), ...input.demands.map(d => d.sector)])].sort();
   return sectors.map(sector => {
@@ -210,8 +211,7 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCove
   const estimated = { ...proposal, demands: proposal.demands.filter(d => d.estimated === true) };
   const quality = coverageQuality(estimated);
   const normalized = [...quality.daily.values()].reduce((sum, count) => sum + count, 0);
-  const allCoverage = proposal.demands.every(d => d.estimated === true) ? quality : coverageQuality(proposal);
-  const coverageAudit = auditSectorMetrics(proposal, allCoverage);
+  const coverageAudit = auditSectorMetrics(proposal, quality);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
     normalizedEstimatedShortage: normalized, ...(coverageAudit ? { coverageAudit } : {}),
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },

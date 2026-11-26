@@ -97,6 +97,7 @@ jobs:
           failed=0
           ESCALAS_TIMEFOLD_PATTERN_SEED=1 node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts branch-50-four-weeks 5 "$baseline" "$candidate" | tee "$RUNNER_TEMP/timefold-e2-pattern.jsonl" || failed=1
           python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2-pattern.jsonl" --pattern
+          python3 experiments/escalas-timefold/compare_pattern_ablation.py "$RUNNER_TEMP/timefold-e2.jsonl" "$RUNNER_TEMP/timefold-e2-pattern.jsonl" | tee "$RUNNER_TEMP/timefold-e2-ablation.json"
           test "$failed" = 0
       - name: Keep aggregate evidence only
         if: always()
@@ -107,5 +108,6 @@ jobs:
             ${{ runner.temp }}/timefold-e2-smoke.jsonl
             ${{ runner.temp }}/timefold-e2.jsonl
             ${{ runner.temp }}/timefold-e2-pattern.jsonl
+            ${{ runner.temp }}/timefold-e2-ablation.json
           if-no-files-found: ignore
           retention-days: 7
