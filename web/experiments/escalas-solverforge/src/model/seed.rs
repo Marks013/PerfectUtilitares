@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 use crate::domain::Plan;
-use super::patterns::{rest_pairs, worked};
+use super::patterns::worked;
 use super::presence::Presence;
 
 // Greedy seed: only legal personal patterns, no CP-SAT/Timefold output.
@@ -32,11 +32,11 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
             let gain = (band.gap(present) - band.gap(present | bit)) * band.minutes;
             if band.estimated { gap[band.day] += gain; } else { hard[band.day] += gain; }
         }
-        let mut best: Option<([i64; 7], usize)> = None;
+        let mut best: Option<([i64; 8], usize)> = None;
         for (n, &index) in person.allowed.iter().enumerate() {
             if n % 128 == 0 && Instant::now() >= deadline { return false; }
             let mask = person.catalog[index];
-            let mut rank = [0i64; 7];
+            let mut rank = [0i64; 8];
             for day in 0..person.facts.days {
                 if !worked(mask, day) { continue; }
                 rank[0] += hard[day];
@@ -45,8 +45,9 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
                 rank[3] += gap[day];
                 rank[5] -= sector[day].count_ones() as i64;
             }
-            rank[4] = -rest_pairs(mask, person.locked_off, person.facts.days);
+            rank[4] = -person.rules.spacing(mask,person.locked_off,person.facts.days).1;
             rank[6] = -(((person.saved_work ^ mask) & person.saved_known).count_ones() as i64);
+            rank[7]=-person.rules.preferences(mask,person.facts.days);
             if best.as_ref().is_none_or(|(old, _)| rank > *old) { best = Some((rank, index)); }
         }
         let Some((_, index)) = best else { return false; };

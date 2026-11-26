@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 use crate::domain::{Employee,Plan};
 use super::coverage::{group_cost,Member,Sector};
-use super::patterns::{worked,rest_pairs};
+use super::patterns::{worked,PersonalRules};
 use super::presence::Presence;
 
 const MAX_STATES:usize=20_000;
@@ -50,12 +50,12 @@ fn sunday_cost(facts:&Sector,att:&[Presence;28])->[i64;2] {
     }
     result
 }
-type SignatureCache=BTreeMap<(u32,u32,usize,u32),Vec<Vec<usize>>>;
+type SignatureCache=BTreeMap<(u32,u32,usize,u32,PersonalRules),Vec<Vec<usize>>>;
 fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<SignatureCache>{
     let mut cache=SignatureCache::new();
     for &i in members{
         let p=&plan.employees[i];
-        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks);
+        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules);
         if let std::collections::btree_map::Entry::Vacant(entry)=cache.entry(key){
             let mut buckets=vec![Vec::new();16];
             for (n,&index) in p.allowed.iter().enumerate(){
@@ -68,7 +68,7 @@ fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<Signa
     Some(cache)
 }
 fn buckets<'a>(cache:&'a SignatureCache,p:&Employee)->&'a [Vec<usize>]{
-    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks)]
+    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules)]
 }
 fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->Option<usize>{
     let mut hard=[0i64;28];let mut estimated=[0i64;28];
@@ -99,14 +99,15 @@ fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->
     for (n,&i) in candidates.iter().enumerate(){
         if n%128==0&&Instant::now()>=deadline{return None;}
         let mask=p.catalog[i];
-        let mut rank=[0i64;7];
+        let mut rank=[0i64;8];
         for w in 0..p.facts.days/7{
             let row=weekly[w][((mask>>(w*7))&127) as usize];
             for i in 0..4{rank[i]+=row[i];}
             rank[5]+=row[4];
         }
-        rank[4]=-rest_pairs(mask,p.locked_off,p.facts.days);
+        rank[4]=-p.rules.spacing(mask,p.locked_off,p.facts.days).1;
         rank[6]=-(((p.saved_work^mask)&p.saved_known).count_ones() as i64);
+        rank[7]=-p.rules.preferences(mask,p.facts.days);
         if best.is_none_or(|(prior,_)|rank>prior){best=Some((rank,i));}
     }
     best.map(|(_,i)|i)

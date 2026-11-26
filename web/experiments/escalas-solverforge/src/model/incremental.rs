@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use super::coverage::{Cost, Member, Sector};
-use super::patterns::{rest_pairs, worked};
+use super::patterns::worked;
 use super::presence::Presence;
 use solverforge::stream::collector::Accumulator;
 
@@ -55,11 +55,12 @@ impl SectorAccumulator {
             else { self.attendance[day] &= !bit; }
             self.refresh(day);
         }
-        let pairs=rest_pairs(mask,member.locked_off,days);
-        let imposed=(member.locked_off & (member.locked_off>>1)).count_ones() as i64;
-        self.personal[5] += sign * ((pairs+imposed-2).max(0)-(imposed-2).max(0));
-        self.personal[6] += sign * pairs;
-        self.personal[8] += sign * ((member.saved_work ^ mask) & member.saved_known).count_ones() as i64;
+        let (excess,pairs)=member.rules.spacing(mask,member.locked_off,days);
+        self.personal[5]+=sign*excess;self.personal[6]+=sign*pairs;
+        let changes=((member.saved_work^mask)&member.saved_known).count_ones() as i64;
+        self.personal[8]+=sign*i64::from(changes>0);
+        self.personal[9]+=sign*changes;
+        self.personal[10]+=sign*member.rules.preferences(mask,days);
         let stats=self.cohorts.entry(member.cohort).or_default();
         if insert {stats.members+=1;} else {stats.members-=1;}
         let mut available=0;
@@ -84,7 +85,7 @@ impl SectorAccumulator {
     }
 
     fn cost(&self)->Cost {
-        let Some(facts)=&self.facts else{return [0;9];};
+        let Some(facts)=&self.facts else{return [0;11];};
         let mut cost=self.personal;
         for day in 0..facts.days {
             let d=self.day_costs[day];
@@ -158,7 +159,7 @@ mod tests {
             let mut acc=SectorAccumulator::default();
             let mut rows=BTreeMap::new();
             for id in 0..members{
-                let member=Member{id,cohort:id%2,mask:Some(patterns[id%patterns.len()]),
+                let member=Member{id,cohort:id%2,rules:Default::default(),mask:Some(patterns[id%patterns.len()]),
                     locked_off:0,saved_known:0,saved_work:0,facts:Arc::clone(&facts)};
                 acc.accumulate(member.clone());rows.insert(id,member);check(&acc,&rows);
             }
@@ -182,7 +183,7 @@ mod tests {
             let mut rows=BTreeMap::new();
             check(&acc,&rows);
             for id in 0..5 {
-                let m=Member{id,cohort:if id<3 {0} else {1},mask:if id==4 {None} else {Some(all[id*3])},locked_off:if id%2==0 {1} else {0},
+                let m=Member{id,cohort:if id<3 {0} else {1},rules:super::super::patterns::PersonalRules{prefer_consecutive:id%2==0,preferred:4,..Default::default()},mask:if id==4 {None} else {Some(all[id*3])},locked_off:if id%2==0 {1} else {0},
                     saved_known:127,saved_work:all[id],facts:Arc::clone(&facts)};
                 acc.accumulate(m.clone());rows.insert(id,m);check(&acc,&rows);
             }

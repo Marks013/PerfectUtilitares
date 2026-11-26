@@ -2,7 +2,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::domain::Plan;
-use super::patterns::{legal, rest_pairs, worked};
+use super::patterns::{PersonalRules, legal_profile, worked};
 use super::presence::Presence;
 
 // Only November E2, 7 or 28 days, <=50 synthetic people, fixed clock.
@@ -47,6 +47,7 @@ pub struct Sector {
 pub struct Member {
     pub id: usize,
     pub cohort: usize,
+    pub rules:PersonalRules,
     pub mask: Option<u32>,
     pub locked_off: u32,
     pub saved_known: u32,
@@ -54,14 +55,14 @@ pub struct Member {
     pub facts: Arc<Sector>,
 }
 
-pub type Cost = [i64; 9];
+pub type Cost = [i64; 11];
 
 pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let mut rows = rows.into_iter();
-    let Some(first) = rows.next() else { return [0; 9]; };
+    let Some(first) = rows.next() else { return [0; 11]; };
     let facts = &first.facts;
     let mut attendance = [Presence::EMPTY; 28];
-    let mut cost = [0i64; 9];
+    let mut cost = [0i64; 11];
     // Compare equivalent roles and admissible clocks, as CP-SAT does.
     let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
@@ -69,11 +70,12 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
         for day in 0..facts.days {
             if worked(mask, day) { attendance[day] |= Presence::one(member.id); }
         }
-        let pairs = rest_pairs(mask, member.locked_off, facts.days);
-        let imposed_pairs = (member.locked_off & (member.locked_off >> 1)).count_ones() as i64;
-        cost[5] += (pairs + imposed_pairs - 2).max(0) - (imposed_pairs - 2).max(0);
-        cost[6] += pairs;
-        cost[8] += ((member.saved_work ^ mask) & member.saved_known).count_ones() as i64;
+        let (excess,pairs)=member.rules.spacing(mask,member.locked_off,facts.days);
+        cost[5]+=excess;cost[6]+=pairs;
+        let changes=((member.saved_work^mask)&member.saved_known).count_ones() as i64;
+        cost[8]+=i64::from(changes>0);
+        cost[9]+=changes;
+        cost[10]+=member.rules.preferences(mask,facts.days);
         let stats = cohorts.entry(member.cohort).or_default();
         stats.3 += 1;
         let mut available = 0;
@@ -116,14 +118,14 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
 
 pub fn evaluate(plan: &Plan) -> Cost {
     let mut groups = BTreeMap::<usize, Vec<Member>>::new();
-    let mut total = [0i64; 9];
+    let mut total = [0i64; 11];
     for person in &plan.employees {
         if person.pattern.is_none() { total[0] += 1; }
         groups.entry(person.sector).or_default().push(person.member());
     }
     for group in groups.values() {
         let cost = group_cost(group.iter());
-        for i in 0..9 { total[i] += cost[i]; }
+        for i in 0..11 { total[i] += cost[i]; }
     }
     total
 }
@@ -131,6 +133,6 @@ pub fn evaluate(plan: &Plan) -> Cost {
 pub fn validate_complete(plan: &Plan) -> bool {
     plan.employees.iter().all(|p| p.pattern.is_some_and(|index| {
         p.allowed.binary_search(&index).is_ok()
-        && p.mask().is_some_and(|mask| legal(mask, p.facts.days, p.locked_work, p.locked_off, p.sunday_cap, p.comparable_weeks))
+        && p.mask().is_some_and(|mask| legal_profile(mask, p.facts.days, p.locked_work, p.locked_off, p.sunday_cap, p.comparable_weeks,p.rules))
     })) && evaluate(plan)[0] == 0
 }

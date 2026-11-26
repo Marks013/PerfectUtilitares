@@ -1,18 +1,18 @@
 //! Adapter for SolverForge 0.31.2, whose BendableScore implements Score
 //! but not ParseableScore (required by the native solve factory).
-//! Delegate all numeric operations and ordering to the original nine-level
+//! Delegate all numeric operations and ordering to the original eleven-level
 //! score. No reweighting, collapsing objectives or dependency changes.
 use solverforge::{BendableScore, ParseableScore, Score, ScoreLevel, ScoreParseError};
 use std::fmt;
 use std::ops::{Add, Neg, Sub};
 
-type Inner = BendableScore<1, 8>;
+type Inner = BendableScore<1, 10>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EscalasScore(Inner);
 
 impl EscalasScore {
-    pub const fn of(hard: [i64; 1], soft: [i64; 8]) -> Self {
+    pub const fn of(hard: [i64; 1], soft: [i64; 10]) -> Self {
         Self(Inner::of(hard, soft))
     }
 }
@@ -77,7 +77,7 @@ impl Score for EscalasScore {
 impl ParseableScore for EscalasScore {
     fn parse(text: &str) -> Result<Self, ScoreParseError> {
         fn invalid() -> ScoreParseError {
-            ScoreParseError { message: "Expected [hard]hard/[eight soft levels separated by /]soft".into() }
+            ScoreParseError { message: "Expected [hard]hard/[ten soft levels separated by /]soft".into() }
         }
         let (hard, soft) = text.strip_prefix('[')
             .and_then(|s| s.split_once("]hard/["))
@@ -85,7 +85,7 @@ impl ParseableScore for EscalasScore {
         let hard = hard.parse::<i64>().map_err(|_| invalid())?;
         let soft = soft.strip_suffix("]soft").ok_or_else(invalid)?;
         let mut parts = soft.split('/');
-        let mut levels = [0i64; 8];
+        let mut levels = [0i64; 10];
         for level in &mut levels {
             *level = parts.next().ok_or_else(invalid)?.parse().map_err(|_| invalid())?;
         }
@@ -100,8 +100,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_text_roundtrip_and_all_nine_levels() {
-        let values = [-1, 0, -23, 4, 5, -6, 7, i64::MIN, i64::MAX];
+    fn exact_text_roundtrip_and_all_eleven_levels() {
+        let values = [-1, 0, -23, 4, 5, -6, 7, 8, 9, i64::MIN, i64::MAX];
         let score = EscalasScore::from_level_numbers(&values);
         assert_eq!(EscalasScore::parse(&score.to_string_repr()).unwrap(), score);
         assert_eq!(score.to_level_numbers(), values.to_vec());
@@ -120,9 +120,9 @@ mod tests {
 
     #[test]
     fn arithmetic_order_and_overflow_match_bendable_score() {
-        let inner = Inner::of([0], [-1, 3, -4, 5, 6, 7, 8, 9]);
+        let inner = Inner::of([0], [-1, 3, -4, 5, 6, 7, 8, 9, 10, 11]);
         let score = EscalasScore(inner);
-        let other = EscalasScore::of([0], [0, -100, -100, -100, -100, -100, -100, -100]);
+        let other = EscalasScore::of([0], [0, -100, -100, -100, -100, -100, -100, -100, -100, -100]);
         assert_eq!(score.cmp(&other), inner.cmp(&other.0));
         assert!(other > score);
         assert_eq!((score + other).0, inner + other.0);
@@ -133,8 +133,8 @@ mod tests {
         assert_eq!(score.divide(2.0).0, inner.divide(2.0));
         assert_eq!(score.abs().0, inner.abs());
         assert_eq!(score.to_scalar(), inner.to_scalar());
-        let max = EscalasScore::of([i64::MAX], [0; 8]);
-        let one = EscalasScore::of([1], [0; 8]);
+        let max = EscalasScore::of([i64::MAX], [0; 10]);
+        let one = EscalasScore::of([1], [0; 10]);
         let (wrapped, overflow) = max.overflowing_add(one);
         let expected = max.0.overflowing_add(one.0);
         assert!(overflow);

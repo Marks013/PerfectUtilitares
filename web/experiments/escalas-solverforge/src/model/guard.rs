@@ -52,7 +52,7 @@ impl SeedGuard {
                 && next.gaps.len()==before.gaps.len()
                 && next.gaps.iter().zip(&before.gaps).all(|(a,b)|a<=b);
             let tied=next.cost[..5]==before.cost[..5] && next.gaps==before.gaps && next.present==before.present;
-            operational && (!tied || (5..9).all(|i|next.cost[i]<=before.cost[i]))
+            operational && (!tied || (5..11).all(|i|next.cost[i]<=before.cost[i]))
         })
     }
     pub fn restore(&self,plan:&mut Plan) {
