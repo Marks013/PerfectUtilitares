@@ -17,17 +17,21 @@ final class PatternSeeder {
     }
     private record PatternRule(int bits, int weeks) {}
     private record Shape(int days, int pinnedWork, int pinnedOff,
-                         List<Rule> rules, List<PatternRule> patterns) {
+                         List<Rule> rules, List<PatternRule> patterns, boolean consecutive) {
         boolean allows(int mask) {
             if ((mask & pinnedWork) != pinnedWork || (mask & pinnedOff) != 0) return false;
             for (Rule rule : rules) if (!rule.allows(mask)) return false;
+            if(consecutive){
+                int off=~mask&((1<<days)-1);
+                if((off&~((off<<1)|(off>>>1)))!=0)return false;
+            }
             int common = 0;
             for (PatternRule pattern : patterns)
                 if (Integer.bitCount(~mask & pattern.bits()) == pattern.weeks() && ++common > 1) return false;
             return true;
         }
     }
-    private record Rank(long hard, long total, long sunday, long service, long rest, long balance, long stability)
+    private record Rank(long hard, long total, long sunday, long service, long rest, long balance, long stability,long preference)
             implements Comparable<Rank> {
         @Override public int compareTo(Rank other) {
             int c = Long.compare(hard, other.hard);
@@ -43,7 +47,9 @@ final class PatternSeeder {
             c = Long.compare(rest, other.rest);
             if (c != 0) return c;
             c = Long.compare(balance, other.balance);
-            return c != 0 ? c : Long.compare(stability, other.stability);
+            if(c!=0)return c;
+            c=Long.compare(stability,other.stability);
+            return c!=0?c:Long.compare(preference,other.preference);
         }
     }
 
@@ -78,7 +84,7 @@ final class PatternSeeder {
             if (Integer.bitCount(entry.getValue()) != entry.getKey().weeks()) return null;
             patterns.add(new PatternRule(entry.getValue(), entry.getKey().weeks()));
         }
-        return new Shape(length, pinnedWork, pinnedOff, List.copyOf(rules), List.copyOf(patterns));
+        return new Shape(length, pinnedWork, pinnedOff, List.copyOf(rules), List.copyOf(patterns),days.getFirst().isConsecutiveRequired());
     }
 
     private static boolean enumerate(Shape shape, int offset, int mask, List<Integer> result, long deadline) {
@@ -128,20 +134,26 @@ final class PatternSeeder {
     private record Cohort(List<Day> days, List<Integer> masks, List<BandState> bands, int[] staffed) {}
 
     private static Rank rank(int mask, List<Day> days, int[] staffed, long[] hard, long[] total) {
-        long h = 0, t = 0, s = 0, service = 0, balance = 0, stability = 0;
+        long h = 0, t = 0, s = 0, service = 0, balance = 0, stability = 0, preference=0;
         for (int bits = mask; bits != 0; bits &= bits - 1) {
             int day = Integer.numberOfTrailingZeros(bits);
             h += hard[day]; t += total[day];
             if (day % 7 == 0) s += total[day];
             if (staffed[day] == 0) service++;
             balance -= staffed[day];
+            if(days.get(day).isPreferredOff())preference--;
             Day.State prior = days.get(day).state();
             if (prior != null) stability += prior == Day.State.WORK ? 1 : -1;
         }
-        return new Rank(h, t, s, service, -adjustablePairs(mask, days), balance, stability);
+        if(days.getFirst().isPreferConsecutive()){
+            int off=~mask&((1<<days.size())-1);
+            preference+=Integer.bitCount(off&(off>>>1));
+        }
+        return new Rank(h, t, s, service, -adjustablePairs(mask, days), balance, stability,preference);
     }
 
     static int adjustablePairs(int workMask, List<Day> days) {
+        if(!days.getFirst().isAdjustableRest())return 0;
         int offMask = ~workMask & ((1 << days.size()) - 1);
         int count = 0;
         for (int bits = offMask & (offMask >>> 1); bits != 0; bits &= bits - 1) {

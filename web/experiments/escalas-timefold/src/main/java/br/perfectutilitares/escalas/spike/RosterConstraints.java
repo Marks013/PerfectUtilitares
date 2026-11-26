@@ -16,7 +16,7 @@ import static ai.timefold.solver.core.api.score.stream.Joiners.filtering;
 
 /** E2 only: incremental fixed-clock model; NOT the full PerfectUtilitares priority policy. */
 public class RosterConstraints implements ConstraintProvider {
-    public static final int SOFT_LEVELS = 10;
+    public static final int SOFT_LEVELS = 12;
     private static final BendableScore HARD = BendableScore.ofHard(1, SOFT_LEVELS, 0, 1L);
     private static final BendableScore GUARD = BendableScore.ofSoft(1, SOFT_LEVELS, 0, 1L);
     private static final BendableScore SUNDAY_RECOVERY = BendableScore.ofSoft(1, SOFT_LEVELS, 1, 1L);
@@ -32,11 +32,11 @@ public class RosterConstraints implements ConstraintProvider {
     public Constraint[] defineConstraints(ConstraintFactory factory) {
         var estimated = deficits(factory, true);
         return new Constraint[] {
-            windowCounts(factory), emptyWindow(factory), variableRestPattern(factory),
+            windowCounts(factory), emptyWindow(factory), variableRestPattern(factory), mandatoryConsecutiveRest(factory),
             confirmedCoverage(factory), guardTotal(estimated), guardSunday(estimated),
             guardPeak(estimated), guardPresence(factory), recoverSeedSunday(estimated), recoverService(factory), totalEstimatedCoverage(estimated),
             sundayCoverage(estimated), sectorPeak(estimated), dailyService(factory), adjustableRestPairs(factory),
-            sundaySpread(factory), sundayDateSpread(factory), changes(factory)
+            sundaySpread(factory), sundayDateSpread(factory), changedPeople(factory), changes(factory), preferredOff(factory), preferredConsecutive(factory)
         };
     }
 
@@ -66,6 +66,13 @@ public class RosterConstraints implements ConstraintProvider {
                 .filter((person, count) -> count > 1)
                 .penalize(HARD, (person, count) -> count - 1)
                 .asConstraint("Variable weekly pattern must vary");
+    }
+
+    Constraint mandatoryConsecutiveRest(ConstraintFactory f) {
+        return f.forEach(Day.class).filter(day->day.isConsecutiveRequired()&&day.resting())
+                .ifNotExists(Day.class,equal(Day::person,Day::person),
+                        filtering((day,peer)->peer.resting()&&Math.abs(day.index()-peer.index())==1))
+                .penalize(HARD).asConstraint("Mandatory adjacent regular rest");
     }
 
     /** One gap per disjoint band, including a band with no WORK member. */
@@ -141,7 +148,7 @@ public class RosterConstraints implements ConstraintProvider {
      * ANY variable-rest cohort. Two imposed OFFs are not penalized.
      */
     Constraint adjustableRestPairs(ConstraintFactory f) {
-        return f.forEach(Day.class).filter(Day::resting)
+        return f.forEach(Day.class).filter(day->day.resting()&&day.isAdjustableRest())
                 .join(Day.class, equal(Day::person, Day::person),
                         equal((Day before) -> before.index() + 1, Day::index),
                         filtering((before, after) -> after.resting() && (!before.isPinned() || !after.isPinned())))
@@ -215,9 +222,23 @@ public class RosterConstraints implements ConstraintProvider {
         return spread(rates, "Sunday date rate spread");
     }
 
+    Constraint changedPeople(ConstraintFactory f) {
+        return f.forEach(Day.class).filter(day->day.saved()!=null&&day.state()!=day.saved())
+                .groupBy(Day::person).penalize(level(6)).asConstraint("People changed");
+    }
     Constraint changes(ConstraintFactory f) {
         return f.forEach(Day.class).filter(day -> day.saved() != null && day.state() != day.saved())
-                .penalize(level(6))
+                .penalize(level(7))
                 .asConstraint("Changes to saved day");
+    }
+    Constraint preferredOff(ConstraintFactory f) {
+        return f.forEach(Day.class).filter(day->day.isPreferredOff()&&day.working())
+                .penalize(level(8)).asConstraint("Preferred weekday rest");
+    }
+    Constraint preferredConsecutive(ConstraintFactory f) {
+        return f.forEach(Day.class).filter(day->day.isPreferConsecutive()&&day.resting())
+                .join(Day.class,equal(Day::person,Day::person),equal(day->day.index()+1,Day::index),
+                        filtering((before,after)->after.resting()))
+                .reward(level(8)).asConstraint("Preferred consecutive rests");
     }
 }

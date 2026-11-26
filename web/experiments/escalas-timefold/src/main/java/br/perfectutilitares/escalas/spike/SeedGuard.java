@@ -20,6 +20,12 @@ final class SeedGuard {
             long count = people.getOrDefault(window.person(), List.of()).stream().filter(window::matches).count();
             if (window.violation(count) != 0) return false;
         }
+        for(var cells:people.values()) {
+            var off=new HashSet<Integer>();
+            for(Day day:cells) if(day.resting())off.add(day.index());
+            for(Day day:cells) if(day.isConsecutiveRequired()&&day.resting()
+                    && !off.contains(day.index()-1)&&!off.contains(day.index()+1))return false;
+        }
         var patternCounts = new HashMap<Day.PatternKey, Integer>();
         for (Day day : roster.days()) if (day.resting() && day.patternKey() != null)
             patternCounts.merge(day.patternKey(), 1, Integer::sum);

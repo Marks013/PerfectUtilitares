@@ -28,6 +28,10 @@ public class Day {
     private State saved;
     private PatternKey patternKey;
     private int sundayCap = 1;
+    private boolean adjustableRest=true;
+    private boolean consecutiveRequired;
+    private boolean preferConsecutive;
+    private boolean preferredOff;
 
     @PlanningVariable(valueRangeProviderRefs = "states")
     private State state;
@@ -82,6 +86,14 @@ public class Day {
     public void setPatternKey(PatternKey patternKey) { this.patternKey = patternKey; }
     public int getSundayCap() { return sundayCap; }
     public void setSundayCap(int sundayCap) { this.sundayCap = sundayCap; }
+    public boolean isAdjustableRest(){return adjustableRest;}
+    public void setAdjustableRest(boolean value){adjustableRest=value;}
+    public boolean isConsecutiveRequired(){return consecutiveRequired;}
+    public void setConsecutiveRequired(boolean value){consecutiveRequired=value;}
+    public boolean isPreferConsecutive(){return preferConsecutive;}
+    public void setPreferConsecutive(boolean value){preferConsecutive=value;}
+    public boolean isPreferredOff(){return preferredOff;}
+    public void setPreferredOff(boolean value){preferredOff=value;}
     public State getState() { return state; }
     public void setState(State state) { this.state = state; }
 
@@ -99,7 +111,7 @@ public class Day {
     public boolean resting() { return state == State.OFF; }
     public PatternKey patternKey() { return getPatternKey(); }
     public boolean sundayOpportunity() {
-        return index % 7 == 0 && !(Boolean.TRUE.equals(originalLocked) && saved == State.OFF);
+        return index % 7 == 0 && !(pinned && resting()) && !(Boolean.TRUE.equals(originalLocked) && saved == State.OFF);
     }
     public boolean covers(int start, int end) {
         for (Segment segment : workSegments) {
