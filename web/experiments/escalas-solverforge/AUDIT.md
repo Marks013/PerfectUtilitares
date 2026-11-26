@@ -167,3 +167,19 @@ establish equality of objectives, phase guards or lexicographic policies.
 The next gate is original client and frozen OR-Tools parity for every
 admitted temporal feature, then multi-week temporal domains and combined
 115/250 cases. A passing fixed-clock scale diagnostic alone is not E4.
+
+
+SF54c: the original frozen client is now the acceptance oracle for a separate
+temporal diagnostic: four cases (mixed/variable, holiday/absence/history,
+HOURS_ONLY and REST_ONLY), two balanced repetitions of OR-Tools and the
+temporal native adapter, 16 cold-container runs. It checks actual raw/final
+attribution, resource limits, original validator and quality comparator,
+feature-specific invariants and the 16-entry objective audit. Report validity
+and paired noninferiority separately; no full E3/E4 claim. The 42-day
+diagnostic now reconstructs its separate sector vector from the accepted
+proposal using the frozen TS coverage evaluator, since the original E2
+client exports that vector only at 7/28 days. No changes to frozen core,
+fixtures, production sources, controls, lockfile or quotas.
+
+CI validation of the new temporal code and both diagnostics is required;
+do not interpret the earlier SF52 success as approval of this expansion.

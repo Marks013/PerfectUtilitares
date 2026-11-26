@@ -214,8 +214,8 @@ impl Rules{
         let mut cost=[0;17];
         let changes=states.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;
-        cost[15]=states.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<d)!=0).count() as i64;
-        if self.personal.prefer_consecutive{cost[15]+=6-states.windows(2).filter(|w|w==&[OFF,OFF]).count() as i64;}
+        cost[15]=states.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<*d)!=0).count() as i64;
+        if self.personal.prefer_consecutive{cost[15]+=6-states.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;}
         if self.personal.adjustable(){
             let mut pairs=0;let mut imposed=0;
             for (d,&current) in states.iter().enumerate(){

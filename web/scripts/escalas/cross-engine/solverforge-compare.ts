@@ -6,13 +6,13 @@ import { readFileSync } from "node:fs";
 import { newInput,newEmployee } from "../../../src/components/escalas/workspace-model";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
 import { generationScenarioBasis } from "../../../src/lib/escalas/hours-reference";
-import { dateRange } from "../../../src/lib/escalas/dates";
+import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import type { EscalaInput } from "../../../src/lib/escalas/types";
 import { arch } from "node:os";
 import { makeScenario, type ScenarioId, type Scenario } from "./fixtures";
 import { captureEnvelope, digest, envelopeProfile, runTrial, type Adapter } from "./core";
-import { baselineRevision, dockerAdapter, inspectImage, resources, solverforgeAdapter, validateBaselineEnvelope, type ForgeTelemetry } from "./docker";
-import { compareRosterCoverage, selectVerifiedRoster, type RosterSelectionReason } from "../../../src/lib/escalas/roster-quality";
+import { baselineRevision, dockerAdapter, inspectImage, resources, solverforgeAdapter, temporalForgeAdapter, validateBaselineEnvelope, type ForgeTelemetry } from "./docker";
+import { compareRosterCoverage, coverageQuality, selectVerifiedRoster, type RosterSelectionReason } from "../../../src/lib/escalas/roster-quality";
 
 const CONTROL = "71945cd6e73c48b424dab1297fbc3bf8a15ae585";
 const CASES = ["team-10-week", "branch-50-four-weeks", "team-10-week-repair"] as const;
@@ -108,14 +108,116 @@ function personalChecks(scenario:Scenario,trial:Trial){
   return true;
 }
 
+// The frozen E2 evaluator exports coverageAudit only for 7/28 days.
+// Reconstruct the same independent aggregate on the validated 42-day proposal,
+// without changing the pinned core or fabricating raw measurements.
+function scaleCoverageAudit(trial:Trial){
+  if(!valid(trial)||!trial.proposal)return null;
+  const input=trial.proposal,days=dateRange(input.startDate,input.endDate),visible=new Set(visibleDates(input));
+  const quality=coverageQuality(input);
+  const sectors=[...new Set([...input.employees.map(p=>p.sector),...input.demands.map(d=>d.sector)])].sort();
+  return sectors.map(sector=>{
+    let horizon=0,month=0,sundays=0,monthSundays=0,closing=0;
+    const presence:number[]=[];
+    for(const [i,day] of days.entries()){
+      const key=sector+"\0"+day,gap=quality.daily.get(key)??0;
+      horizon+=gap;if(visible.has(day))month+=gap;
+      if(dayOfWeek(day)===6){sundays+=gap;if(visible.has(day))monthSundays+=gap;}
+      closing+=quality.closing.get(key)??0;
+      if(quality.present.has(day+"\0"+sector))presence.push(i);
+    }
+    return {horizon,month,sundays,monthSundays,closing,peak:quality.peaks.get(sector)??0,presence};
+  });
+}
+
+const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only"] as const;
+function temporalScenario(name:typeof TEMPORAL_CASES[number]):Scenario{
+  const input=newInput("SYNTH","Synthetic temporal settings","2026-11",42);
+  Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
+    simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:name==="hours-only"?"HOURS_ONLY":name==="rest-only"?"REST_ONLY":"DAYS_AND_HOURS",
+    mixed42Sectors:["S"]});
+  Object.assign(input.policy,{calendarMode:"MANUAL",validFrom:input.startDate,validUntil:input.endDate});
+  const shift=(id:string,start:number,block:number,meal:number):EscalaInput["shifts"][number]=>({id,name:id,segments:[
+    {kind:"WORK",start,end:start+block},{kind:"BREAK",start:start+block,end:start+block+meal},
+    {kind:"WORK",start:start+block+meal,end:start+2*block+meal}]});
+  input.shifts=[shift("eight",420,240,60),shift("nine",420,270,180),shift("late",480,240,60)];
+  input.employees=Array.from({length:3},(_,i)=>({...newEmployee(42,["eight","nine","late"]),
+    id:"person-"+i,name:"Synthetic person "+i,registration:String(i),sector:"S",role:"Repositor",scheduleMode:"TIMED" as const}));
+  input.demands=[{id:"late-demand",date:"2026-11-04",sector:"S",start:1050,end:1140,minimum:1,estimated:false}];
+  if(name==="holiday-absence-history"){
+    input.policy.holidayDates=["2026-11-03"];input.policy.closedDates=["2026-11-03"];input.policy.paidHolidayDates=["2026-11-03"];
+    input.employees[0].historyKnown=true;
+    input.employees[0].history=[{employeeId:"person-0",date:"2026-10-25",kind:"WORK",shiftId:"eight"}];
+    input.assignments=[{employeeId:"person-0",date:"2026-11-05",kind:"ABSENCE",locked:true,absenceSource:"MANUAL"}];
+  }
+  if(name==="hours-only"){
+    const off=[[0,2],[1,4],[0,3]];
+    input.assignments=input.employees.flatMap((p,i)=>dateRange(input.startDate,input.endDate).map((date,d)=>
+      ({employeeId:p.id,date,locked:d===6,...(off[i].includes(d)?{kind:"OFF" as const}:{kind:"WORK" as const,shiftId:d===2||d===5?"nine":"eight"})})));
+    // Ensure every original grid has exactly two long workdays.
+    for(const p of input.employees){
+      const work=input.assignments.filter(a=>a.employeeId===p.id&&a.kind==="WORK");
+      work.forEach((a,i)=>{a.shiftId=i<2?"nine":"eight";});
+    }
+  }
+  const parsed=escalaInputSchema.parse(input);
+  return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
+}
+
+function temporalChecks(name:typeof TEMPORAL_CASES[number],scenario:Scenario,trial:Trial){
+  if(!valid(trial)||!trial.proposal)return false;
+  const rows=trial.proposal.assignments,old=scenario.prepared.assignments;
+  const lookup=new Map(rows.map(a=>[a.employeeId+"\0"+a.date,a]));
+  if(name==="hours-only"&&old.some(a=>{const b=lookup.get(a.employeeId+"\0"+a.date);return !b||a.kind!==b.kind||a.locked&&a.shiftId!==b.shiftId;}))return false;
+  if(name==="holiday-absence-history"){
+    if(rows.filter(a=>a.date==="2026-11-03"&&a.kind==="HOLIDAY").length!==3)return false;
+    const absent=lookup.get("person-0\0"+"2026-11-05");
+    if(absent?.kind!=="ABSENCE"||lookup.get("person-0\0"+"2026-11-01")?.kind==="WORK")return false;
+  }else{
+    for(const p of scenario.prepared.employees){
+      const own=rows.filter(a=>a.employeeId===p.id&&a.kind==="WORK");
+      if(own.length!==5||own.filter(a=>a.shiftId==="nine").length!==2)return false;
+    }
+  }
+  if(name==="rest-only"&&rows.some(a=>a.shiftId==="late"))return false;
+  return rows.some(a=>a.date==="2026-11-04"&&a.shiftId==="nine");
+}
+
 async function main() {
   if (arch()!=="arm64"||process.env.ESCALAS_CROSS_ENGINE_ISOLATED!=="1") throw Error("FORGE_ISOLATED_ARM64_REQUIRED");
   const [baseline,timefold,forge,mode,...extra]=process.argv.slice(2);
-  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve"&&mode!=="tail"&&mode!=="personal"&&mode!=="scale")) throw Error("FORGE_ARGS");
+  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve"&&mode!=="tail"&&mode!=="personal"&&mode!=="scale"&&mode!=="temporal")) throw Error("FORGE_ARGS");
   const snapshot=source();
   const images={ortools:inspectImage(baseline,"ortools"),timefold:inspectImage(timefold,"timefold"),solverforge:inspectImage(forge,"solverforge")};
   if (images.ortools.revision!==baselineRevision||images.timefold.revision!==CONTROL||images.solverforge.revision!==snapshot.revision
     ||Object.values(images).some(x=>x.architecture!=="arm64")) throw Error("FORGE_IMAGE_IDENTITY");
+  if(mode==="temporal"){
+    for(const name of TEMPORAL_CASES){
+      const scenario=temporalScenario(name),frozen=await captureEnvelope(scenario);
+      validateBaselineEnvelope(baseline,frozen);
+      const profile=envelopeProfile(frozen);
+      if(profile.includedOnWire!==3||profile.activePositions!==21)throw Error("FORGE_TEMPORAL_PROFILE");
+      const shared={...snapshot,scenario:name,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
+        arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
+      for(let repetition=0;repetition<2;repetition++){
+        const names=repetition===0?["ortools","temporal"] as const:["temporal","ortools"] as const;
+        const round:{variant:typeof names[number];trial:Trial;record:Record<string,unknown>}[]=[];
+        for(const [position,variant] of names.entries()){
+          const adapter=variant==="temporal"?temporalForgeAdapter(forge):null;
+          const trial=await runTrial(scenario,frozen,adapter?adapter.adapter:dockerAdapter(baseline,"ortools"));
+          if(trial.inputHash!==shared.inputHash)throw Error("FORGE_INPUT_DRIFT");
+          const {proposal:_proposal,...record}=trial;
+          round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
+            identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
+            featureChecks:temporalChecks(name,scenario,trial),...record}});
+        }
+        const control=round.find(x=>x.variant==="ortools")!.trial;
+        for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(control,item.trial)}));
+      }
+    }
+    if(source().revision!==snapshot.revision)throw Error("FORGE_SOURCE_DRIFT");
+    return;
+  }
   if(mode==="scale"){
     // Frozen six-week fixtures. Historical Timefold E2 lacks this horizon.
     const variants=["ortools","native-12","adaptive"] as const;
@@ -141,7 +243,7 @@ async function main() {
             throw Error("FORGE_SCALE_SCORE_DRIFT");
           const {proposal:_proposal,...record}=trial;
           round.push({variant,trial,record:{kind:"scale",...shared,repetition,position,variant,
-            identity:images[variant==="ortools"?"ortools":"solverforge"],forge:native,...record}});
+            identity:images[variant==="ortools"?"ortools":"solverforge"],forge:native,scaleCoverageAudit:scaleCoverageAudit(trial),...record}});
         }
         const cp=round.find(x=>x.variant==="ortools")!.trial;
         const full=round.find(x=>x.variant==="native-12")!.trial;

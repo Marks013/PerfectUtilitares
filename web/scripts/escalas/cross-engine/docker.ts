@@ -94,7 +94,8 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, seedOnly = false, budgetSeconds = 12, adaptive = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, seedOnly = false, budgetSeconds = 12, adaptive = false, temporal = false) {
+  if (temporal && (engine !== "solverforge" || adaptive || seedOnly || validateOnly || budgetSeconds !== 12)) throw Error("FORGE_TEMPORAL_MODE");
   if (adaptive && (engine !== "solverforge" || seedOnly || budgetSeconds !== 12 || validateOnly)) throw Error("FORGE_ADAPTIVE_MODE");
   if (seedOnly && engine !== "solverforge") throw new Error("CROSS_ENGINE_SEED_MODE");
   if (![2,4,8,12].includes(budgetSeconds) || budgetSeconds !== 12 && (engine !== "solverforge" || seedOnly))
@@ -112,7 +113,8 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
   if (engine === "ortools") args.push("--entrypoint", "python", image, "-B", "-c", validateOnly ? validationPython : python);
   else if (engine === "solverforge") {
     args.push("--env", "RAYON_NUM_THREADS=1", image);
-    if (seedOnly) args.push("--seed-only");
+    if (temporal) args.push("--temporal");
+    else if (seedOnly) args.push("--seed-only");
     else if (adaptive) args.push("--adaptive");
     else if (budgetSeconds !== 12) args.push("--budget-seconds=" + budgetSeconds);
   } else {
@@ -233,4 +235,42 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
     }
   };
   return { adapter, telemetry: () => telemetry };
+}
+
+
+export type TemporalTelemetry = {
+  version: 1; scope: "SYNTHETIC_ONE_WEEK_TIMED"; partialModel: true;
+  mapSeconds: number; searchSeconds: number; nativeSearch: boolean;
+  entities: number; patterns: number; initialCost: number[]; finalCost: number[];
+  objectives: {name: string; status: string; cost: number | null}[];
+};
+export function temporalForgeAdapter(image: string) {
+  inspectImage(image,"solverforge");
+  let telemetry:TemporalTelemetry|null=null;
+  const adapter:Adapter=body=>{
+    telemetry=null;
+    const child=runIsolated(image,"solverforge",body,false,false,false,12,false,true);
+    if((child.error as NodeJS.ErrnoException|undefined)?.code==="ETIMEDOUT"||!child.error&&child.status===124)
+      return {httpStatus:504,body:{error:"SOLVER_TIMED_OUT"},maxRssKiB:null};
+    if(child.error||child.status!==0)return {httpStatus:500,body:{error:"BENCHMARK_CONTAINER_FAILED"},maxRssKiB:null};
+    try{
+      const value=JSON.parse(child.stdout),reply=verifyReply(value);
+      const status=(reply.body as {status?:string}).status;
+      if(reply.httpStatus===200&&status!=="UNKNOWN"&&status!=="FEASIBLE")throw Error("UNSUPPORTED_PROOF");
+      if(reply.httpStatus===200&&status==="FEASIBLE"){
+        const t=value.temporal,integer=(x:unknown)=>typeof x==="number"&&Number.isSafeInteger(x)&&x>=0;
+        const vector=(x:unknown)=>Array.isArray(x)&&x.length===17&&x.every(integer);
+        if(!t||t.version!==1||t.scope!=="SYNTHETIC_ONE_WEEK_TIMED"||t.partialModel!==true
+          ||!integer(t.entities)||t.entities<1||t.entities>12||!integer(t.patterns)||t.patterns<t.entities||t.patterns>t.entities*30000
+          ||!vector(t.initialCost)||!vector(t.finalCost)||t.finalCost[0]!==0
+          ||typeof t.nativeSearch!=="boolean"||typeof t.mapSeconds!=="number"||!Number.isFinite(t.mapSeconds)||t.mapSeconds<0
+          ||typeof t.searchSeconds!=="number"||!Number.isFinite(t.searchSeconds)||t.searchSeconds<0
+          ||!Array.isArray(t.objectives)||t.objectives.length!==16||!reply.cgroup)
+          throw Error("FORGE_TEMPORAL_TELEMETRY");
+        telemetry=t as TemporalTelemetry;
+      }
+      return reply;
+    }catch{return {httpStatus:500,body:{error:"BENCHMARK_OUTPUT_INVALID"},maxRssKiB:null};}
+  };
+  return {adapter,telemetry:()=>telemetry};
 }

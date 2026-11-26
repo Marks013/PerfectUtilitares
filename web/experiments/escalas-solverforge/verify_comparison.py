@@ -136,7 +136,8 @@ def valid(row, profile):
         if assessment_valid(a):
             metrics = a["metrics"]
             check(integer(metrics.get("normalizedEstimatedShortage")), "SHORTAGE")
-            sector_vector(metrics, profile)
+            if profile["days"]!=42:
+                sector_vector(metrics, profile)
             rest = metrics.get("restAudit")
             check(isinstance(rest, dict) and set(rest) == {"adjustablePairs", "correctableExcess", "concentration", "weeklyRepetitions"}
                   and all(integer(v) for v in rest.values()) and rest["correctableExcess"] <= rest["adjustablePairs"],
@@ -270,8 +271,12 @@ def pair_detail(pair, a, b, profile, comparable):
         return
     check(all(type(pair.get(k)) is bool for k in ("regressed", "improved", "retained"))
           and not (pair["regressed"] and pair["improved"]), "PAIR_FLAGS")
-    expected = first_sector_regression(sector_vector(a["finalAssessment"]["metrics"], profile),
-                                       sector_vector(b["finalAssessment"]["metrics"], profile))
+    def vector(row):
+        metrics=row["finalAssessment"]["metrics"]
+        if profile["days"]==42:
+            metrics={**metrics,"coverageAudit":row.get("scaleCoverageAudit")}
+        return sector_vector(metrics,profile)
+    expected = first_sector_regression(vector(a),vector(b))
     if expected:
         check(pair["regressed"] and (pair.get("reason"), pair.get("regression")) == expected, "SECTOR_REGRESSION")
     elif pair["regressed"]:
@@ -575,6 +580,71 @@ def adaptive_gain(paired,comparisons):
         "productionCertified":False}
 
 
+
+TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only")
+TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERAGE","CLOSING_COVERAGE",
+    "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
+    "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
+
+def verify_temporal(rows):
+    check(len(rows)==16 and all(isinstance(r,dict) for r in rows),"TEMPORAL_COUNT")
+    reports={}
+    for offset,case in enumerate(TEMPORAL_CASES):
+        group=rows[offset*4:(offset+1)*4];first=group[0];profile=first["profile"]
+        check(first["scenario"]==case and profile["days"]==7 and profile["includedOnWire"]==3
+              and profile["activePositions"]==21 and profile["searchBudgetSeconds"]==12
+              and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"TEMPORAL_PROFILE")
+        records={"ortools":[],"temporal":[]}
+        for i,r in enumerate(group):
+            rep,pos=divmod(i,2);name=("ortools","temporal")[(rep+pos)%2]
+            check(r["kind"]=="temporal" and r["variant"]==name and r["repetition"]==rep and r["position"]==pos,"TEMPORAL_ORDER")
+            for key in ("scenario","inputHash","revision","evaluatorTree","comparatorBlob","profile","baselineRevision",
+                        "timefoldRevision","resources","arch","sampleKind","hostCapacityMeasured","liveHttpMeasured"):
+                check(r.get(key)==first.get(key),"TEMPORAL_DRIFT")
+            check(sha(r["inputHash"],64) and all(sha(r[k],40) for k in ("revision","evaluatorTree","comparatorBlob"))
+                  and r["baselineRevision"]==BASE and r["timefoldRevision"]==CONTROL and r["resources"]==RESOURCES
+                  and r["arch"]=="arm64" and r["sampleKind"]=="cold-container"
+                  and r["hostCapacityMeasured"] is False and r["liveHttpMeasured"] is False,"TEMPORAL_ISOLATION")
+            im=r["identity"]
+            check(im.get("architecture")=="arm64" and im.get("revision")== (BASE if name=="ortools" else r["revision"])
+                  and isinstance(im.get("image"),str) and im["image"].startswith("sha256:") and sha(im["image"][7:],64),"TEMPORAL_IMAGE")
+            check(type(r.get("featureChecks")) is bool,"TEMPORAL_FEATURE_CHECK")
+            ok=valid(r,profile)
+            t=r.get("temporal")
+            if name=="ortools":
+                check(t is None,"TEMPORAL_CONTROL")
+            else:
+                check(r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"),"TEMPORAL_PROOF")
+                if ok:
+                    check(isinstance(t,dict) and t.get("version")==1 and t.get("scope")=="SYNTHETIC_ONE_WEEK_TIMED"
+                          and t.get("partialModel") is True and t.get("entities")==3 and integer(t.get("patterns"))
+                          and 3<=t["patterns"]<=90000 and type(t.get("nativeSearch")) is bool
+                          and numeric(t.get("mapSeconds")) and numeric(t.get("searchSeconds"))
+                          and t["mapSeconds"]+t["searchSeconds"]<=r["processSeconds"]+.01,"TEMPORAL_TELEMETRY")
+                    for k in ("initialCost","finalCost"):
+                        check(isinstance(t.get(k),list) and len(t[k])==17 and all(integer(x) for x in t[k]),"TEMPORAL_COST")
+                    check(t["finalCost"][0]==0 and t["finalCost"][1]==r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],"TEMPORAL_SCORE")
+                    objs=t.get("objectives")
+                    check(isinstance(objs,list) and len(objs)==16 and tuple(o["name"] for o in objs)==TEMPORAL_OBJECTIVES,"TEMPORAL_OBJECTIVES")
+                    for j,o in enumerate(objs):
+                        check(isinstance(o.get("status"),str) and (o["cost"]==t["finalCost"][j+1]
+                              if o["status"].startswith(("SCOPED","PARTIAL")) else o["cost"] is None),"TEMPORAL_OBJECTIVE_STATUS")
+            records[name].append((r,ok))
+        candidate=records["temporal"];control=records["ortools"]
+        for (a,aok),(b,bok) in zip(control,candidate):
+            pair_detail(b["againstOrtools"],a,b,profile,aok and bok)
+        reports[case]={
+            "ortoolsValid":sum(ok and r["featureChecks"] for r,ok in control),
+            "temporalValid":sum(ok and r["featureChecks"] for r,ok in candidate),
+            "pairedNoninferior":sum(r["againstOrtools"]["comparable"] is True and r["againstOrtools"]["regressed"] is False
+                and r["againstOrtools"]["retained"] is False for r,_ in candidate),
+            "candidateP50Seconds":p50([r["productSeconds"] for r,ok in candidate if ok]),
+        }
+    observed=all(v["ortoolsValid"]==2 and v["temporalValid"]==2 for v in reports.values())
+    return {"decision":"TEMPORAL_VALIDITY_OBSERVED" if observed else "TEMPORAL_VALIDITY_REVIEW_REQUIRED",
+            "cases":reports,"noninferiorityObserved":observed and all(v["pairedNoninferior"]==2 for v in reports.values()),
+            "fullE3Parity":False,"fullE4Parity":False,"productionCertified":False}
+
 def verify_scale(rows):
     names=("ortools","native-12","adaptive")
     check(len(rows)==18 and all(isinstance(r,dict) for r in rows),"SCALE_COUNT")
@@ -602,6 +672,8 @@ def verify_scale(rows):
             check(images.setdefault(engine,im)==im,"SCALE_IMAGE_DRIFT")
             check(name=="ortools" or r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"),"SCALE_PROOF")
             ok=valid(r,profile)
+            if ok:
+                sector_vector({**r["finalAssessment"]["metrics"],"coverageAudit":r.get("scaleCoverageAudit")},profile)
             if ok and name!="ortools":native(r,profile,adaptive=name=="adaptive")
             if name=="ortools":check(r.get("forge") is None,"SCALE_FORGE_TELEMETRY")
             records[name].append((r,ok))
@@ -703,9 +775,9 @@ if __name__ == "__main__":
             sys.exit(0)
         with open(sys.argv[1],encoding="utf-8") as stream:
             rows=[json.loads(line) for line in stream if line.strip()]
-            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify_scale(rows) if sys.argv[2]=="scale" else verify(rows,sys.argv[2])
+            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify_scale(rows) if sys.argv[2]=="scale" else verify_temporal(rows) if sys.argv[2]=="temporal" else verify(rows,sys.argv[2])
         print(json.dumps(report,separators=(",",":")))
-        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED","SCALE_VALIDITY_OBSERVED") else 1)
+        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED","SCALE_VALIDITY_OBSERVED","TEMPORAL_VALIDITY_OBSERVED") else 1)
     except (ValueError,KeyError,TypeError,IndexError,AttributeError,OSError,OverflowError):
         print("SolverForge comparison rejected: invalid or inconsistent evidence",file=sys.stderr)
         sys.exit(1)
