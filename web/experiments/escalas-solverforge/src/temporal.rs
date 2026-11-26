@@ -157,8 +157,8 @@ fn rest_group_cost(rows:&[&Member],facts:&TemporalFacts)->i64{
         if facts.closed[day]{continue;}
         let (mut eligible,mut off)=(0i64,0i64);
         for row in rows{
-            if let Some(p)=row.pattern
-                &&p.states[day]!=ABS{eligible+=1;off+=i64::from(p.states[day]==OFF);}
+            let Some(p)=row.pattern else{continue;};
+            if p.states[day]!=ABS{eligible+=1;off+=i64::from(p.states[day]==OFF);}
         }
         if eligible>=2{total+=(7*off-2*eligible).abs();}
     }
