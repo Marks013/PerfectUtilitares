@@ -15,9 +15,9 @@ fn digest_prefix(input:&[u8])->u32{
     let mut message=input.to_vec();message.push(0x80);
     while message.len()%64!=56{message.push(0);}
     message.extend_from_slice(&(input.len() as u64*8).to_be_bytes());
-    for block in message.chunks_exact(64){
+    for block in message.as_chunks::<64>().0{
         let mut w=[0u32;64];
-        for (word,bytes) in w.iter_mut().zip(block.chunks_exact(4)){*word=u32::from_be_bytes(bytes.try_into().unwrap());}
+        for (word,bytes) in w.iter_mut().zip(block.as_chunks::<4>().0){*word=u32::from_be_bytes(*bytes);}
         for i in 16..64{
             let a=w[i-15];let b=w[i-2];
             let s0=a.rotate_right(7)^a.rotate_right(18)^(a>>3);

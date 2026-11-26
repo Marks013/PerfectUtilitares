@@ -36,7 +36,7 @@ impl Rules{
     }
     pub fn legal_prefix(&self,states:&[u8],clocks:&[Clock])->bool{
         let len=states.len() as i32;let horizon=self.days as i32;
-        if len==0||len>horizon||!states.len().is_multiple_of(7)||!states.chunks_exact(7).all(|w|self.week_legal(w,clocks)){return false;}
+        if len==0||len>horizon||!states.len().is_multiple_of(7)||!states.as_chunks::<7>().0.iter().all(|w|self.week_legal(w,clocks)){return false;}
         let full=len==horizon;
         let state=|d:i32|if (0..len).contains(&d){Some(states[d as usize])}
             else if d<0||full&&d>=horizon{self.context.get(&d).copied()}else{None};
@@ -74,7 +74,7 @@ impl Rules{
         }
         if full&&!self.hours_only&&!self.personal.consecutive&&self.fixed.count_ones()<2{
             let mut groups=BTreeMap::<u8,(usize,u8)>::new();
-            for (week,part) in states.chunks_exact(7).enumerate(){
+            for (week,part) in states.as_chunks::<7>().0.iter().enumerate(){
                 let a=week*7;let b=a+7;
                 if self.holiday[a..b].iter().any(|&x|x)||self.old[a..b].iter().flatten().any(|r|r.locked==Some(true)||matches!(r.state,ABS|HOL)){continue;}
                 let imposed=self.closed[a..b].iter().enumerate().fold(self.fixed,|m,(d,c)|if *c{m|1<<d}else{m});
@@ -147,7 +147,7 @@ fn mix(mut n:u64)->u64{
 pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline:Instant)->Result<Vec<Pattern>>{
     let mut cache=BTreeMap::<Vec<Vec<u8>>,Vec<[u8;7]>>::new();
     let mut weeks=Vec::new();
-    for part in options.chunks_exact(7){
+    for part in options.as_chunks::<7>().0{
         let values=if let Some(v)=cache.get(part){v.clone()}else{
             let v=weekly(part,rules,clocks,deadline)?;cache.insert(part.to_vec(),v.clone());v
         };

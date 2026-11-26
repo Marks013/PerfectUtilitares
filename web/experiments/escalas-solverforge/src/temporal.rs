@@ -654,7 +654,7 @@ mod tests{
             assert!(!domain.is_empty()&&domain.len()<=PATH_LIMIT);
             for p in domain.iter(){
                 assert_eq!(p.states[0],OFF);
-                for w in p.states.chunks_exact(7){
+                for w in p.states.as_chunks::<7>().0{
                     assert_eq!(w.iter().filter(|&&s|work(s)).count(),5);
                     assert_eq!(w.iter().filter(|&&s|s==4).count(),2);
                 }
