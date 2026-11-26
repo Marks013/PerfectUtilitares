@@ -164,11 +164,69 @@ fn insert_projection(beam:&mut Vec<Projection>,item:Projection) {
     }
 }
 
+// Six-week counts have a much wider DP frontier than the proven four-week
+// path. Keep a bounded beam of actual individual signatures instead of
+// discarding the sector when an exact count frontier exceeds MAX_STATES.
+// Every selected signature has at least one legal catalogue witness.
+// Sunday work count per person cannot decrease, protecting role/clock
+// service across the Sunday scope; no other engine's roster is imported.
+fn bounded_joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;42],
+                             cache:&SignatureCache,deadline:Instant,stats:&mut RepairStats)->Option<Vec<Projection>> {
+    let mut initial=[Presence::EMPTY;6];
+    for w in 0..facts.days/7{initial[w]=att[w*7];}
+    let signatures=members.iter().map(|&i|signature(plan.employees[i].mask().unwrap(),facts.days)).collect();
+    let mut beam=vec![Projection{sunday:initial,signatures,rank:projected_rank(facts,&initial)}];
+    let mut slots:Vec<_>=(0..members.len()).collect();
+    slots.sort_by_key(|&slot|{
+        let p=&plan.employees[members[slot]];
+        (buckets(cache,p).iter().filter(|indices|!indices.is_empty()).count(),p.cohort,slot)
+    });
+    let mut evaluated=0usize;
+    // Two ordered sweeps allow a complementary choice to be revisited
+    // after its peers have been placed, without constructing all counts.
+    for pass in 0..2{
+        if pass==1{slots.reverse();}
+        for &slot in &slots{
+            if Instant::now()>=deadline{return Some(beam);}
+            let p=&plan.employees[members[slot]];let bit=Presence::one(p.id);
+            let minimum=signature(p.mask().unwrap(),facts.days).count_ones();
+            let alternatives:Vec<_>=buckets(cache,p).iter().enumerate().filter_map(|(sig,indices)|
+                (!indices.is_empty()&&(sig as u8).count_ones()>=minimum).then_some(sig as u8)).collect();
+            let mut next=Vec::new();
+            for state in &beam{
+                for &sig in &alternatives{
+                    if evaluated>=MAX_PROJECTED_EVALUATIONS{
+                        stats.projection_limit_hits+=1;return Some(beam);
+                    }
+                    evaluated+=1;stats.projections+=1;
+                    if evaluated.is_multiple_of(128)&&Instant::now()>=deadline{return Some(beam);}
+                    let mut sunday=state.sunday;
+                    for (week,day) in sunday.iter_mut().enumerate().take(facts.days/7){
+                        *day&=!bit;
+                        if sig&(1<<week)!=0{*day|=bit;}
+                    }
+                    let rank=projected_rank(facts,&sunday);
+                    if next.len()==BEAM_WIDTH&&next.last().is_some_and(|p:&Projection|p.rank<=rank){continue;}
+                    let mut sigs=state.signatures.clone();sigs[slot]=sig;
+                    insert_projection(&mut next,Projection{sunday,signatures:sigs,rank});
+                }
+                // Never lose the current witness to a partial traversal.
+                insert_projection(&mut next,state.clone());
+            }
+            if next.is_empty(){return Some(beam);}
+            beam=next;
+        }
+        if beam.first().is_some_and(|p|p.rank[0]==0&&p.rank[1]==0){break;}
+    }
+    Some(beam)
+}
+
 // Search across cohorts, not only within one role. A leader's Sunday choice
 // can make the remaining cohort's headcount infeasible even when each
 // cohort has enough total Sunday work. Intermediate ties are retained.
 fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;42],
                      cache:&SignatureCache,deadline:Instant,stats:&mut RepairStats)->Option<Vec<Projection>> {
+    if facts.days==42{return bounded_joint_projections(plan,members,facts,att,cache,deadline,stats);}
     let mut cohorts=BTreeMap::<usize,Vec<usize>>::new();
     for (slot,&i) in members.iter().enumerate(){
         cohorts.entry(plan.employees[i].cohort).or_default().push(slot);
@@ -343,6 +401,39 @@ mod tests{
         assert_eq!(sigs.len(),2);
         for w in 0..4{assert_eq!(sigs.iter().filter(|&&s|s&(1<<w)!=0).count(),1);}
         assert!(projections(&domains,Instant::now()).is_none());
+    }
+
+    #[test]
+    fn six_week_beam_finds_complementary_sundays_without_count_frontier(){
+        use serde_json::{Value,json};
+        use crate::{wire,model};
+        let corpus:Value=serde_json::from_str(include_str!("../e2-wire-contract.json")).unwrap();
+        let mut value=corpus["base"].clone();
+        value["input"]["endDate"]=json!("2026-12-12");
+        value["input"]["assignments"]=json!([]);
+        let template=value["input"]["employees"][0].clone();
+        value["input"]["employees"]=Value::Array((0..12).map(|i|{
+            let mut p=template.clone();p["id"]=json!(format!("person-{i}"));
+            p["name"]=json!(format!("Synthetic person {i}"));p
+        }).collect());
+        value["input"]["demands"]=Value::Array((0..6).map(|w|json!({
+            "id":format!("sunday-{w}"),"date":wire::date(w*7),"sector":"S",
+            "role":"Caixa","start":480,"end":540,"minimum":6,"estimated":true
+        })).collect());
+        let mut plan=wire::read(&value,Instant::now()+Duration::from_secs(5)).unwrap();
+        for p in &mut plan.employees{
+            p.pattern=Some(*p.allowed.iter().find(|&&i|signature(p.catalog[i],42)==0b010101).unwrap());
+        }
+        let before=model::evaluate(&plan);
+        assert_eq!(before[1],1080);
+        let stats=repair(&mut plan,Instant::now()+Duration::from_secs(5));
+        assert_eq!(stats.projection_limit_hits,0);
+        assert_eq!(stats.accepted,1);
+        assert!(model::validate_complete(&plan));
+        let after=model::evaluate(&plan);
+        assert_eq!(after[1],0);
+        assert!(after[3]<=before[3]&&after[4]<=before[4]);
+        assert!(plan.employees.iter().all(|p|signature(p.mask().unwrap(),42).count_ones()==3));
     }
 
     #[test]
