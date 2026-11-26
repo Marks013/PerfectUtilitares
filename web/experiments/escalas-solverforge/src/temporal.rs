@@ -64,17 +64,8 @@ impl TemporalFacts{
 pub struct Member{
     pub id:usize,pub sector:usize,pub role:usize,pub rest_role:usize,pub cohort:usize,pub leader_targets:Arc<Vec<usize>>,pub leader_label:bool,pub untimed:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
 }
-#[derive(Default)]
-pub struct TemporalAccumulator{members:BTreeMap<usize,Member>}
-impl Accumulator<Member,Cost> for TemporalAccumulator{
-    type Retraction=usize;
-    fn accumulate(&mut self,value:Member)->usize{
-        let id=value.id;assert!(self.members.insert(id,value).is_none());id
-    }
-    fn retract(&mut self,id:usize){assert!(self.members.remove(&id).is_some());}
-    fn with_result<T>(&self,f:impl FnOnce(&Cost)->T)->T{f(&sector_cost(self.members.values()))}
-    fn reset(&mut self){self.members.clear();}
-}
+mod incremental;
+pub(crate) use incremental::TemporalAccumulator;
 fn add(a:&mut Cost,b:Cost){for (x,y) in a.iter_mut().zip(b){*x+=y;}}
 fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let rows:Vec<_>=members.collect();
@@ -115,9 +106,16 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     if sunday_ref.iter().filter(|&&r|r).count()>=2{
         result[3]=sunday.iter().max().copied().unwrap_or(0)*facts.peak_weight+sunday.iter().map(|x|x*x).sum::<i64>();
     }
+    add_fairness(&rows,facts,&mut result);
+    result
+}
+
+// Shared fairness calculation; the coverage portion of sector_cost remains
+// an independent full recomputation for differential validation.
+fn add_fairness(rows:&[&Member],facts:&TemporalFacts,result:&mut Cost){
     let mut cohorts=BTreeMap::<(usize,usize),(i64,i64)>::new();
     let mut sunday_cohorts=BTreeMap::<usize,Vec<&Member>>::new();
-    for row in &rows{sunday_cohorts.entry(row.cohort).or_default().push(row);}
+    for row in rows{sunday_cohorts.entry(row.cohort).or_default().push(row);}
     for row in &rows{
         if let Some(p)=row.pattern{
             for (i,value) in p.rates.iter().enumerate(){
@@ -145,10 +143,9 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     // Unique sector + role groups; don't double-count a sector with one role.
     let mut groups=BTreeMap::<usize,Vec<&Member>>::new();
     for row in &rows{groups.entry(row.rest_role).or_default().push(row);}
-    let mut all_groups=vec![rows.clone()];
+    let mut all_groups=vec![rows.to_vec()];
     if groups.len()>1{all_groups.extend(groups.into_values());}
     for group in all_groups{result[11]+=rest_group_cost(&group,facts);}
-    result
 }
 
 fn rest_group_cost(rows:&[&Member],facts:&TemporalFacts)->i64{
@@ -944,6 +941,57 @@ mod tests{
         assert!(plan.employees[0].catalog.iter().all(|p|p.states.iter().filter(|&&s|s==3).count()==5));
         data["input"]["storeClosingMinutes"]=json!(1200);
         assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_GEOMETRY")));
+    }
+    #[test]
+    fn temporal_reversible_coverage_matches_full_oracle_at_scale(){
+        for people in [115,250]{
+            let mut data=fixture();
+            data["input"]["endDate"]=json!("2026-12-12");
+            let template=data["input"]["employees"][0].clone();
+            data["input"]["employees"]=V::Array((0..people).map(|i|{
+                let mut p=template.clone();
+                p["id"]=json!(format!("person-{i}"));p["name"]=json!(format!("Synthetic person {i}"));
+                p["history"]=json!([{"date":"2026-10-25","kind":"WORK","shiftId":"eight"}]);
+                if i%3==0{p["role"]=json!("Caixa");}
+                p
+            }).collect());
+            data["input"]["movementPriorities"]=json!([{"startDate":"2026-11-04","endDate":"2026-11-04","level":"HIGH"}]);
+            data["input"]["demands"]=json!([
+                {"id":"sun-a","date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":30,"estimated":true},
+                {"id":"sun-b","date":"2026-11-08","sector":"S","start":480,"end":540,"minimum":40,"role":"Caixa","estimated":true},
+                {"id":"hard","date":"2026-11-04","sector":"S","start":1050,"end":1140,"minimum":20,"role":"Repositor","estimated":false},
+                {"id":"close","date":"2026-12-06","sector":"S","start":1140,"end":1200,"minimum":10,"estimated":true}
+            ]);
+            data["input"]["_coverageServiceProtection"]=json!({
+                "days":[{"sector":"S","date":"2026-11-04"}],
+                "bands":[{"sector":"S","role":"Repositor","start":1050,"end":1140,"scope":"HORIZON","minimum":2}]
+            });
+            let mut plan=read(&data,Instant::now()+Duration::from_secs(10)).unwrap();
+            let mut acc=TemporalAccumulator::default();
+            let mut rows=BTreeMap::new();
+            for p in &mut plan.employees{
+                p.pattern=Some(p.id%p.catalog.len());
+                let row=p.member();acc.accumulate(row.clone());rows.insert(p.id,row);
+                if p.id.is_multiple_of(16){assert_eq!(acc.finish(),sector_cost(rows.values()));}
+            }
+            assert_eq!(acc.finish(),sector_cost(rows.values()));
+            for id in [0,63,64,people-1]{
+                acc.retract(id);rows.remove(&id);
+                assert_eq!(acc.finish(),sector_cost(rows.values()));
+                let p=&mut plan.employees[id];
+                p.pattern=Some((id+17)%p.catalog.len());
+                let row=p.member();acc.accumulate(row.clone());rows.insert(id,row);
+                assert_eq!(acc.finish(),sector_cost(rows.values()));
+                acc.retract(id);rows.remove(&id);
+                p.pattern=None;
+                let row=p.member();acc.accumulate(row.clone());rows.insert(id,row);
+                assert_eq!(acc.finish(),sector_cost(rows.values()));
+            }
+            for id in 0..people{acc.retract(id);}
+            assert_eq!(acc.finish(),[0;17]);
+            acc.accumulate(plan.employees[1].member());acc.reset();
+            assert_eq!(acc.finish(),[0;17]);
+        }
     }
     #[test]
     fn native_variable_shift_covers_confirmed_demand(){
