@@ -12,6 +12,7 @@ mod rules;
 mod tie_rank;
 mod seed;
 mod service_guard;
+mod service_bounds;
 mod rest_guard;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
@@ -53,7 +54,8 @@ struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16}
 #[derive(Debug,PartialEq,Eq,Hash)]
 pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
-    priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64}
+    priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64,
+    protected_days:u64,protected_bands:Vec<service_bounds::Bound>}
 impl TemporalFacts{
     fn weekday(&self,day:usize)->usize{(self.weekday_offset+day)%7}
     fn week(&self,day:usize)->usize{(self.weekday_offset+day)/7}
@@ -92,6 +94,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
             }
         }
     }
+    result[0]+=service_bounds::deficit(facts,&attendance,&role_members);
     for band in &facts.bands{
         let present=attendance[band.day].iter().enumerate().filter(|(state,_)|band.clock_mask&(1u16<<state)!=0)
             .fold(Presence::EMPTY,|mask,(_,p)|mask|*p);
@@ -309,7 +312,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     let days=calendar.labels.len();
     let labels=Arc::new(calendar.labels.clone());
     let relative=|date:&str|calendar.relative(date);
-    for k in input.as_object().unwrap().keys(){check(!k.starts_with('_'),"PRIVATE_FIELD_UNSUPPORTED")?;}
+    for k in input.as_object().unwrap().keys(){check(!k.starts_with('_')||k=="_coverageServiceProtection","PRIVATE_FIELD_UNSUPPORTED")?;}
     check(input.get("planningCalendarSource").is_none(),"TEMPORAL_METADATA")?;
     for k in ["calendarProvenance","collectiveAgreement","operationalCertificate","mealIntervalAgreement"]{
         check(policy.get(k).is_none(),"POLICY_METADATA_UNSUPPORTED")?;
@@ -389,7 +392,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }
     }
     let mut facts:Vec<_>=(0..sectors.len()).map(|sector|TemporalFacts{
-        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,
+        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,protected_days:0,protected_bands:Vec::new(),
         priority:std::array::from_fn(|d|{
             let matches=|p:&&(i32,i32,i64,Option<usize>)|p.0<=d as i32&&p.1>=d as i32;
             priorities.iter().filter(matches).filter(|p|p.3==Some(sector)).map(|p|p.2).max()
@@ -417,6 +420,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }
     }
     configure_peak(&mut facts)?;
+    service_bounds::read(input,&calendar,&sectors,&roles,&mut facts)?;
     let facts:Vec<_>=facts.into_iter().map(Arc::new).collect();
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
     type CohortKey=(usize,usize,bool,Vec<[(i32,i32);2]>,[i32;6],i32);
@@ -737,6 +741,26 @@ mod tests{
         let mut data=fixture();data["input"]["generationMode"]=json!("REST_ONLY");
         let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
         assert!(plan.employees[0].catalog.iter().all(|p|!p.states.contains(&5)));
+    }
+    #[test]
+    fn private_service_bound_is_hard_even_without_demands(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["history"]=json!([]);
+        data["input"]["_coverageServiceProtection"]=json!({
+            "days":[{"sector":"S","date":"2026-11-04"}],
+            "bands":[{"sector":"S","role":"Repositor","start":1050,"end":1140,"scope":"HORIZON","minimum":2}]
+        });
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let good=plan.employees[0].catalog.iter().position(|p|work(p.states[3])).unwrap();
+        let bad=plan.employees[0].catalog.iter().position(|p|p.states[3]==OFF).unwrap();
+        plan.employees[0].pattern=Some(good);assert_eq!(evaluate(&plan)[0],0);
+        plan.employees[0].pattern=Some(bad);assert!(evaluate(&plan)[0]>0);
+        data["input"]["_coverageServiceProtection"]["bands"][0]["role"]=json!("Unknown");
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("SERVICE_ROLE")));
+        data["input"]["_coverageServiceProtection"]["bands"][0]["role"]=json!("Repositor");
+        data["input"]["_coverageServiceProtection"]["bands"][0]["minimum"]=json!(3);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        plan.employees[0].pattern=Some(0);assert!(evaluate(&plan)[0]>0);
     }
     #[test]
     fn explicit_cross_sector_leadership_does_not_invent_hourly_coverage(){

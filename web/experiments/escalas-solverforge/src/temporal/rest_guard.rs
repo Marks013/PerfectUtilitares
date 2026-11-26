@@ -12,6 +12,7 @@ pub(super) struct Snapshot{
     groups:BTreeMap<usize,(i64,i64)>,
     weekend:BTreeMap<(usize,usize),(i64,i64)>,
     sector_sunday:BTreeSet<(usize,usize)>,
+    sunday_totals:BTreeMap<usize,i64>,
     sum:[i64;3],
 }
 impl Snapshot{
@@ -32,9 +33,12 @@ impl Snapshot{
                     bounds.0=bounds.0.min(*rate);bounds.1=bounds.1.max(*rate);
                 }
             }
+            let mut sunday_total=0;
             for (d,&s) in pat.states.iter().enumerate().take(p.facts.days){
-                if p.facts.weekday(d)==0&&work(s){out.sector_sunday.insert((p.sector,d));}
+                if p.facts.weekday(d)==0&&work(s){out.sector_sunday.insert((p.sector,d));
+                    if pat.sunday_opportunities&(1u64<<d)!=0{sunday_total+=1;}}
             }
+            *out.sunday_totals.entry(p.cohort).or_default()+=sunday_total;
         }
         out
     }
@@ -47,5 +51,6 @@ impl Snapshot{
             &&next.weekend.iter().all(|(id,a)|self.weekend.get(id).is_some_and(|b|a.1-a.0<=b.1-b.0))
             &&(next.sum[..2]!=self.sum[..2]||next.sum[2]<=self.sum[2])
             &&self.sector_sunday.is_subset(&next.sector_sunday)
+            &&self.sunday_totals.iter().all(|(id,n)|next.sunday_totals.get(id).is_some_and(|m|m>=n))
     }
 }
