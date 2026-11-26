@@ -168,6 +168,11 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
     check(t["finalCost"][0] == 0 and t["finalCost"][3] == row["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],
           "NATIVE_SCORE_DRIFT")
     check(t["mapSeconds"] + t["seedSeconds"] + t["searchSeconds"] <= row["processSeconds"] + .01, "NATIVE_TIMING")
+    repair=t.get("repair")
+    check(isinstance(repair,dict) and all(integer(repair.get(k)) for k in ("sectors","projections","reconstructed","accepted","projectionLimitHits"))
+          and type(repair.get("deadlineReached")) is bool and repair["accepted"]<=repair["sectors"]
+          and repair["accepted"]<=repair["reconstructed"] and repair["projectionLimitHits"]<=repair["sectors"],
+          "REPAIR_TELEMETRY")
     attempted = t["nativeSearch"]
     source = t.get("resultSource")
     check(type(t.get("stagnationApplied")) is bool and (not t["stagnationApplied"] or adaptive and attempted),"STAGNATION")
@@ -391,6 +396,10 @@ def verify_curve(rows):
             "seedP50Seconds":p50([r["forge"]["seedSeconds"] for r in accepted]),
             "searchP50Seconds":p50([r["forge"]["searchSeconds"] for r in accepted]),
             "nativeAttempts":sum(r["forge"]["nativeSearch"] for r in accepted),
+            "repairAcceptedSectorsP50":p50([r["forge"]["repair"]["accepted"] for r in accepted]),
+            "repairProjectionsP50":p50([r["forge"]["repair"]["projections"] for r in accepted]),
+            "repairReconstructedP50":p50([r["forge"]["repair"]["reconstructed"] for r in accepted]),
+            "repairDeadlineSamples":sum(r["forge"]["repair"]["deadlineReached"] for r in accepted),
             "seedRetained":sum(r["forge"]["resultSource"]=="SEED_RETAINED" for r in accepted),
             "regressionsAgainstSeed":sum(r["againstSeed"]["regressed"] is True for r,_ in records),
             "retentionsAgainstNative12":sum(r["againstNative12"]["retained"] is True for r,_ in records),

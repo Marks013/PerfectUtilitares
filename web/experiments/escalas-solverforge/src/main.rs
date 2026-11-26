@@ -40,7 +40,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
     };
     let map_seconds=seconds(start);
     let seed_start=Instant::now();
-    let seed_complete=model::seed(&mut plan,(seed_start+Duration::from_millis(1250)).min(start+Duration::from_secs(2)).min(start+budget-Duration::from_secs(1)));
+    let (seed_complete,repair)=model::seed(&mut plan,(seed_start+Duration::from_millis(1250)).min(start+Duration::from_secs(2)).min(start+budget-Duration::from_secs(1)));
     let seed_seconds=seconds(seed_start);
     let initialized=plan.employees.iter().filter(|p|p.pattern.is_some()).count();
     let initial_cost=model::evaluate(&plan);
@@ -109,6 +109,8 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
             "mapSeconds":map_seconds,"seedSeconds":seed_seconds,"searchSeconds":search_seconds,
             "seedComplete":seed_complete,"nativeSearch":attempted,"entities":people,"positions":positions,
             "stagnationApplied":stagnation_applied,"nativeCost":native_cost,
+            "repair":{"sectors":repair.sectors,"projections":repair.projections,"reconstructed":repair.reconstructed,
+                "accepted":repair.accepted,"deadlineReached":repair.deadline_reached,"projectionLimitHits":repair.projection_limit_hits},
             "resultSource":if seed_only {"CONSTRUCTOR_ONLY"} else if retained {"SEED_RETAINED"} else {"NATIVE"},
             "initialized":initialized,"allowedPatterns":patterns,"initialCost":initial_cost,"finalCost":cost,
             "partialModel":true,"budgetSeconds":budget.as_secs()}})
@@ -170,7 +172,7 @@ mod integration {
         let mut plan=wire::read(&input(),Instant::now()+Duration::from_secs(5)).expect("valid wire");
         assert_eq!(plan.employees.len(),3);
         assert!(std::sync::Arc::ptr_eq(&plan.employees[1].allowed,&plan.employees[2].allowed));
-        assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(5)));
+        assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(5)).0);
         assert!(model::validate_complete(&plan));
         let before=model::evaluate(&plan);
         let config=SolverConfig::from_toml_str("environment_mode = \"fast_assert\"\nrandom_seed = 37\nmove_thread_count = \"none\"\n[termination]\nseconds_spent_limit = 1\n").unwrap();

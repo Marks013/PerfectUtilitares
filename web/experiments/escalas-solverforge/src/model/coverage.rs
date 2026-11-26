@@ -17,6 +17,14 @@ pub struct Band {
 }
 
 impl Band {
+    // The first entry is the general/combined headcount deficit; subsequent
+    // entries preserve every role floor independently for selection guards.
+    pub fn gap_components(&self, attended:u64)->Vec<i64>{
+        let presence=attended&self.eligible;
+        std::iter::once((self.minimum-presence.count_ones() as i64).max(0))
+            .chain(self.role_floors.iter().map(|(eligible,minimum)|
+                (*minimum-(presence&eligible).count_ones() as i64).max(0))).collect()
+    }
     pub fn gap(&self, attended: u64) -> i64 {
         let presence = attended & self.eligible;
         let total = (self.minimum - presence.count_ones() as i64).max(0);

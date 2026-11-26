@@ -25,7 +25,7 @@ fn sector_quality(plan:&Plan)->BTreeMap<usize,SectorQuality> {
                 }
             }
         }
-        let gaps=facts.bands.iter().map(|band|band.gap(attendance[band.day])).collect();
+        let gaps=facts.bands.iter().flat_map(|band|band.gap_components(attendance[band.day])).collect();
         (sector,SectorQuality{cost:group_cost(rows.iter()),present,gaps})
     }).collect()
 }
