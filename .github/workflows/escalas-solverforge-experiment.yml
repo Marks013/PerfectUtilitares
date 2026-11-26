@@ -1,0 +1,129 @@
+name: Escalas SolverForge independent Rust comparison
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-solverforge/**'
+      - 'web/scripts/escalas/cross-engine/**'
+      - '.github/workflows/escalas-solverforge-experiment.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-solverforge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  solverforge:
+    name: Pinned Rust build and three-engine comparison (ARM64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: 'true'
+      ESCALAS_CROSS_ENGINE_ISOLATED: '1'
+      BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
+      TIMEFOLD_CONTROL: '71945cd6e73c48b424dab1297fbc3bf8a15ae585'
+      UPSTREAM: '78889c3ff9fda158c70e6a1f67f8c7f0fdae922e'
+      RUST_VERSION: '1.99.1'
+      RUST_TARGET: 'aarch64-unknown-linux-musl'
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_INCREMENTAL: '0'
+      RAYON_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Validate offline evidence tests and common client
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
+          node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
+      - name: Install reviewed Rust toolchain and native musl linker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt --target "$RUST_TARGET"
+          sudo apt-get -o APT::Update::Error-Mode=any update
+          sudo apt-get install -y --no-install-recommends musl-tools binutils
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          rustc +"$RUST_VERSION" -Vv > "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
+          cargo +"$RUST_VERSION" --version > "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
+          dpkg-query -W musl musl-dev musl-tools binutils > "$RUNNER_TEMP/forge-evidence/linker-packages.txt"
+      - name: Build official pinned workspace with locked dependency graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout="$RUNNER_TEMP/solverforge-upstream"
+          git clone --depth 1 --branch v0.31.2 https://github.com/SolverForge/solverforge.git "$checkout"
+          test "$(git -C "$checkout" rev-parse HEAD)" = "$UPSTREAM"
+          python3 experiments/escalas-solverforge/prepare_workspace.py "$checkout"
+          export CARGO_HOME="$RUNNER_TEMP/solverforge-cargo"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/solverforge-target"
+          manifest="$checkout/Cargo.toml"
+          cargo +"$RUST_VERSION" fetch --locked --manifest-path "$manifest"
+          cargo +"$RUST_VERSION" metadata --locked --offline --format-version 1 --filter-platform "$RUST_TARGET" --manifest-path "$manifest" > "$RUNNER_TEMP/forge-metadata.json"
+          cargo +"$RUST_VERSION" test --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
+          cargo +"$RUST_VERSION" build --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
+          cmp "$checkout/Cargo.lock" experiments/escalas-solverforge/Cargo.lock
+          cp "$checkout/Cargo.lock" "$RUNNER_TEMP/forge-evidence/Cargo.lock"
+          binary="$CARGO_TARGET_DIR/$RUST_TARGET/release/perfectutilitares-solverforge-spike"
+          test -x "$binary"
+          readelf -h "$binary" | grep -F AArch64
+          if readelf -lW "$binary" | grep -q ' INTERP '; then exit 1; fi
+          if readelf -dW "$binary" | grep -q '(NEEDED)'; then exit 1; fi
+          sha256sum "$binary" | cut -d ' ' -f 1 > "$RUNNER_TEMP/forge-evidence/binary.sha256"
+          context="$RUNNER_TEMP/forge-image"
+          mkdir -p "$context"
+          cp "$binary" "$context/solverforge-spike"
+          cp experiments/escalas-solverforge/Dockerfile "$context/Dockerfile"
+          docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" --build-arg UPSTREAM_REVISION="$UPSTREAM" -t escalas-solverforge:ci "$context"
+      - name: Build frozen OR-Tools and validated Timefold control images
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=$(mktemp -d)
+          trap 'rm -rf "$build"' EXIT
+          git -C .. archive "$BASE" web/ops/escalas | tar -x -C "$build"
+          docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t escalas-forge-baseline:ci "$build/web/ops/escalas"
+          git -C .. archive "$TIMEFOLD_CONTROL" web/experiments/escalas-timefold | tar -x -C "$build"
+          docker build --build-arg SOURCE_REVISION="$TIMEFOLD_CONTROL" -t escalas-forge-timefold:ci "$build/web/experiments/escalas-timefold"
+      - name: Three-engine smoke and balanced paired comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          baseline=$(image escalas-forge-baseline:ci)
+          timefold=$(image escalas-forge-timefold:ci)
+          forge=$(image escalas-solverforge:ci)
+          for mode in smoke paired; do
+            output="$RUNNER_TEMP/forge-evidence/$mode.jsonl"
+            node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode" | tee "$output"
+            python3 experiments/escalas-solverforge/verify_comparison.py "$output" "$mode" | tee "$RUNNER_TEMP/forge-evidence/$mode-summary.json"
+          done
+      - name: Audit resolved public Rust dependencies
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
+      - name: Retain only aggregate evidence and public inventory
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: solverforge-isolated-comparison
+          path: ${{ runner.temp }}/forge-evidence/
+          if-no-files-found: ignore
+          retention-days: 7

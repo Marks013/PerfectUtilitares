@@ -7,7 +7,8 @@
     "src/workers/unimed-workbook-worker.ts",
     "ops/audit-backup.mjs",
     "ops/configure-audit-ingress.mjs",
-    "ops/provision-runtime-database.mjs"
+    "ops/provision-runtime-database.mjs",
+    "scripts/escalas/cross-engine/solverforge-compare.ts"
   ],
   "ignoreFiles": [
     "verification/*.mjs",

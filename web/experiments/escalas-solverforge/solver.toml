@@ -1,0 +1,10 @@
+# Pin policy explicitly, not automatic parallelism.
+environment_mode = "reproducible"
+random_seed = 37
+move_thread_count = "none"
+
+[termination]
+seconds_spent_limit = 12
+
+[score_director]
+constraint_match_enabled = false

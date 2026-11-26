@@ -34,6 +34,17 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
     expect(() => verifyReply({ httpStatus: 200, body: { status: "MAYBE" }, maxRssKiB: 1 })).toThrow();
     expect(() => verifyReply({ httpStatus: 200, body: { status: "FEASIBLE" }, maxRssKiB: -1 })).toThrow();
   });
+  it("validates comparable cgroup v2 counters and never invents missing measurements", () => {
+    const reply = { httpStatus: 200, body: { status: "UNKNOWN" }, maxRssKiB: null };
+    expect(verifyReply(reply).cgroup).toBeNull();
+    const cgroup = { version: 2, scope: "container-before-response", cpuUsageUsec: 1234567,
+      memoryPeakBytes: 167772160, memoryLimitBytes: 1536 * 1024 * 1024,
+      cpuQuotaUsec: 100000, cpuPeriodUsec: 100000, pidsLimit: 64 };
+    expect(verifyReply({ ...reply, cgroup }).cgroup).toEqual(cgroup);
+    expect(() => verifyReply({ ...reply, cgroup: { ...cgroup, cpuQuotaUsec: 200000 } })).toThrow("CROSS_ENGINE_CGROUP_TELEMETRY_INVALID");
+    expect(() => verifyReply({ ...reply, cgroup: { ...cgroup, cpuUsageUsec: -1 } })).toThrow();
+    expect(() => verifyReply({ ...reply, cgroup: { ...cgroup, memoryLimitBytes: 2147483648 } })).toThrow();
+  });
   it("captures the actual client envelope, preserves globals, and records unsuccessful trials", async () => {
     const scenario = makeScenario("team-10-week");
     const oldFetch = globalThis.fetch;

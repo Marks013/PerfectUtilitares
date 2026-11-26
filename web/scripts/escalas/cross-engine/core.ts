@@ -7,9 +7,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { solveEscala, EscalaSolverError } from "../../../src/lib/escalas/solver-client";
-import { compareRosterCoverage, completeRoster, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
+import { compareRosterCoverage, completeRoster, coverageQuality, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
 import { operationalEscalaInput } from "../../../src/lib/escalas/eligibility";
-import { dateRange } from "../../../src/lib/escalas/dates";
+import { restPairSummary } from "../../../src/lib/escalas/rest-quality";
+import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import { validateEscala } from "../../../src/lib/escalas/validation";
 import { isHoursReferenceOnly, validateHoursReferences } from "../../../src/lib/escalas/hours-reference";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
@@ -21,7 +22,14 @@ import type { Scenario } from "./fixtures";
 const endpoint = "http://cross-engine.invalid";
 const maxBytes = 8 * 1024 * 1024;
 const statuses = ["FEASIBLE", "OPTIMAL", "UNKNOWN", "INFEASIBLE", "MODEL_INVALID"] as const;
-export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null };
+type SpikeTelemetry = { mappingSeconds: number; entities: number; initialized: number; bands: number; windows: number;
+  firstFeasibleSeconds: number | null; partialModel: true; beforeSeed: number;
+  seedMode: "DEFAULT" | "PATTERN"; seedOutcome: "NOT_REQUESTED" | "APPLIED" | "COMPLETE" | "TIME_LIMIT" | "NO_PATTERN" | "UNSUPPORTED"; seedSeconds: number;
+  guardedSeed: boolean; seedGuardViolation: number | null; scoreCalculations: number; moveEvaluations: number; solvingSeconds: number;
+  firstFeasibleSource: "NONE" | "DELIVERED_EVENT" | "FINAL_FALLBACK" };
+type CgroupTelemetry = { version: 2; scope: "container-before-response"; cpuUsageUsec: number;
+  memoryPeakBytes: number; memoryLimitBytes: number; cpuQuotaUsec: number; cpuPeriodUsec: number; pidsLimit: number };
+export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry; cgroup?: CgroupTelemetry | null };
 export type Adapter = (body: string) => WireReply;
 type Status = typeof statuses[number];
 type Stage = "NEW_PROPOSAL" | "REFERENCE_RETAINED" | "SEARCH_UNFINISHED" | "PROVEN_INFEASIBLE" | "OTHER";
@@ -56,7 +64,54 @@ export function verifyReply(value: unknown): WireReply {
     throw new Error("CROSS_ENGINE_REPLY_INVALID");
   if (httpStatus === 200 && !knownStatus(asRecord(record?.body)?.status)) throw new Error("CROSS_ENGINE_STATUS_INVALID");
   if (Buffer.byteLength(JSON.stringify(record?.body), "utf8") > maxBytes) throw new Error("CROSS_ENGINE_REPLY_LIMIT");
-  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null };
+  let spike: SpikeTelemetry | undefined;
+  if (record?.spike !== undefined) {
+    const t = asRecord(record.spike);
+    const nonnegative = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+    const count = (v: unknown): v is number => nonnegative(v) && Number.isInteger(v) && v <= 100_000;
+    if (!t || t.partialModel !== true || !nonnegative(t.mappingSeconds) || !count(t.entities) || !count(t.initialized)
+      || t.initialized > t.entities || !count(t.bands) || !count(t.windows)
+      || (t.firstFeasibleSeconds !== null && !nonnegative(t.firstFeasibleSeconds))) throw new Error("CROSS_ENGINE_SPIKE_TELEMETRY_INVALID");
+    const seedOutcome = t.seedOutcome;
+    if (!count(t.beforeSeed) || t.beforeSeed > t.initialized || !nonnegative(t.seedSeconds)
+      || (t.seedMode !== "DEFAULT" && t.seedMode !== "PATTERN")
+      || (seedOutcome !== "NOT_REQUESTED" && seedOutcome !== "APPLIED" && seedOutcome !== "COMPLETE"
+        && seedOutcome !== "TIME_LIMIT" && seedOutcome !== "NO_PATTERN" && seedOutcome !== "UNSUPPORTED"))
+      throw new Error("CROSS_ENGINE_SEED_TELEMETRY_INVALID");
+    if (t.seedMode === "DEFAULT" ? seedOutcome !== "NOT_REQUESTED" || t.seedSeconds !== 0 || t.beforeSeed !== t.initialized
+      : seedOutcome === "NOT_REQUESTED" || (seedOutcome === "APPLIED" ? t.initialized !== t.entities || t.beforeSeed === t.entities
+        : t.beforeSeed !== t.initialized || (seedOutcome === "COMPLETE" && t.beforeSeed !== t.entities)))
+      throw new Error("CROSS_ENGINE_SEED_TELEMETRY_INVALID");
+    const safeInteger = (v: unknown): v is number => nonnegative(v) && Number.isSafeInteger(v);
+    if (typeof t.guardedSeed !== "boolean" || (t.guardedSeed && seedOutcome !== "APPLIED")
+      || (t.seedGuardViolation !== null && !safeInteger(t.seedGuardViolation))
+      || (!t.guardedSeed && t.seedGuardViolation !== null)
+      || (httpStatus === 200 && asRecord(record?.body)?.status === "FEASIBLE" && t.guardedSeed && t.seedGuardViolation !== 0)
+      || !safeInteger(t.scoreCalculations) || !safeInteger(t.moveEvaluations) || !nonnegative(t.solvingSeconds)
+      || (t.firstFeasibleSource !== "NONE" && t.firstFeasibleSource !== "DELIVERED_EVENT" && t.firstFeasibleSource !== "FINAL_FALLBACK")
+      || (t.firstFeasibleSeconds === null) !== (t.firstFeasibleSource === "NONE"))
+      throw new Error("CROSS_ENGINE_SEARCH_TELEMETRY_INVALID");
+    spike = { mappingSeconds: t.mappingSeconds, entities: t.entities, initialized: t.initialized,
+      bands: t.bands, windows: t.windows, firstFeasibleSeconds: t.firstFeasibleSeconds, partialModel: true,
+      beforeSeed: t.beforeSeed, seedMode: t.seedMode, seedOutcome, seedSeconds: t.seedSeconds,
+      guardedSeed: t.guardedSeed, seedGuardViolation: t.seedGuardViolation,
+      scoreCalculations: t.scoreCalculations, moveEvaluations: t.moveEvaluations,
+      solvingSeconds: t.solvingSeconds, firstFeasibleSource: t.firstFeasibleSource };
+  }
+  let cgroup: CgroupTelemetry | null = null;
+  if (record?.cgroup !== undefined && record.cgroup !== null) {
+    const t = asRecord(record.cgroup);
+    const nonnegativeInt = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+    if (!t || t.version !== 2 || t.scope !== "container-before-response"
+      || !nonnegativeInt(t.cpuUsageUsec) || !nonnegativeInt(t.memoryPeakBytes) || t.memoryPeakBytes === 0
+      || t.memoryLimitBytes !== 1536 * 1024 * 1024 || t.pidsLimit !== 64
+      || !nonnegativeInt(t.cpuQuotaUsec) || !nonnegativeInt(t.cpuPeriodUsec)
+      || t.cpuPeriodUsec === 0 || t.cpuQuotaUsec !== t.cpuPeriodUsec) throw new Error("CROSS_ENGINE_CGROUP_TELEMETRY_INVALID");
+    cgroup = { version: 2, scope: "container-before-response", cpuUsageUsec: t.cpuUsageUsec,
+      memoryPeakBytes: t.memoryPeakBytes, memoryLimitBytes: t.memoryLimitBytes,
+      cpuQuotaUsec: t.cpuQuotaUsec, cpuPeriodUsec: t.cpuPeriodUsec, pidsLimit: t.pidsLimit };
+  }
+  return { httpStatus, body: record?.body, maxRssKiB: rss as number | null, ...(spike ? { spike } : {}), cgroup };
 }
 
 // This function must never be called concurrently in one process. It restores every modified global.
@@ -122,6 +177,35 @@ export function measureReferences(scenario: Scenario) {
     readyToPublish: validation.readyToPublish, issueCodes: [...new Set(validation.issues.map(issue => issue.code))].sort() };
 }
 
+/** Reconstruct the sector-wise prefix of the real comparator, on the
+ * E2 fixtures only. Stable sorted ordinals, no employee/sector names or dates.
+ * Role/time guards are still checked by the real TS comparator.
+ */
+function auditSectorMetrics(input: EscalaInput, estimatedQuality: ReturnType<typeof coverageQuality>) {
+  const dates = dateRange(input.startDate, input.endDate);
+  if (input.branchCode !== "SYNTH" || input.startDate !== "2026-11-01" || input.visibleMonth
+    || (dates.length !== 7 && dates.length !== 28)) return undefined;
+  const quality = input.demands.every(d => d.estimated === true) ? estimatedQuality : coverageQuality(input);
+  const visible = new Set(visibleDates(input));
+  const sectors = [...new Set([...input.employees.map(p => p.sector), ...input.demands.map(d => d.sector)])].sort();
+  return sectors.map(sector => {
+    let horizon = 0, month = 0, sundays = 0, monthSundays = 0, closing = 0;
+    const presence: number[] = [];
+    for (const [index, day] of dates.entries()) {
+      const key = sector + "\0" + day, gap = quality.daily.get(key) ?? 0;
+      horizon += gap;
+      if (visible.has(day)) month += gap;
+      if (dayOfWeek(day) === 6) {
+        sundays += gap;
+        if (visible.has(day)) monthSundays += gap;
+      }
+      closing += quality.closing.get(key) ?? 0;
+      if (quality.present.has(day + "\0" + sector)) presence.push(index);
+    }
+    return { horizon, month, sundays, monthSundays, closing, peak: quality.peaks.get(sector) ?? 0, presence };
+  });
+}
+
 function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCoverageMode) {
   const parsed = escalaInputSchema.safeParse(input);
   if (!parsed.success) return { valid: false, complete: false, errors: ["SCHEMA_INVALID"], metrics: null, comparison: null };
@@ -137,7 +221,18 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCove
   if (!valid) return { valid, complete, errors, metrics: null, comparison: null };
   const comparison = reference ? compareRosterCoverage(reference, proposal, reference, mode) : undefined;
   const shortage = independentShortage(proposal);
+  // Keep the E1 legacy sum for historical comparison. Use the same frozen
+  // estimated-only ruler for both engines; no double counting of role/general.
+  const estimated = { ...proposal, demands: proposal.demands.filter(d => d.estimated === true) };
+  const quality = coverageQuality(estimated);
+  const normalized = [...quality.daily.values()].reduce((sum, count) => sum + count, 0);
+  const coverageAudit = auditSectorMetrics(proposal, quality);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
+    normalizedEstimatedShortage: normalized, ...(coverageAudit ? { coverageAudit, restAudit: (() => {
+      const r = restPairSummary(proposal);
+      return { adjustablePairs: r.adjustablePairs, correctableExcess: r.correctableExcess,
+        concentration: r.concentration, weeklyRepetitions: r.weeklyRepetitions };
+    })() } : {}),
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
     comparison: comparison ? { comparable: comparison.comparable, regressed: comparison.regressed,
       improved: comparison.improved, reason: comparison.reason } : null };
@@ -208,6 +303,9 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
     : scenario.admittedDecemberOrigin ? "DECEMBER_DEMAND" : undefined;
   const raw = asRecord(response?.body);
   const rawStatus = knownStatus(raw?.status);
+  const safeError = typeof raw?.error === "string" && /^[A-Z_]{1,60}$/.test(raw.error) ? raw.error : null;
+  const failureStage = ["MAPPING", "SEED", "FACTORY", "SEARCH", "RESULT"].includes(String(raw?.failureStage)) ? raw?.failureStage : null;
+  const failureType = typeof raw?.failureType === "string" && /^[A-Za-z0-9_]{1,64}$/.test(raw.failureType) ? raw.failureType : null;
   const rawRejectionStage = ["INPUT_CHECK", "COVERAGE_CHECK", "SEARCH"].includes(String(raw?.rejectionStage)) ? raw?.rejectionStage : null;
   const rawDiagnosticFamilies = Array.isArray(raw?.solverDiagnostics) ? [...new Set(raw.solverDiagnostics.flatMap(entry => {
     const family = asRecord(entry)?.family;
@@ -249,8 +347,9 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const timely = engineSeconds !== null && engineSeconds <= deadline && productSeconds <= deadline;
   const errorCode = invocationError instanceof EscalaSolverError ? invocationError.code : invocationError ? "CLIENT_ERROR" : null;
   return { inputHash: digest(frozen), rawStatus, rawRejectionStage, rawDiagnosticFamilies,
+    adapterError: safeError, failureStage, failureType,
     inputErrorFields: response?.httpStatus === 400 ? inputDiagnosticFields(raw?.fields) : [], httpStatus: response?.httpStatus ?? null,
-    processSeconds, engineSeconds, productSeconds, maxRssKiB: response?.maxRssKiB ?? null, finalStatus, outcome,
+    processSeconds, engineSeconds, productSeconds, ...(response?.spike ? { spike: response.spike } : {}), maxRssKiB: response?.maxRssKiB ?? null, cgroup: response?.cgroup ?? null, finalStatus, outcome,
     rawAssessment, finalAssessment, sameAsRaw, unchangedReference, timely, errorCode,
     acceptedNew: !errorCode && timely && outcome === "NEW_PROPOSAL" && !unchangedReference && finalAssessment?.valid === true
       && finalAssessment.comparison?.regressed !== true,
