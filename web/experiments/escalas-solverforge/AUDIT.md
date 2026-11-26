@@ -24,3 +24,19 @@ Escopo: PR #75, revisão de partida 811ec15dc7aea682c200d068cdf0ac5b884f99e3; OR
 5. Avaliação de segurança e operação separadas. Nenhum merge ou deploy; nenhuma certificação de superioridade neste recorte.
 
 A medição usa o mesmo 1 CPU/1536 MiB/64 PIDs e prazos 12/18/20 s. A referência do produto, o verificador independente e os SHAs de controle permanecem congelados. Resultados sem paridade completa não justificam troca.
+
+## Revisão consolidada SF09–SF15
+
+Base de revisão 36e389d4bdbf921393e7248cab88420508cb329c. O workflow 45741108949 passou pela compilação e pelos testes nativos antes desta revisão, sem certificação de benchmark nesta consulta.
+
+| ID | Mudança | Prova exigida |
+| --- | --- | --- |
+| SF09 | Arc de domínios por perfil; poda de prefixo com legal() final e índices originais | Igualdade exaustiva, locks, cap e prazo |
+| SF10 | Collector reversível com bandas indexadas por dia, attendance, custos pessoais e contadores dominicais | Comparação de cada estado com group_cost original e fast_assert nativo |
+| SF11 | Diagnóstico isolado seed-only / 2 / 4 / 8 / 12 s em cinco rotações | 25 registros, identidade, quotas, scores externos, prazos e fracassos explícitos |
+| SF12 | Inventário de todo lock registry e escopo alcançável, histórico anyhow retido | Consulta OSV e identificação de achados; compilador/stdlib/musl ainda pendentes |
+| SF13 | Benchmark principal e controles congelados, nenhum p95 com seis amostras | Três motores, 6 ordens, validação real e deltas pareados |
+| SF14 | Segurança de modelo parcial, sem inferir cobertura de E3/E4 | Continuar recusando dezembro, histórico, outros modos e horizontes fora de E2 |
+| SF15 | Plano de ampliação sem produto cartesiano de seis semanas | Projetar DP/transições por semana com estado de descanso e domingo, bitsets/arrays escaláveis, paridade dos 16 objetivos e holdouts antes de aceitar |
+
+Não considerar os ganhos de CPU/memória comprovados até comparar o SHA anterior e o novo em condições equivalentes. A curva é diagnóstica somente do Rust, não demonstra causalidade universal nem comparação de orçamentos curtos com OR-Tools/Timefold. A execução completa no ambiente ARM64 é obrigatória; nenhum novo teste Rust foi executado localmente. Nenhum deploy, merge, mudança de quotas ou alteração dos controles.

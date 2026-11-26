@@ -152,9 +152,10 @@ def valid(row, profile):
     return engine_new and sample is not None
 
 
-def native(row, profile, seed=False):
+def native(row, profile, seed=False, budget=12):
     t = row.get("forge")
     check(isinstance(t, dict) and t.get("version") == "0.31.2" and t.get("partialModel") is True
+          and t.get("budgetSeconds") == budget
           and t.get("mode") == ("SEED_ONLY" if seed else "NATIVE") and t.get("nativeSearch") is (not seed)
           and t.get("entities") == profile["includedOnWire"] and t.get("positions") == profile["activePositions"]
           and integer(t.get("initialized")) and t["initialized"] <= t["entities"]
@@ -319,12 +320,59 @@ def verify(rows, mode):
             "productionCertified":False,"qualityGatePassed":False,"scenarios":reports}
 
 
+def verify_curve(rows):
+    variants = [("seed-only", 12), ("native-2", 2), ("native-4", 4), ("native-8", 8), ("native-12", 12)]
+    check(len(rows) == 25 and all(isinstance(r,dict) for r in rows), "CURVE_COUNT")
+    first = rows[0]
+    profile = first["profile"]
+    check(first["scenario"] == "branch-50-four-weeks" and profile["includedOnWire"] == 50
+          and profile["days"] == 28 and profile["activePositions"] == 1400, "CURVE_PROFILE")
+    check(sha(first["inputHash"],64) and all(sha(first[k],40) for k in ("revision","evaluatorTree","comparatorBlob")), "CURVE_SOURCE")
+    reports = {name: [] for name,_ in variants}
+    for index,r in enumerate(rows):
+        repetition,position = divmod(index,5)
+        name,budget = variants[(repetition+position)%5]
+        check(r.get("kind")=="curve" and r.get("repetition")==repetition and r.get("position")==position
+              and r.get("variant")==name and r.get("requestedBudgetSeconds")==budget, "CURVE_ORDER")
+        for key in ("scenario","inputHash","revision","evaluatorTree","comparatorBlob","profile","baselineRevision",
+                    "timefoldRevision","resources","arch","identity","sampleKind","hostCapacityMeasured","liveHttpMeasured"):
+            check(r.get(key)==first.get(key), "CURVE_DRIFT")
+        check(r["baselineRevision"]==BASE and r["timefoldRevision"]==CONTROL and r["resources"]==RESOURCES
+              and r["arch"]=="arm64" and r["sampleKind"]=="cold-container"
+              and r["hostCapacityMeasured"] is False and r["liveHttpMeasured"] is False, "CURVE_ISOLATION")
+        im=r["identity"]
+        check(im.get("architecture")=="arm64" and im.get("revision")==r["revision"]
+              and isinstance(im.get("image"),str) and im["image"].startswith("sha256:") and sha(im["image"][7:],64), "CURVE_IMAGE")
+        check(r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"), "CURVE_PROOF")
+        ok=valid(r,profile)
+        if ok:
+            check(r["processSeconds"]<=budget+.1,"CURVE_BUDGET")
+            native(r,profile,name=="seed-only",budget)
+        reports[name].append((r,ok))
+    result={}
+    for name,budget in variants:
+        records=reports[name]
+        accepted=[r for r,ok in records if ok]
+        result[name]={"budgetSeconds":budget,"samples":len(records),"validNew":len(accepted),
+            "shortageP50":p50([r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"] for r in accepted]),
+            "productP50Seconds":p50([r["productSeconds"] for r in accepted]),
+            "cpuP50Seconds":p50([r["cgroup"]["cpuUsageUsec"]/1e6 for r in accepted]),
+            "mappingP50Seconds":p50([r["forge"]["mapSeconds"] for r in accepted]),
+            "seedP50Seconds":p50([r["forge"]["seedSeconds"] for r in accepted]),
+            "searchP50Seconds":p50([r["forge"]["searchSeconds"] for r in accepted]),
+            "peakMemoryBytes":max((r["cgroup"]["memoryPeakBytes"] for r in accepted),default=None),
+            "outcomes":{str(o):sum(r.get("outcome")==o for r,_ in records) for o in {r.get("outcome") for r,_ in records}}}
+    return {"decision":"CANDIDATE_CURVE_DIAGNOSTIC_ONLY","productionCertified":False,
+            "qualityGatePassed":False,"tailSampleSufficient":False,"variants":result}
+
+
 if __name__ == "__main__":
     try:
         with open(sys.argv[1],encoding="utf-8") as stream:
-            report=verify([json.loads(line) for line in stream if line.strip()],sys.argv[2])
+            rows=[json.loads(line) for line in stream if line.strip()]
+            report=verify_curve(rows) if sys.argv[2]=="curve" else verify(rows,sys.argv[2])
         print(json.dumps(report,separators=(",",":")))
-        sys.exit(0 if report["decision"]=="EXPLORATORY_VALID_TRIPLE" else 1)
+        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY") else 1)
     except (ValueError,KeyError,TypeError,IndexError,AttributeError,OSError,OverflowError):
         print("SolverForge comparison rejected: invalid or inconsistent evidence",file=sys.stderr)
         sys.exit(1)

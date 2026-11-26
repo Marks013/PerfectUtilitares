@@ -1,11 +1,13 @@
 //! Public boundary of the isolated E2 model.
 //! Keep legal domains, scoring and construction independent for later profiling.
 mod coverage;
+mod incremental;
 mod patterns;
 mod seed;
 
-pub use coverage::{Band, Member, Sector, evaluate, group_cost, validate_complete};
-pub use patterns::{catalog, full_mask, legal, worked};
+pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
+pub use incremental::SectorAccumulator;
+pub use patterns::{allowed_indices, catalog, full_mask, legal, worked};
 pub use seed::seed;
 
 #[cfg(test)]

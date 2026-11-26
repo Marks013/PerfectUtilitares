@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::domain::{Employee, Plan};
-use crate::model::{Band, Sector, catalog, legal, full_mask};
+use crate::model::{Band, Sector, allowed_indices, catalog, full_mask};
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
@@ -208,7 +208,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     }
     let facts:Vec<Arc<Sector>>=facts.into_iter().map(Arc::new).collect();
     let catalogue=Arc::new(catalog(days));
-    let mut cache=HashMap::<(u32,u32,usize,u32),Vec<usize>>::new();
+    let mut cache=HashMap::<(u32,u32,usize,u32),Arc<[usize]>>::new();
     let mut entities=Vec::with_capacity(people.len());
     for (i,p) in people.into_iter().enumerate() {
         let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
@@ -234,12 +234,9 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         }
         let key=(lock_work,lock_off,p.cap,comparable);
         if !cache.contains_key(&key) {
-            let mut allowed=Vec::new();
-            for (index,&mask) in catalogue.iter().enumerate() {
-                if index%256==0 {check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;}
-                if legal(mask,days,lock_work,lock_off,p.cap,comparable) {allowed.push(index);}
-            }
-            cache.insert(key,allowed);
+            let allowed = allowed_indices(&catalogue, days, lock_work, lock_off, p.cap, comparable, deadline)
+                .ok_or("MAPPING_TIMEOUT")?;
+            cache.insert(key, Arc::from(allowed));
         }
         let allowed=cache[&key].clone();
         check(!allowed.is_empty(),"NO_PERSONAL_PATTERN")?;

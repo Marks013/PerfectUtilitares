@@ -31,16 +31,16 @@ fn cgroup() -> Option<Value> {
 fn failure(http: u16, code: &str, stage: &str, detail: &str) -> Value {
     json!({"httpStatus":http,"body":{"error":code,"failureStage":stage,"failureType":detail},"maxRssKiB":null})
 }
-fn solve(bytes:&[u8], start:Instant, seed_only:bool) -> Value {
+fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration) -> Value {
     let root:Value=match serde_json::from_slice(bytes) {Ok(v)=>v,Err(_)=>return failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","JSON")};
-    let mut plan=match wire::read(&root,start+BUDGET-Duration::from_secs(1)) {
+    let mut plan=match wire::read(&root,start+budget-Duration::from_secs(1)) {
         Ok(v)=>v,Err("MAPPING_TIMEOUT")=>return failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
         Err("NO_PERSONAL_PATTERN")=>return json!({"httpStatus":200,"body":{"status":"UNKNOWN","message":"No admissible personal pattern","assignments":[],"wallTimeSeconds":seconds(start)},"maxRssKiB":null}),
         Err(code)=>return failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING",code)
     };
     let map_seconds=seconds(start);
     let seed_start=Instant::now();
-    let seed_complete=model::seed(&mut plan,(seed_start+Duration::from_millis(1250)).min(start+Duration::from_secs(2)));
+    let seed_complete=model::seed(&mut plan,(seed_start+Duration::from_millis(1250)).min(start+Duration::from_secs(2)).min(start+budget-Duration::from_secs(1)));
     let seed_seconds=seconds(seed_start);
     let initialized=plan.employees.iter().filter(|p|p.pattern.is_some()).count();
     let initial_cost=model::evaluate(&plan);
@@ -49,7 +49,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool) -> Value {
     let patterns:usize=plan.employees.iter().map(|p|p.allowed.len()).sum();
     let search_start=Instant::now();
     if !seed_only {
-        let remaining=(start+BUDGET-Duration::from_millis(500)).saturating_duration_since(search_start).as_secs();
+        let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(search_start).as_secs();
         if remaining==0 {return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");}
         let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")) {
             Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
@@ -64,7 +64,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool) -> Value {
         let expected=score::EscalasScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]));
         if plan.score!=Some(expected) {return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
     }
-    let valid=model::validate_complete(&plan) && start.elapsed()<=BUDGET;
+    let valid=model::validate_complete(&plan) && start.elapsed()<=budget;
     let mut rows=Vec::new();
     if valid {
         for person in &plan.employees {
@@ -85,7 +85,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool) -> Value {
             "mapSeconds":map_seconds,"seedSeconds":seed_seconds,"searchSeconds":search_seconds,
             "seedComplete":seed_complete,"nativeSearch":!seed_only,"entities":people,"positions":positions,
             "initialized":initialized,"allowedPatterns":patterns,"initialCost":initial_cost,"finalCost":cost,
-            "partialModel":true}})
+            "partialModel":true,"budgetSeconds":budget.as_secs()}})
 }
 
 fn main() {
@@ -95,14 +95,21 @@ fn main() {
     std::thread::spawn(|| {std::thread::sleep(Duration::from_secs(18));std::process::exit(124);});
     let args:Vec<String>=std::env::args().skip(1).collect();
     let seed_only=args.len()==1&&args[0]=="--seed-only";
+    let budget=match args.as_slice() {
+        [] => Some(BUDGET),
+        [flag] if flag=="--seed-only" => Some(BUDGET),
+        [flag] => flag.strip_prefix("--budget-seconds=").and_then(|v|v.parse::<u64>().ok())
+            .filter(|v|matches!(v,2|4|8|12)).map(Duration::from_secs),
+        _=>None,
+    };
     let mut bytes=Vec::new();
-    let mut reply=if !args.is_empty()&&!seed_only {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","ARGUMENT")}
+    let mut reply=if budget.is_none() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","ARGUMENT")}
         else if std::io::stdin().take((MAX_BYTES+1) as u64).read_to_end(&mut bytes).is_err() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","INPUT")}
         else if bytes.len()>MAX_BYTES {failure(413,"SPIKE_INPUT_LIMIT","MAPPING","SIZE")}
-        else {std::panic::catch_unwind(||solve(&bytes,start,seed_only)).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
+        else {std::panic::catch_unwind(||solve(&bytes,start,seed_only,budget.unwrap())).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
     reply["cgroup"]=cgroup().unwrap_or(Value::Null);
     let mut output=serde_json::to_vec(&reply).unwrap_or_default();
-    if reply["body"]["status"]=="FEASIBLE" && start.elapsed()>BUDGET {
+    if reply["body"]["status"]=="FEASIBLE" && start.elapsed()>budget.unwrap_or(BUDGET) {
         reply["body"]["status"]=json!("UNKNOWN");reply["body"]["assignments"]=json!([]);
         reply["body"]["wallTimeSeconds"]=json!(seconds(start));output=serde_json::to_vec(&reply).unwrap_or_default();
     }
@@ -135,6 +142,7 @@ mod integration {
     fn exact_mapper_pins_and_native_search() {
         let mut plan=wire::read(&input(),Instant::now()+Duration::from_secs(5)).expect("valid wire");
         assert_eq!(plan.employees.len(),3);
+        assert!(std::sync::Arc::ptr_eq(&plan.employees[1].allowed,&plan.employees[2].allowed));
         assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(5)));
         assert!(model::validate_complete(&plan));
         let before=model::evaluate(&plan);
@@ -190,7 +198,7 @@ mod integration {
     #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
-        let reply=solve(&bytes,Instant::now(),true);
+        let reply=solve(&bytes,Instant::now(),true,BUDGET);
         assert_eq!(reply["body"]["status"],"FEASIBLE");
         assert_eq!(reply["solverforge"]["mode"],"SEED_ONLY");
         assert_eq!(reply["solverforge"]["nativeSearch"],false);

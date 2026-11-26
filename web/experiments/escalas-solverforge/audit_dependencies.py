@@ -49,6 +49,21 @@ def inventory(metadata, lock):
     require(any(p["name"]=="solverforge" for p in items) and len(items)<=500,"RESOLVED_GRAPH")
     return sorted(items,key=lambda p:(p["name"],p["version"]))
 
+def lock_inventory(lock):
+    result = {}
+    for p in lock["package"]:
+        source = p.get("source")
+        if source is None:
+            continue
+        require(source == "registry+https://github.com/rust-lang/crates.io-index", "LOCK_REGISTRY")
+        name, version = p["name"], p["version"]
+        require(NAME.fullmatch(name) and NAME.fullmatch(version) and SHA.fullmatch(p.get("checksum", "")), "LOCK_COORDINATE")
+        require((name, version) not in result, "LOCK_DUPLICATE")
+        result[name, version] = {"name": name, "version": version, "checksum": p["checksum"], "source": "crates.io"}
+    require(0 < len(result) <= 500, "LOCK_SCOPE")
+    return [result[key] for key in sorted(result)]
+
+
 def query(items):
     pending=[(i,None) for i in range(len(items))]
     seen=set()
@@ -71,7 +86,7 @@ def query(items):
         result=json.loads(raw)["results"]
         require(isinstance(result,list) and len(result)==len(batch),"RESULT_COUNT")
         for (i,_),r in zip(batch,result):
-            require(isinstance(r,dict),"RESULT")
+            require(isinstance(r,dict) and "error" not in r,"RESULT")
             findings=r.get("vulns",[])
             require(isinstance(findings,list),"ADVISORIES")
             for v in findings:
@@ -88,19 +103,37 @@ def query(items):
 def main():
     metadata_path,lock_path,output=map(pathlib.Path,sys.argv[1:4])
     try:
-        items=inventory(json.loads(metadata_path.read_text()),tomllib.loads(lock_path.read_text()))
-        found=query(items)
-        for i,item in enumerate(items):item["advisories"]=found[i]
+        lock = tomllib.loads(lock_path.read_text())
+        items=inventory(json.loads(metadata_path.read_text()),lock)
+        locked=lock_inventory(lock)
+        coordinates={(p["name"],p["version"]):p for p in locked}
+        for p in items:
+            coordinates.setdefault((p["name"],p["version"]),p)
+        queried=[coordinates[key] for key in sorted(coordinates)]
+        found=query(queried)
+        by_key={(p["name"],p["version"]):found[i] for i,p in enumerate(queried)}
+        resolved_keys={(p["name"],p["version"]) for p in items}
+        for item in items:item["advisories"]=by_key[item["name"],item["version"]]
+        for item in locked:
+            key=(item["name"],item["version"])
+            item["advisories"]=by_key[key]
+            item["reachable"]=key in resolved_keys
         count=sum(bool(p["advisories"]) for p in items)
-        report={"status":"REVIEW_REQUIRED" if count else "NO_MATCHES_IN_RESOLVED_CRATE_SCOPE",
+        lock_count=sum(bool(p["advisories"]) for p in locked)
+        historical=[{"id":"RUSTSEC-2026-0190","name":"anyhow","version":"1.0.102","reachable":p["reachable"],
+                     "evidence":"prior RustSec run 45737356746; verify against current advisory before adoption"}
+                    for p in locked if (p["name"],p["version"])==("anyhow","1.0.102")]
+        report={"status":"REVIEW_REQUIRED" if count or lock_count or historical else "NO_MATCHES_IN_RESOLVED_CRATE_SCOPE",
                 "checkedAt":datetime.now(timezone.utc).isoformat(),"upstreamRevision":UPSTREAM,
                 "resolvedCrates":len(items),"componentsWithAdvisories":count,"components":items,
-                "scope":"reachable cargo graph including build and test dependencies; not rustc, std or musl",
+                "lockedRegistryCrates":len(locked),"lockedComponentsWithAdvisories":lock_count,
+                "lockedRegistryInventory":locked,"historicalUnresolvedFindings":historical,
+                "scope":"reachable cargo graph and entire pinned registry lock; not rustc, std or musl",
                 "notProductionOrLegalCertification":True}
     except (OSError,ValueError,KeyError,TypeError,AttributeError,OverflowError):
         report={"status":"INCONCLUSIVE","reason":"INVENTORY_OR_OSV_QUERY_FAILED"}
     output.write_text(json.dumps(report,indent=2)+"\n")
-    print(json.dumps({k:v for k,v in report.items() if k!="components"},separators=(",",":")))
+    print(json.dumps({k:v for k,v in report.items() if k not in ("components","lockedRegistryInventory")},separators=(",",":")))
     return 0 if report["status"]=="NO_MATCHES_IN_RESOLVED_CRATE_SCOPE" else 1
 
 if __name__=="__main__":

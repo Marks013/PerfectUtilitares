@@ -53,11 +53,42 @@ function compare(before:Trial,after:Trial) {
 async function main() {
   if (arch()!=="arm64"||process.env.ESCALAS_CROSS_ENGINE_ISOLATED!=="1") throw Error("FORGE_ISOLATED_ARM64_REQUIRED");
   const [baseline,timefold,forge,mode,...extra]=process.argv.slice(2);
-  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired")) throw Error("FORGE_ARGS");
+  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve")) throw Error("FORGE_ARGS");
   const snapshot=source();
   const images={ortools:inspectImage(baseline,"ortools"),timefold:inspectImage(timefold,"timefold"),solverforge:inspectImage(forge,"solverforge")};
   if (images.ortools.revision!==baselineRevision||images.timefold.revision!==CONTROL||images.solverforge.revision!==snapshot.revision
     ||Object.values(images).some(x=>x.architecture!=="arm64")) throw Error("FORGE_IMAGE_IDENTITY");
+  if (mode === "curve") {
+    const scenario = makeScenario("branch-50-four-weeks");
+    const frozen = await captureEnvelope(scenario);
+    validateBaselineEnvelope(baseline, frozen);
+    const profile = envelopeProfile(frozen);
+    const shared = {...snapshot,scenario:scenario.id,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
+      arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
+    const variants = [
+      {id:"seed-only",seedOnly:true,budget:12},
+      ...[2,4,8,12].map(budget=>({id:"native-"+budget,seedOnly:false,budget})),
+    ];
+    // Every variant appears once in each position. This is an internal Rust
+    // ablation, not a claim of equal-budget comparison with other engines.
+    for (let repetition=0;repetition<variants.length;repetition++) {
+      for (let position=0;position<variants.length;position++) {
+        const variant=variants[(repetition+position)%variants.length];
+        const adapter=solverforgeAdapter(forge,variant.seedOnly,variant.budget);
+        const trial=await runTrial(scenario,frozen,adapter.adapter);
+        const native=adapter.telemetry();
+        if(trial.inputHash!==shared.inputHash) throw Error("FORGE_INPUT_DRIFT");
+        if(valid(trial)&&(!native||native.budgetSeconds!==variant.budget||native.entities!==profile.includedOnWire
+          ||native.positions!==profile.activePositions||native.finalCost[3]!==trial.finalAssessment?.metrics?.normalizedEstimatedShortage))
+          throw Error("FORGE_INDEPENDENT_SCORE_DRIFT");
+        const {proposal:_proposal,...record}=trial;
+        console.log(JSON.stringify({kind:"curve",...shared,repetition,position,variant:variant.id,
+          requestedBudgetSeconds:variant.budget,identity:images.solverforge,forge:native,...record}));
+      }
+    }
+    if(source().revision!==snapshot.revision) throw Error("FORGE_SOURCE_DRIFT");
+    return;
+  }
   const cases:readonly ScenarioId[]=mode==="smoke"?["team-10-week"]:CASES;
   for (const id of cases) {
     const scenario=makeScenario(id), frozen=await captureEnvelope(scenario);

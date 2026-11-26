@@ -90,6 +90,7 @@ jobs:
           cp experiments/escalas-solverforge/Dockerfile "$context/Dockerfile"
           docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" --build-arg UPSTREAM_REVISION="$UPSTREAM" -t escalas-solverforge:ci "$context"
       - name: Build frozen OR-Tools and validated Timefold control images
+        id: controls
         shell: bash
         run: |
           set -euo pipefail
@@ -112,7 +113,19 @@ jobs:
             node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode" | tee "$output"
             python3 experiments/escalas-solverforge/verify_comparison.py "$output" "$mode" | tee "$RUNNER_TEMP/forge-evidence/$mode-summary.json"
           done
-      - name: Audit resolved public Rust dependencies
+      - name: Candidate-only time budget and seed ablation
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          baseline=$(image escalas-forge-baseline:ci)
+          timefold=$(image escalas-forge-timefold:ci)
+          forge=$(image escalas-solverforge:ci)
+          output="$RUNNER_TEMP/forge-evidence/curve.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" curve | tee "$RUNNER_TEMP/forge-evidence/curve-summary.json"
+      - name: Audit resolved and full locked public Rust dependencies
         if: always()
         shell: bash
         run: |

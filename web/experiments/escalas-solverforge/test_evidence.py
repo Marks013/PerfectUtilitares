@@ -1,7 +1,7 @@
 import copy
 import unittest
-from audit_dependencies import inventory
-from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats
+from audit_dependencies import inventory, lock_inventory
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -23,6 +23,16 @@ class EvidenceTests(unittest.TestCase):
         pair={"comparable":True,"regressed":False,"improved":False,"retained":False,"reason":"ACCEPTED","productReason":"ACCEPTED"}
         with self.assertRaises(ValueError):pair_detail(pair,before,after,profile,True)
 
+    def test_full_lock_inventory_includes_unreachable_crates(self):
+        records={"package":[{"name":"anyhow","version":"1.0.102","source":"registry+https://github.com/rust-lang/crates.io-index","checksum":"b"*64},
+                            {"name":"local","version":"0.1.0"}]}
+        self.assertEqual([p["name"] for p in lock_inventory(records)],["anyhow"])
+        records["package"][0]["checksum"]="bad"
+        with self.assertRaises(ValueError):lock_inventory(records)
+
+    def test_curve_requires_full_balanced_evidence(self):
+        with self.assertRaises(ValueError):verify_curve([])
+
     def test_even_sample_median_is_midpoint(self):
         self.assertEqual(p50([6, 1, 3, 2, 5, 4]), 3.5)
         self.assertIsNone(p50([]))
@@ -39,7 +49,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_seed_only_cannot_claim_native_search(self):
         profile={"includedOnWire":10,"activePositions":70}
-        row={"forge":{"version":"0.31.2","partialModel":True,"mode":"SEED_ONLY","nativeSearch":True,
+        row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"SEED_ONLY","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
              "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":0,"initialCost":[0]*9,"finalCost":[0]*9},
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":.2}

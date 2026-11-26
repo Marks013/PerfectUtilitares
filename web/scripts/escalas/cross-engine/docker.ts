@@ -94,8 +94,10 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, seedOnly = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, seedOnly = false, budgetSeconds = 12) {
   if (seedOnly && engine !== "solverforge") throw new Error("CROSS_ENGINE_SEED_MODE");
+  if (![2,4,8,12].includes(budgetSeconds) || budgetSeconds !== 12 && (engine !== "solverforge" || seedOnly))
+    throw new Error("CROSS_ENGINE_BUDGET");
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
   const name = "escalas-cross-engine-" + randomUUID();
   const special = JSON.parse(body).input._restPairTarget === 20;
@@ -110,6 +112,7 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
   else if (engine === "solverforge") {
     args.push("--env", "RAYON_NUM_THREADS=1", image);
     if (seedOnly) args.push("--seed-only");
+    else if (budgetSeconds !== 12) args.push("--budget-seconds=" + budgetSeconds);
   } else {
     args.push(image);
     if (patternSeed) args.push("--pattern-seed");
@@ -174,14 +177,14 @@ export type ForgeTelemetry = {
   version: "0.31.2"; mode: "NATIVE" | "SEED_ONLY"; nativeSearch: boolean; seedComplete: boolean;
   mapSeconds: number; seedSeconds: number; searchSeconds: number; entities: number;
   positions: number; initialized: number; allowedPatterns: number; initialCost: number[]; finalCost: number[];
-  partialModel: true;
+  partialModel: true; budgetSeconds: number;
 };
-export function solverforgeAdapter(image: string, seedOnly = false) {
+export function solverforgeAdapter(image: string, seedOnly = false, budgetSeconds = 12) {
   inspectImage(image, "solverforge");
   let telemetry: ForgeTelemetry | null = null;
   const adapter: Adapter = body => {
     telemetry = null;
-    const child = runIsolated(image, "solverforge", body, false, false, seedOnly);
+    const child = runIsolated(image, "solverforge", body, false, false, seedOnly, budgetSeconds);
     if ((child.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT" || !child.error && child.status === 124)
       return { httpStatus: 504, body: { error: "SOLVER_TIMED_OUT" }, maxRssKiB: null };
     if (child.error || child.status !== 0)
@@ -197,7 +200,7 @@ export function solverforgeAdapter(image: string, seedOnly = false) {
         const duration = (x: unknown) => typeof x === "number" && Number.isFinite(x) && x >= 0;
         const vector = (x: unknown) => Array.isArray(x) && x.length === 9 && x.every(integer);
         if (!t || t.version !== "0.31.2" || t.mode !== (seedOnly ? "SEED_ONLY" : "NATIVE")
-          || t.partialModel !== true || t.nativeSearch !== !seedOnly || typeof t.seedComplete !== "boolean"
+          || t.partialModel !== true || t.budgetSeconds !== budgetSeconds || t.nativeSearch !== !seedOnly || typeof t.seedComplete !== "boolean"
           || !duration(t.mapSeconds) || !duration(t.seedSeconds) || !duration(t.searchSeconds)
           || !integer(t.entities) || t.entities < 1 || t.entities > 50 || !integer(t.positions)
           || !integer(t.initialized) || t.initialized > t.entities || !integer(t.allowedPatterns)

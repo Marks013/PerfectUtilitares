@@ -18,7 +18,7 @@ pub struct Employee {
     pub comparable_weeks: u32,
     pub facts: Arc<Sector>,
     pub catalog: Arc<Vec<u32>>,
-    pub allowed: Vec<usize>,
+    pub allowed: Arc<[usize]>,
     #[planning_pin]
     pub pinned: bool,
     #[planning_variable(value_range_provider = "allowed")]
