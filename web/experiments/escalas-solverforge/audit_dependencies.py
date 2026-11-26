@@ -123,11 +123,17 @@ def main():
         historical=[{"id":"RUSTSEC-2026-0190","name":"anyhow","version":"1.0.102","reachable":p["reachable"],
                      "evidence":"prior RustSec run 45737356746; verify against current advisory before adoption"}
                     for p in locked if (p["name"],p["version"])==("anyhow","1.0.102")]
+        corrected=[{"id":"RUSTSEC-2026-0190","name":"anyhow","version":"1.0.103",
+                    "reachable":p["reachable"],"advisories":p["advisories"],
+                    "source":"https://github.com/RustSec/advisory-db/blob/main/crates/anyhow/RUSTSEC-2026-0190.md"}
+                   for p in locked if (p["name"],p["version"])==("anyhow","1.0.103")]
+        require(len(corrected)==1 and corrected[0]["reachable"] is False,"ANYHOW_PATCH_SCOPE_DRIFT")
         report={"status":"REVIEW_REQUIRED" if count or lock_count or historical else "NO_MATCHES_IN_RESOLVED_CRATE_SCOPE",
                 "checkedAt":datetime.now(timezone.utc).isoformat(),"upstreamRevision":UPSTREAM,
                 "resolvedCrates":len(items),"componentsWithAdvisories":count,"components":items,
                 "lockedRegistryCrates":len(locked),"lockedComponentsWithAdvisories":lock_count,
                 "lockedRegistryInventory":locked,"historicalUnresolvedFindings":historical,
+                "reviewedLockCorrections":corrected,
                 "scope":"reachable cargo graph and entire pinned registry lock; not rustc, std or musl",
                 "notProductionOrLegalCertification":True}
     except (OSError,ValueError,KeyError,TypeError,AttributeError,OverflowError):

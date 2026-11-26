@@ -125,6 +125,12 @@ jobs:
           output="$RUNNER_TEMP/forge-evidence/curve.jsonl"
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" curve | tee "$RUNNER_TEMP/forge-evidence/curve-summary.json"
+      - name: E2 candidate noninferiority gate (not production parity)
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/escalas-solverforge/verify_comparison.py "$RUNNER_TEMP/forge-evidence/paired-summary.json" quality | tee "$RUNNER_TEMP/forge-evidence/quality-summary.json"
       - name: Audit resolved and full locked public Rust dependencies
         if: always()
         shell: bash

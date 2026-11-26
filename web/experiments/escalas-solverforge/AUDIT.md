@@ -40,3 +40,9 @@ Base de revisão 36e389d4bdbf921393e7248cab88420508cb329c. O workflow 4574110894
 | SF15 | Plano de ampliação sem produto cartesiano de seis semanas | Projetar DP/transições por semana com estado de descanso e domingo, bitsets/arrays escaláveis, paridade dos 16 objetivos e holdouts antes de aceitar |
 
 Não considerar os ganhos de CPU/memória comprovados até comparar o SHA anterior e o novo em condições equivalentes. A curva é diagnóstica somente do Rust, não demonstra causalidade universal nem comparação de orçamentos curtos com OR-Tools/Timefold. A execução completa no ambiente ARM64 é obrigatória; nenhum novo teste Rust foi executado localmente. Nenhum deploy, merge, mudança de quotas ou alteração dos controles.
+
+## SF16–SF17 — segurança e gate operacional
+
+Evidência: 45741511691, 52 crates alcançáveis sem avisos, um aviso em 87 crates registry. Anyhow 1.0.102 fora do grafo candidato, mas presente no lock. Atualização exclusiva para 1.0.103, [RustSec](https://github.com/RustSec/advisory-db/blob/main/crates/anyhow/RUSTSEC-2026-0190.md), [índice registry](https://raw.githubusercontent.com/rust-lang/crates.io-index/master/an/yh/anyhow), checksum 2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3. Verificação reversível do lock upstream, fetch locked, testes offline e auditoria OSV sem waiver. Rustc/stdlib/musl/notices continuam pendentes.
+
+O benchmark anterior produziu 18 propostas válidas por motor, mas SolverForge 50/28 apresentou 6/6 regressões dominicais contra cada controle. O novo gate exige zero regressões e retenções em todos os pares E2; exploração e diagnóstico continuam separados. Não é certificação de E3, produção ou superioridade geral.

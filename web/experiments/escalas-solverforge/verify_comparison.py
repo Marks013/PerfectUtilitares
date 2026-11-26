@@ -320,6 +320,19 @@ def verify(rows, mode):
             "productionCertified":False,"qualityGatePassed":False,"scenarios":reports}
 
 
+def e2_noninferiority(report):
+    check(report.get("decision")=="EXPLORATORY_VALID_TRIPLE","E2_VALIDITY")
+    scenarios=report.get("scenarios",[])
+    check([s.get("scenario") for s in scenarios]==list(SCENARIOS),"E2_SCENARIOS")
+    for scenario in scenarios:
+        check(scenario["samplesPerEngine"]==6,"E2_SAMPLES")
+        for name in ("ortools->solverforge","timefold->solverforge"):
+            pair=scenario["pairs"][name]
+            check(pair["comparable"]==6 and pair["regressions"]==0
+                  and pair["productRetentions"]==0,"E2_PRODUCT_NONINFERIORITY")
+    return {"decision":"E2_NONINFERIORITY_OBSERVED","productionCertified":False}
+
+
 def verify_curve(rows):
     variants = [("seed-only", 12), ("native-2", 2), ("native-4", 4), ("native-8", 8), ("native-12", 12)]
     check(len(rows) == 25 and all(isinstance(r,dict) for r in rows), "CURVE_COUNT")
@@ -368,6 +381,10 @@ def verify_curve(rows):
 
 if __name__ == "__main__":
     try:
+        if sys.argv[2]=="quality":
+            with open(sys.argv[1],encoding="utf-8") as stream:
+                print(json.dumps(e2_noninferiority(json.load(stream)),separators=(",",":")))
+            sys.exit(0)
         with open(sys.argv[1],encoding="utf-8") as stream:
             rows=[json.loads(line) for line in stream if line.strip()]
             report=verify_curve(rows) if sys.argv[2]=="curve" else verify(rows,sys.argv[2])

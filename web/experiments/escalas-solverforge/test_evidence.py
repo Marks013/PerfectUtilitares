@@ -1,7 +1,8 @@
 import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
-from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve
+from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -32,6 +33,20 @@ class EvidenceTests(unittest.TestCase):
 
     def test_curve_requires_full_balanced_evidence(self):
         with self.assertRaises(ValueError):verify_curve([])
+
+    def test_only_reviewed_lock_delta_is_allowed(self):
+        original=ANYHOW_OLD+"\n"
+        verify_lock(original,ANYHOW_PATCHED+"\n"+ENTRY)
+        for modified in (ANYHOW_OLD+"\n"+ENTRY,ANYHOW_PATCHED+"\n"+ENTRY+"extra"):
+            with self.assertRaises(ValueError):verify_lock(original,modified)
+
+    def test_e2_gate_rejects_valid_but_regressed_proposals(self):
+        pair={"comparable":6,"regressions":0,"productRetentions":0}
+        report={"decision":"EXPLORATORY_VALID_TRIPLE","scenarios":[{"scenario":name,"samplesPerEngine":6,
+            "pairs":{"ortools->solverforge":dict(pair),"timefold->solverforge":dict(pair)}} for name in SCENARIOS]}
+        self.assertEqual(e2_noninferiority(report)["decision"],"E2_NONINFERIORITY_OBSERVED")
+        report["scenarios"][1]["pairs"]["ortools->solverforge"]["regressions"]=1
+        with self.assertRaises(ValueError):e2_noninferiority(report)
 
     def test_even_sample_median_is_midpoint(self):
         self.assertEqual(p50([6, 1, 3, 2, 5, 4]), 3.5)
