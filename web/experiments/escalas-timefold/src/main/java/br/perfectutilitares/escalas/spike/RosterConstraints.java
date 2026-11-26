@@ -237,7 +237,7 @@ public class RosterConstraints implements ConstraintProvider {
     }
     Constraint preferredConsecutive(ConstraintFactory f) {
         return f.forEach(Day.class).filter(day->day.isPreferConsecutive()&&day.resting())
-                .join(Day.class,equal(Day::person,Day::person),equal(day->day.index()+1,Day::index),
+                .join(Day.class,equal(Day::person,Day::person),equal((Day day)->day.index()+1,Day::index),
                         filtering((before,after)->after.resting()))
                 .reward(level(8)).asConstraint("Preferred consecutive rests");
     }

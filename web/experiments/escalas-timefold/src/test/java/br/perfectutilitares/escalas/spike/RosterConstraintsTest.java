@@ -22,7 +22,7 @@ class RosterConstraintsTest {
     }
 
     private static BendableScore score(long hard, long total, long sundays, long peak, long empty, long spread, long changes) {
-        return BendableScore.of(new long[]{hard}, new long[]{0, 0, 0, total, sundays, peak, empty, 0, spread, changes});
+        return BendableScore.of(new long[]{hard}, new long[]{0, 0, 0, total, sundays, peak, empty, 0, spread, 0, changes, 0});
     }
 
     @Test void countsAnEntirelyEmptyWeek() {
@@ -161,7 +161,7 @@ class RosterConstraintsTest {
         // Sunday loss 60 plus one lost day of presence; total improves by 60.
         verifier.verifyThat().given(sun, mon, limit, presence, day(0, Day.State.OFF, null),
                 day(1, Day.State.WORK, null)).scores(
-                BendableScore.of(new long[]{0}, new long[]{-61, -60, 0, -120, -60, -1, -1, 0, 0, 0}));
+                BendableScore.of(new long[]{0}, new long[]{-61, -60, 0, -120, -60, -1, -1, 0, 0, 0, 0, 0}));
     }
 
     @Test void penalizesAdjustableRestPairsButNotTwoImposedOffs() {
@@ -171,6 +171,26 @@ class RosterConstraintsTest {
         first.setPinned(true);
         second.setPinned(true);
         verifier.verifyThat(RosterConstraints::adjustableRestPairs).given(first, second).penalizesBy(0);
+    }
+
+    @Test void personalPreferencesAreSoftAndRequiredPairsAreHard() {
+        var first=day(1,Day.State.OFF,null);
+        var second=day(2,Day.State.WORK,null);
+        first.setConsecutiveRequired(true);
+        verifier.verifyThat(RosterConstraints::mandatoryConsecutiveRest).given(first,second).penalizesBy(1);
+        second.setState(Day.State.OFF);
+        verifier.verifyThat(RosterConstraints::mandatoryConsecutiveRest).given(first,second).penalizesBy(0);
+        first.setAdjustableRest(false);second.setAdjustableRest(false);
+        verifier.verifyThat(RosterConstraints::adjustableRestPairs).given(first,second).penalizesBy(0);
+        first.setPreferConsecutive(true);
+        verifier.verifyThat(RosterConstraints::preferredConsecutive).given(first,second).rewardsWith(1);
+        second.setPreferredOff(true);
+        verifier.verifyThat(RosterConstraints::preferredOff).given(first,second).penalizesBy(0);
+        second.setState(Day.State.WORK);
+        verifier.verifyThat(RosterConstraints::preferredOff).given(first,second).penalizesBy(1);
+        first.setSaved(Day.State.WORK);second.setSaved(Day.State.OFF);
+        verifier.verifyThat(RosterConstraints::changedPeople).given(first,second).penalizesBy(1);
+        verifier.verifyThat(RosterConstraints::changes).given(first,second).penalizesBy(2);
     }
 
     @Test void recoversPresenceEvenWithoutDemandBand() {

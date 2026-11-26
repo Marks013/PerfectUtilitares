@@ -181,6 +181,44 @@ class WireModelTest {
             }
         }
     }
+    @Test void sharedCustomProfileCorpusUsesNativeSearch() throws Exception {
+        try(var source=getClass().getResourceAsStream("/e3a-fixed-clock-contract.json")){
+            assertNotNull(source);
+            var corpus=JSON.readTree(source);
+            assertEquals("E3A-FIXED-CLOCK-1",corpus.path("version").asText());
+            var root=corpus.path("base");
+            var roster=WireModel.read(root);
+            assertEquals(PatternSeeder.Outcome.APPLIED,PatternSeeder.seed(roster,Long.MAX_VALUE));
+            assertTrue(SeedGuard.install(roster));
+            var factory=ai.timefold.solver.core.api.solver.SolverFactory.<Roster>create(
+                SpikeMain.config(java.time.Duration.ofMillis(400)));
+            var result=factory.buildSolver().solve(roster);
+            assertTrue(result.score().isFeasible());
+            assertEquals(21,result.days().size());
+            for(int i=0;i<3;i++){
+                final String id="person-"+i;
+                var cells=result.days().stream().filter(day->day.person().equals(id)).toList();
+                assertEquals(5,cells.stream().filter(Day::working).count());
+                assertTrue(cells.getLast().working());
+                int paid=cells.stream().filter(Day::working).flatMap(day->day.getWorkSegments().stream())
+                    .mapToInt(segment->segment.end()-segment.start()).sum();
+                assertEquals((40+2*i)*60,paid);
+                assertTrue(cells.stream().filter(Day::working).allMatch(day->day.shift().equals("clock-"+(paid/60))));
+                if(i==0){
+                    assertTrue(cells.get(1).resting());
+                    assertTrue(cells.get(0).resting()||cells.get(2).resting());
+                }
+                if(i==1)assertTrue(cells.get(2).resting()&&cells.get(5).resting());
+            }
+            for(var mutation:corpus.path("mutations")){
+                var value=root.deepCopy();
+                String pointer=mutation.path("pointer").asText();
+                int split=pointer.lastIndexOf('/');
+                ((ObjectNode)value.at(pointer.substring(0,split))).set(pointer.substring(split+1),mutation.path("value"));
+                assertThrows(IllegalArgumentException.class,()->WireModel.read(value),mutation.path("name").asText());
+            }
+        }
+    }
     @Test void rejectsLockedSaturdayOff() throws Exception {
         var root = envelope();
         ((ObjectNode)root.path("input")).set("assignments", JSON.readTree(

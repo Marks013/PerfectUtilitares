@@ -1,0 +1,242 @@
+{
+  "version": "E3A-FIXED-CLOCK-1",
+  "base": {
+    "input": {
+      "schemaVersion": 1,
+      "branchCode": "SYNTH",
+      "simulation": true,
+      "timeZone": "America/Sao_Paulo",
+      "planningWeekStartsOn": "SUNDAY",
+      "restRulesVersion": 3,
+      "generationMode": "REST_ONLY",
+      "defaultWeeklyHours": 42,
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-07",
+      "storeClosingMinutes": 1200,
+      "policy": {
+        "calendarMode": "MANUAL",
+        "normativeProfile": "CUSTOM",
+        "weeklyLimit": 44,
+        "dailyLimitMinutes": 528,
+        "maxConsecutiveWorkDays": 5,
+        "minMealMinutes": 60,
+        "minInterShiftMinutes": 660,
+        "minWeeklyRestMinutes": 2100,
+        "compensationAuthorized": false,
+        "holidayRestAllowed": false,
+        "closedDates": [],
+        "holidayDates": [],
+        "authorizedHolidayDates": [],
+        "limitContinuousWorkBlocks": true
+      },
+      "shifts": [
+        {
+          "id": "clock-40",
+          "segments": [
+            {
+              "kind": "WORK",
+              "start": 420,
+              "end": 660
+            },
+            {
+              "kind": "BREAK",
+              "start": 660,
+              "end": 720
+            },
+            {
+              "kind": "WORK",
+              "start": 720,
+              "end": 960
+            }
+          ]
+        },
+        {
+          "id": "clock-42",
+          "segments": [
+            {
+              "kind": "WORK",
+              "start": 420,
+              "end": 672
+            },
+            {
+              "kind": "BREAK",
+              "start": 672,
+              "end": 732
+            },
+            {
+              "kind": "WORK",
+              "start": 732,
+              "end": 984
+            }
+          ]
+        },
+        {
+          "id": "clock-44",
+          "segments": [
+            {
+              "kind": "WORK",
+              "start": 420,
+              "end": 684
+            },
+            {
+              "kind": "BREAK",
+              "start": 684,
+              "end": 744
+            },
+            {
+              "kind": "WORK",
+              "start": 744,
+              "end": 1008
+            }
+          ]
+        }
+      ],
+      "employees": [
+        {
+          "id": "person-0",
+          "name": "Synthetic person 0",
+          "sector": "S",
+          "role": "Repositor",
+          "weeklyHours": 40,
+          "weeklyHoursMode": "INDIVIDUAL",
+          "shiftIds": [
+            "clock-40"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "MIXED",
+          "offPattern": "CONSECUTIVE",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [
+            0
+          ],
+          "preferredOffDays": [],
+          "fixedRestSlots": [
+            {
+              "enabled": true,
+              "weekday": 0
+            },
+            {
+              "enabled": false,
+              "weekday": 3
+            }
+          ]
+        },
+        {
+          "id": "person-1",
+          "name": "Synthetic person 1",
+          "sector": "S",
+          "role": "Repositor",
+          "weeklyHours": 42,
+          "weeklyHoursMode": "BRANCH",
+          "shiftIds": [
+            "clock-42"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "FIXED",
+          "offPattern": "ANY",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [
+            1,
+            4
+          ],
+          "preferredOffDays": [],
+          "fixedRestSlots": [
+            {
+              "enabled": true,
+              "weekday": 1
+            },
+            {
+              "enabled": true,
+              "weekday": 4
+            }
+          ]
+        },
+        {
+          "id": "person-2",
+          "name": "Synthetic person 2",
+          "sector": "S",
+          "role": "Caixa",
+          "weeklyHours": 44,
+          "weeklyHoursMode": "INDIVIDUAL",
+          "shiftIds": [
+            "clock-40",
+            "clock-44"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "VARIABLE",
+          "offPattern": "PREFER_CONSECUTIVE",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [],
+          "preferredOffDays": [
+            2
+          ],
+          "fixedImportedShiftId": "clock-44"
+        }
+      ],
+      "assignments": [],
+      "demands": []
+    }
+  },
+  "mutations": [
+    {
+      "name": "fixed-saturday",
+      "pointer": "/input/employees/0/fixedOffDays",
+      "value": [
+        5
+      ]
+    },
+    {
+      "name": "slot-projection-mismatch",
+      "pointer": "/input/employees/1/fixedRestSlots",
+      "value": [
+        {
+          "enabled": true,
+          "weekday": 0
+        },
+        {
+          "enabled": true,
+          "weekday": 4
+        }
+      ]
+    },
+    {
+      "name": "weekly-cap",
+      "pointer": "/input/policy/weeklyLimit",
+      "value": 40
+    },
+    {
+      "name": "daily-cap",
+      "pointer": "/input/policy/dailyLimitMinutes",
+      "value": 480
+    },
+    {
+      "name": "fixed-rest-work-lock",
+      "pointer": "/input/assignments",
+      "value": [
+        {
+          "employeeId": "person-0",
+          "date": "2026-11-02",
+          "kind": "WORK",
+          "shiftId": "clock-40",
+          "locked": true
+        }
+      ]
+    },
+    {
+      "name": "manual-clock-unsupported",
+      "pointer": "/input/employees/0/manualShiftByDate",
+      "value": {
+        "2026-11-02": "clock-40"
+      }
+    }
+  ]
+}
