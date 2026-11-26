@@ -50,6 +50,12 @@ jobs:
             printf '%s\n' "$image" > "$audit/$target-image.txt"
             docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1001:1001 \
               --entrypoint java "$image" -version > "$audit/$target-java-version.txt" 2>&1
+            docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1001:1001 \
+              --entrypoint /bin/cat "$image" /opt/java/openjdk/release > "$audit/$target-java-release.txt"
+            if [ "$target" = build ]; then
+              docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+                --user 1001:1001 --env MAVEN_CONFIG=/tmp --entrypoint mvn "$image" --version > "$audit/build-maven-version.txt" 2>&1
+            fi
             "$scanner" image --scanners vuln --pkg-types os,library --list-all-pkgs --format json --exit-code 0 \
               --timeout 8m --output "$audit/$target-trivy.json" "$image"
           done

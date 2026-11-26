@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { solveEscala, EscalaSolverError } from "../../../src/lib/escalas/solver-client";
 import { compareRosterCoverage, completeRoster, coverageQuality, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
 import { operationalEscalaInput } from "../../../src/lib/escalas/eligibility";
+import { restPairSummary } from "../../../src/lib/escalas/rest-quality";
 import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import { validateEscala } from "../../../src/lib/escalas/validation";
 import { isHoursReferenceOnly, validateHoursReferences } from "../../../src/lib/escalas/hours-reference";
@@ -227,7 +228,11 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCove
   const normalized = [...quality.daily.values()].reduce((sum, count) => sum + count, 0);
   const coverageAudit = auditSectorMetrics(proposal, quality);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
-    normalizedEstimatedShortage: normalized, ...(coverageAudit ? { coverageAudit } : {}),
+    normalizedEstimatedShortage: normalized, ...(coverageAudit ? { coverageAudit, restAudit: (() => {
+      const r = restPairSummary(proposal);
+      return { adjustablePairs: r.adjustablePairs, correctableExcess: r.correctableExcess,
+        concentration: r.concentration, weeklyRepetitions: r.weeklyRepetitions };
+    })() } : {}),
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
     comparison: comparison ? { comparable: comparison.comparable, regressed: comparison.regressed,
       improved: comparison.improved, reason: comparison.reason } : null };

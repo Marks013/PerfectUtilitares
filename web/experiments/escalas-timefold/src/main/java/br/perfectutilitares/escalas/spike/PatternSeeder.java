@@ -27,7 +27,7 @@ final class PatternSeeder {
             return true;
         }
     }
-    private record Rank(long hard, long total, long sunday, long service, long balance, long stability)
+    private record Rank(long hard, long total, long sunday, long service, long rest, long balance, long stability)
             implements Comparable<Rank> {
         @Override public int compareTo(Rank other) {
             int c = Long.compare(hard, other.hard);
@@ -36,9 +36,11 @@ final class PatternSeeder {
             // coverage still wins; no estimate is converted into a hard rule.
             c = Long.compare(sunday, other.sunday);
             if (c != 0) return c;
+            c = Long.compare(service, other.service);
+            if (c != 0) return c;
             c = Long.compare(total, other.total);
             if (c != 0) return c;
-            c = Long.compare(service, other.service);
+            c = Long.compare(rest, other.rest);
             if (c != 0) return c;
             c = Long.compare(balance, other.balance);
             return c != 0 ? c : Long.compare(stability, other.stability);
@@ -136,7 +138,17 @@ final class PatternSeeder {
             Day.State prior = days.get(day).state();
             if (prior != null) stability += prior == Day.State.WORK ? 1 : -1;
         }
-        return new Rank(h, t, s, service, balance, stability);
+        return new Rank(h, t, s, service, -adjustablePairs(mask, days), balance, stability);
+    }
+
+    static int adjustablePairs(int workMask, List<Day> days) {
+        int offMask = ~workMask & ((1 << days.size()) - 1);
+        int count = 0;
+        for (int bits = offMask & (offMask >>> 1); bits != 0; bits &= bits - 1) {
+            int i = Integer.numberOfTrailingZeros(bits);
+            if (!(days.get(i).isPinned() && days.get(i + 1).isPinned())) count++;
+        }
+        return count;
     }
 
     private static Choice choose(Cohort cohort, Integer incumbent, long deadline) {
@@ -165,7 +177,8 @@ final class PatternSeeder {
             // person stays within the same sector. Never purchase an improvement
             // with a new confirmed, total, Sunday or daily-presence deficit.
             if (prior != null && ((mask & protectedDays) != protectedDays || candidate.hard() < prior.hard()
-                    || candidate.total() < prior.total() || candidate.sunday() < prior.sunday())) continue;
+                    || candidate.sunday() < prior.sunday()
+                    || (candidate.service() <= prior.service() && candidate.total() < prior.total()))) continue;
             if (best == null || candidate.compareTo(best.rank()) > 0) best = new Choice(mask, candidate);
         }
         return best;
@@ -178,6 +191,111 @@ final class PatternSeeder {
             int day = state.band.day();
             if ((mask & (1 << day)) != 0 && cohort.days().get(day).covers(state.band.start(), state.band.end()))
                 state.change(cohort.days().getFirst().role(), delta);
+        }
+    }
+
+    private record PairCost(long hard, long sunday, long total, int peak, int rest) implements Comparable<PairCost> {
+        @Override public int compareTo(PairCost other) {
+            int c = Long.compare(hard, other.hard);
+            if (c == 0) c = Long.compare(sunday, other.sunday);
+            if (c == 0) c = Long.compare(total, other.total);
+            if (c == 0) c = Integer.compare(peak, other.peak);
+            return c != 0 ? c : Integer.compare(rest, other.rest);
+        }
+    }
+
+    private record DayCost(long hard, long sunday, long total, int peak) {}
+
+    /** Costs for the four possible attendance combinations of a two-person
+     * sector. Compute once from clock and role floors, not once per mask pair.
+     */
+    private static DayCost[][] pairCosts(Cohort a, Cohort b) {
+        int days = a.days().size();
+        DayCost[][] costs = new DayCost[days][4];
+        for (int day = 0; day < days; day++) {
+            for (int state = 0; state < 4; state++) {
+                long hard = 0, sunday = 0, total = 0;
+                int peak = 0;
+                for (BandState item : a.bands()) {
+                    var band = item.band;
+                    if (band.day() != day) continue;
+                    Day first = a.days().get(day), second = b.days().get(day);
+                    boolean worksA = (state & 1) != 0 && first.covers(band.start(), band.end());
+                    boolean worksB = (state & 2) != 0 && second.covers(band.start(), band.end());
+                    Map<String, Set<String>> members = new HashMap<>();
+                    if (worksA) members.computeIfAbsent(first.role(), k -> new HashSet<>()).add(first.id());
+                    if (worksB) members.computeIfAbsent(second.role(), k -> new HashSet<>()).add(second.id());
+                    long gap = band.missing((worksA ? 1 : 0) + (worksB ? 1 : 0), members);
+                    if (band.estimated()) {
+                        total += gap;
+                        if (day % 7 == 0) sunday += gap;
+                        peak = Math.max(peak, Math.toIntExact(gap / (band.end() - band.start())));
+                    } else hard += gap;
+                }
+                costs[day][state] = new DayCost(hard, sunday, total, peak);
+            }
+        }
+        return costs;
+    }
+
+    private static PairCost pairCost(Cohort a, Cohort b, int first, int second, DayCost[][] costs) {
+        long hard = 0, sunday = 0, total = 0;
+        int peak = 0;
+        for (int i = 0; i < costs.length; i++) {
+            DayCost day = costs[i][((first >>> i) & 1) | (((second >>> i) & 1) << 1)];
+            hard += day.hard(); sunday += day.sunday(); total += day.total();
+            peak = Math.max(peak, day.peak());
+        }
+        return new PairCost(hard, sunday, total, peak,
+                adjustablePairs(first, a.days()) + adjustablePairs(second, b.days()));
+    }
+
+    /** Joint replacement escapes the local minimum where either individual
+     * move would remove the other employee's only coverage. No hard rule is
+     * relaxed: every enumerated mask is already individually admissible.
+     * Accept full daily service only if confirmed and Sunday gaps do not grow.
+     */
+    private static void recoverTwoPersonService(Map<String, Cohort> cohorts, Map<String, Integer> selected,
+                                                long deadline) {
+        var sectors = new LinkedHashMap<String, List<String>>();
+        for (var entry : cohorts.entrySet()) sectors.computeIfAbsent(entry.getValue().days().getFirst().sector(),
+                k -> new ArrayList<>()).add(entry.getKey());
+        for (var sector : sectors.values()) {
+            if (System.nanoTime() >= deadline) return;
+            if (sector.size() != 2) continue;
+            String personA = sector.get(0), personB = sector.get(1);
+            Cohort a = cohorts.get(personA), b = cohorts.get(personB);
+            int oldA = selected.get(personA), oldB = selected.get(personB);
+            int full = (1 << a.days().size()) - 1;
+            if ((oldA | oldB) == full) continue;
+            DayCost[][] costs = pairCosts(a, b);
+            PairCost before = pairCost(a, b, oldA, oldB, costs), best = null;
+            int bestA = oldA, bestB = oldB;
+            // Start with the incumbent A, then deterministic enumeration. A
+            // bitwise union rejects shared OFF dates before scoring a pair.
+            var firstMasks = new ArrayList<Integer>(a.masks().size() + 1);
+            firstMasks.add(oldA);
+            for (int mask : a.masks()) if (mask != oldA) firstMasks.add(mask);
+            long checked = 0;
+            int scored = 0;
+            search:
+            for (int first : firstMasks) {
+                for (int second : b.masks()) {
+                    if ((checked++ & 511) == 0 && System.nanoTime() >= deadline) break search;
+                    if ((first | second) != full) continue;
+                    PairCost candidate = pairCost(a, b, first, second, costs);
+                    if (candidate.hard() <= before.hard() && candidate.sunday() <= before.sunday()
+                            && (best == null || candidate.compareTo(best) < 0)) {
+                        best = candidate; bestA = first; bestB = second;
+                    }
+                    // Keep bounded work even on fast or unusual hardware.
+                    if (++scored >= 20_000) break search;
+                }
+            }
+            if (best == null) continue;
+            apply(a, oldA, -1); apply(b, oldB, -1);
+            apply(a, bestA, 1); apply(b, bestB, 1);
+            selected.put(personA, bestA); selected.put(personB, bestB);
         }
     }
 
@@ -227,6 +345,7 @@ final class PatternSeeder {
         // sweeps of whole-person pattern replacements. A partial sweep keeps
         // the last complete selection; the caller never sees intermediate cells.
         if (System.nanoTime() >= deadline) return Outcome.TIME_LIMIT;
+        recoverTwoPersonService(cohorts, selected, deadline);
         for (int pass = 0; pass < 2; pass++) {
             boolean changed = false;
             for (var entry : cohorts.entrySet()) {

@@ -4,10 +4,12 @@ from pathlib import Path
 import sys
 
 PLUGINS = {
-    "org.apache.maven.plugins:maven-compiler-plugin": "3.14.1",
-    "org.apache.maven.plugins:maven-surefire-plugin": "3.5.4",
-    "org.apache.maven.plugins:maven-dependency-plugin": "3.9.0",
-    "org.apache.maven.plugins:maven-enforcer-plugin": "3.6.2",
+    "org.apache.maven.plugins:maven-compiler-plugin": "3.16.0",
+    "org.apache.maven.plugins:maven-surefire-plugin": "3.6.1",
+    "org.apache.maven.plugins:maven-dependency-plugin": "3.11.0",
+    "org.apache.maven.plugins:maven-enforcer-plugin": "3.7.0",
+    "org.apache.maven.plugins:maven-resources-plugin": "3.5.0",
+    "org.apache.maven.plugins:maven-jar-plugin": "3.5.1",
 }
 SEVERITIES = ("UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")
 
@@ -22,6 +24,7 @@ def summarize(report, build=False):
     results = report["Results"]
     counts = {key: 0 for key in SEVERITIES}
     packages = set()
+    high_findings = set()
     os_packages = 0
     java_packages = 0
     jdk_packages = set()
@@ -49,6 +52,10 @@ def summarize(report, build=False):
             severity = vuln.get("Severity", "UNKNOWN")
             require(severity in SEVERITIES, "SCAN_SEVERITY")
             counts[severity] += 1
+            if severity in ("HIGH", "CRITICAL"):
+                fields = tuple(str(vuln.get(key, ""))[:300] for key in
+                               ("VulnerabilityID", "PkgName", "InstalledVersion", "FixedVersion"))
+                high_findings.add((*fields, severity))
     missing_plugins = [name for name, version in PLUGINS.items()
                        if build and (name, version) not in packages and (name.split(":")[1], version) not in packages]
     missing = []
@@ -63,6 +70,8 @@ def summarize(report, build=False):
     return {"osPackages": os_packages, "javaPackages": java_packages,
             "jdkPackagesDetected": len(jdk_packages), "missingRequiredPlugins": missing_plugins,
             "vulnerabilityOccurrences": counts, "coverageGaps": missing,
+            "highCriticalFindings": [{"id": v[0], "package": v[1], "installed": v[2],
+                                      "fixed": v[3], "severity": v[4]} for v in sorted(high_findings)],
             "status": "REVIEW_REQUIRED" if counts["HIGH"] or counts["CRITICAL"] else
                       "INCONCLUSIVE" if missing else "NO_HIGH_OR_CRITICAL_MATCHES_IN_INVENTORIED_SCOPE"}
 
@@ -72,7 +81,22 @@ def main():
     try:
         runtime = summarize(json.loads((folder / "runtime-trivy.json").read_text()))
         build = summarize(json.loads((folder / "build-trivy.json").read_text()), build=True)
+        java = {}
+        for target in ("runtime", "build"):
+            version = (folder / f"{target}-java-version.txt").read_text()
+            release = (folder / f"{target}-java-release.txt").read_text()
+            require('21.0.13.1' in version and 'Temurin' in version
+                    and 'JAVA_VERSION="21.0.13.1"' in release
+                    and 'IMPLEMENTOR="Eclipse Adoptium"' in release, "JDK_PATCH_VERSION_MISMATCH")
+            java[target] = {"version": "21.0.13.1", "vendor": "Eclipse Adoptium",
+                            "patchedArchiveVerifiedAtBuild": True,
+                            "binaryAdvisoryCoverageProven": not any(
+                                gap == "JDK_BINARY_COVERAGE_UNPROVEN" for gap in
+                                (runtime if target == "runtime" else build)["coverageGaps"])}
+        maven = (folder / "build-maven-version.txt").read_text()
+        require("Apache Maven 3.10.2" in maven, "MAVEN_PATCH_VERSION_MISMATCH")
         result = {"scope": "runtime-and-build-images", "runtime": runtime, "build": build,
+                  "javaPatchProvenance": java, "mavenVersion": "3.10.2",
                   "notLegalOrProductionCertification": True}
         result["decision"] = "REVIEW_REQUIRED" if "REVIEW_REQUIRED" in (runtime["status"], build["status"]) else (
             "INCONCLUSIVE" if "INCONCLUSIVE" in (runtime["status"], build["status"]) else "SCOPED_NO_HIGH_CRITICAL_MATCHES")

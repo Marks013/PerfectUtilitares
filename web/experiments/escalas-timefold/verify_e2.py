@@ -203,6 +203,11 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
                         metrics = assessment.get("metrics") or {}
                         check(integer(metrics.get("shortagePersonMinutes")) and integer(metrics.get("normalizedEstimatedShortage")), "SHORTAGE")
                         sector_vector(metrics, profile)
+                        rest = metrics.get("restAudit")
+                        check(isinstance(rest, dict) and set(rest) == {"adjustablePairs", "correctableExcess",
+                              "concentration", "weeklyRepetitions"} and all(integer(value) for value in rest.values())
+                              and rest["correctableExcess"] <= rest["adjustablePairs"]
+                              and rest["weeklyRepetitions"] <= rest["adjustablePairs"], "REST_AUDIT")
                 for flag in ("acceptedNew", "engineNew", "sameAsRaw", "unchangedReference"):
                     check(type(row.get(flag)) is bool, "FLAG_TYPE")
                 accepted = (valid_timely(row) and row.get("outcome") == "NEW_PROPOSAL" and not row["unchangedReference"])
@@ -210,6 +215,7 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
                 check(row["acceptedNew"] is accepted and row["engineNew"] is engine_new, "ATTRIBUTION")
                 if row["engineNew"]:
                     check(raw["metrics"]["coverageAudit"] == final["metrics"]["coverageAudit"]
+                          and raw["metrics"]["restAudit"] == final["metrics"]["restAudit"]
                           and raw["metrics"]["normalizedEstimatedShortage"] == final["metrics"]["normalizedEstimatedShortage"],
                           "RAW_FINAL_COVERAGE_DRIFT")
                 if engine == "timefold":

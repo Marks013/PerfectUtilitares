@@ -22,7 +22,7 @@ class RosterConstraintsTest {
     }
 
     private static BendableScore score(long hard, long total, long sundays, long peak, long empty, long spread, long changes) {
-        return BendableScore.of(new long[]{hard}, new long[]{0, 0, total, sundays, peak, empty, spread, changes});
+        return BendableScore.of(new long[]{hard}, new long[]{0, 0, 0, total, sundays, peak, empty, 0, spread, changes});
     }
 
     @Test void countsAnEntirelyEmptyWeek() {
@@ -150,7 +150,26 @@ class RosterConstraintsTest {
         // Sunday loss 60 plus one lost day of presence; total improves by 60.
         verifier.verifyThat().given(sun, mon, limit, presence, day(0, Day.State.OFF, null),
                 day(1, Day.State.WORK, null)).scores(
-                BendableScore.of(new long[]{0}, new long[]{-61, -60, -120, -60, -1, -1, 0, 0}));
+                BendableScore.of(new long[]{0}, new long[]{-61, -60, 0, -120, -60, -1, -1, 0, 0, 0}));
+    }
+
+    @Test void penalizesAdjustableRestPairsButNotTwoImposedOffs() {
+        var first = day(1, Day.State.OFF, null);
+        var second = day(2, Day.State.OFF, null);
+        verifier.verifyThat(RosterConstraints::adjustableRestPairs).given(first, second).penalizesBy(1);
+        first.setPinned(true);
+        second.setPinned(true);
+        verifier.verifyThat(RosterConstraints::adjustableRestPairs).given(first, second).penalizesBy(0);
+    }
+
+    @Test void recoversPresenceEvenWithoutDemandBand() {
+        var first = day(1, Day.State.OFF, null);
+        var second = new Day("person-1", "Sector 1", "Repositor", "clock", 1, first.date(),
+                first.getWorkSegments(), false, false, null, Day.State.OFF, null);
+        var guard = new Roster.SectorLimit("Sector 1", 0, 0, 0);
+        verifier.verifyThat(RosterConstraints::recoverService).given(guard, first, second).penalizesBy(1);
+        second.setState(Day.State.WORK);
+        verifier.verifyThat(RosterConstraints::recoverService).given(guard, first, second).penalizesBy(0);
     }
 
     @Test void residualBudgetIsRoundedDownToMilliseconds() {

@@ -56,6 +56,23 @@ class PatternSeederTest {
         assertEquals(before, roster.days().stream().map(Day::state).toList());
     }
 
+    @Test void twoPeopleCanCoverAllDatesWithoutImportingAnIncumbent() {
+        Roster original = roster();
+        var days = original.days().stream().filter(d -> !d.person().equals("person-2")).toList();
+        var windows = original.windows().stream().filter(w -> !w.person().equals("person-2")).toList();
+        // No estimated demand on day 17. Presence still matters on that day.
+        var bands = original.bands().stream().filter(b -> b.day() != 17).toList();
+        Roster two = new Roster(days, windows, bands);
+        assertEquals(PatternSeeder.Outcome.APPLIED, PatternSeeder.seed(two, Long.MAX_VALUE));
+        for (int i = 0; i < 28; i++) {
+            final int day = i;
+            assertTrue(two.days().stream().anyMatch(d -> d.index() == day && d.working()), "day " + i);
+        }
+        for (var window : two.windows()) assertEquals(0, window.violation(two.days().stream()
+                .filter(d -> d.person().equals(window.person()) && window.matches(d)).count()));
+        assertEquals(Day.State.OFF, two.days().getFirst().state());
+    }
+
     @Test void expiredBudgetLeavesAllCellsUntouched() {
         Roster roster = roster();
         var before = roster.days().stream().map(Day::state).toList();

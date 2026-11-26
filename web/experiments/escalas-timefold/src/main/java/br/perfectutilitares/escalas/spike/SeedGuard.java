@@ -27,6 +27,7 @@ final class SeedGuard {
         for (var entry : patternCounts.entrySet()) if (entry.getValue() == entry.getKey().weeks()
                 && repeated.merge(entry.getKey().person(), 1, Integer::sum) > 1) return false;
         var sectors = new TreeMap<String, long[]>();
+        for (Day day : roster.days()) sectors.computeIfAbsent(day.sector(), k -> new long[3]);
         for (var band : roster.bands()) {
             var members = new HashMap<String, Set<String>>();
             int count = 0;

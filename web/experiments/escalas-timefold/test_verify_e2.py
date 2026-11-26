@@ -17,7 +17,9 @@ def rows():
                           metrics=dict(shortagePersonMinutes=60, normalizedEstimatedShortage=60,
                                        coverageAudit=[dict(horizon=60, month=60, sundays=0,
                                                            monthSundays=0, closing=0, peak=1,
-                                                           presence=[0, 1, 2, 3, 4, 5, 6])]))
+                                                           presence=[0, 1, 2, 3, 4, 5, 6])],
+                                       restAudit=dict(adjustablePairs=0, correctableExcess=0,
+                                                      concentration=0, weeklyRepetitions=0)))
         row = dict(shared, kind="measurement", repetition=0, engine=engine, rawStatus="FEASIBLE",
                    finalStatus="FEASIBLE", httpStatus=200, processSeconds=10, engineSeconds=11, productSeconds=12,
                    timely=True, errorCode=None, acceptedNew=True, engineNew=True, sameAsRaw=True,
@@ -155,6 +157,16 @@ class EvidenceTests(unittest.TestCase):
         data = rows()
         data[1]["spike"]["moveEvaluations"] = -1
         with self.assertRaises(ValueError):
+            self.validate(data)
+
+    def test_rest_audit_rejects_impossible_excess_and_raw_final_drift(self):
+        data = rows()
+        data[1]["finalAssessment"]["metrics"]["restAudit"]["correctableExcess"] = 1
+        with self.assertRaisesRegex(ValueError, "REST_AUDIT"):
+            self.validate(data)
+        data = rows()
+        data[1]["finalAssessment"]["metrics"]["restAudit"]["adjustablePairs"] = 1
+        with self.assertRaisesRegex(ValueError, "RAW_FINAL_COVERAGE_DRIFT"):
             self.validate(data)
 
     def test_incomplete_result(self):

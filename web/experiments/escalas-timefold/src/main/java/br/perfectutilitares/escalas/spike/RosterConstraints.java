@@ -16,12 +16,13 @@ import static ai.timefold.solver.core.api.score.stream.Joiners.filtering;
 
 /** E2 only: incremental fixed-clock model; NOT the full PerfectUtilitares priority policy. */
 public class RosterConstraints implements ConstraintProvider {
-    public static final int SOFT_LEVELS = 8;
+    public static final int SOFT_LEVELS = 10;
     private static final BendableScore HARD = BendableScore.ofHard(1, SOFT_LEVELS, 0, 1L);
     private static final BendableScore GUARD = BendableScore.ofSoft(1, SOFT_LEVELS, 0, 1L);
     private static final BendableScore SUNDAY_RECOVERY = BendableScore.ofSoft(1, SOFT_LEVELS, 1, 1L);
+    private static final BendableScore SERVICE_RECOVERY = BendableScore.ofSoft(1, SOFT_LEVELS, 2, 1L);
     private static BendableScore level(int index) {
-        return BendableScore.ofSoft(1, SOFT_LEVELS, index + 2, 1L);
+        return BendableScore.ofSoft(1, SOFT_LEVELS, index + 3, 1L);
     }
     record SectorDay(String sector, int day) {}
     record SundayGroup(String sector, int cap) {}
@@ -33,8 +34,8 @@ public class RosterConstraints implements ConstraintProvider {
         return new Constraint[] {
             windowCounts(factory), emptyWindow(factory), variableRestPattern(factory),
             confirmedCoverage(factory), guardTotal(estimated), guardSunday(estimated),
-            guardPeak(estimated), guardPresence(factory), recoverSeedSunday(estimated), totalEstimatedCoverage(estimated),
-            sundayCoverage(estimated), sectorPeak(estimated), dailyService(factory),
+            guardPeak(estimated), guardPresence(factory), recoverSeedSunday(estimated), recoverService(factory), totalEstimatedCoverage(estimated),
+            sundayCoverage(estimated), sectorPeak(estimated), dailyService(factory), adjustableRestPairs(factory),
             sundaySpread(factory), sundayDateSpread(factory), changes(factory)
         };
     }
@@ -121,6 +122,32 @@ public class RosterConstraints implements ConstraintProvider {
                 .penalize(GUARD).asConstraint("Seed daily service");
     }
 
+    /** Desired daily presence is a soft recovery goal, not a staffing floor.
+     * Include every active civil date in the admitted open-calendar scope,
+     * including dates with no demand band. Only enabled for guarded seeds.
+     */
+    Constraint recoverService(ConstraintFactory f) {
+        return f.forEachIncludingUnassigned(Day.class)
+                .groupBy(day -> new SectorDay(day.sector(), day.index()), count())
+                .filter((key, count) -> count >= 2)
+                .ifExists(Roster.SectorLimit.class, equal((SectorDay key, Long count) -> key.sector(), Roster.SectorLimit::sector))
+                .ifNotExists(Day.class, equal((SectorDay key, Long count) -> key.sector(), Day::sector),
+                        equal((SectorDay key, Long count) -> key.day(), Day::index),
+                        filtering((key, count, day) -> day.working()))
+                .penalize(SERVICE_RECOVERY).asConstraint("Recover open sector daily presence");
+    }
+
+    /** Exact adjacent adjustable OFF pair count in the admitted no-history,
+     * ANY variable-rest cohort. Two imposed OFFs are not penalized.
+     */
+    Constraint adjustableRestPairs(ConstraintFactory f) {
+        return f.forEach(Day.class).filter(Day::resting)
+                .join(Day.class, equal(Day::person, Day::person),
+                        equal((Day before) -> before.index() + 1, Day::index),
+                        filtering((before, after) -> after.resting() && (!before.isPinned() || !after.isPinned())))
+                .penalize(level(4)).asConstraint("Adjustable consecutive rest pairs");
+    }
+
     Constraint confirmedCoverage(ConstraintFactory f) {
         return deficits(f, false).filter((band, gap) -> gap > 0)
                 .penalize(HARD, (band, gap) -> gap).asConstraint("Confirmed coverage");
@@ -165,7 +192,7 @@ public class RosterConstraints implements ConstraintProvider {
                         ConstraintCollectors.<SundayGroup, Long, Long>min((group, value) -> value),
                         ConstraintCollectors.<SundayGroup, Long, Long>max((group, value) -> value))
                 .filter((group, low, high) -> high > low)
-                .penalize(level(4), (group, low, high) -> high - low).asConstraint(name);
+                .penalize(level(5), (group, low, high) -> high - low).asConstraint(name);
     }
     Constraint sundaySpread(ConstraintFactory f) {
         // Include unassigned opportunities during construction; exclude imposed OFF.
@@ -188,7 +215,7 @@ public class RosterConstraints implements ConstraintProvider {
 
     Constraint changes(ConstraintFactory f) {
         return f.forEach(Day.class).filter(day -> day.saved() != null && day.state() != day.saved())
-                .penalize(level(5))
+                .penalize(level(6))
                 .asConstraint("Changes to saved day");
     }
 }
