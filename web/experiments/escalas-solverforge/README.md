@@ -4,7 +4,7 @@
 
 ## Instalação e proveniência
 
-- Upstream: [SolverForge v0.31.2](https://github.com/SolverForge/solverforge/tree/78889c3ff9fda158c70e6a1f67f8c7f0fdae922e), commit exato 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e, Apache-2.0. [Crate 0.31.2](https://docs.rs/crate/solverforge/0.31.2). A MSRV é Rust 1.95; a toolchain do upstream nesta tag é 1.99.1. Usar esta última como referência; a CI SF61 qualifica também o Rust estável 1.100.0 com o mesmo lock. Não instalar CLI/scaffold/UI/MCP/mapas.
+- Upstream: [SolverForge v0.31.2](https://github.com/SolverForge/solverforge/tree/78889c3ff9fda158c70e6a1f67f8c7f0fdae922e), commit exato 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e, Apache-2.0. [Crate 0.31.2](https://docs.rs/crate/solverforge/0.31.2). A MSRV é Rust 1.95; a toolchain histórica do upstream nesta tag é 1.99.1. Após a qualificação SF61, o candidato usa exclusivamente Rust 1.100.0, inclusive no benchmark, com o mesmo lock. Não instalar CLI/scaffold/UI/MCP/mapas.
 - Cargo.lock: cópia do workspace upstream na tag, com a entrada do pacote local e a única correção de segurança revisada: anyhow 1.0.102 → 1.0.103 (RUSTSEC-2026-0190, checksum oficial). O script prepare_workspace.py verifica o checkout limpo, SHA e igualdade byte a byte após reverter exclusivamente a correção e a entrada local, depois aplica o overlay em examples/perfectutilitares-solverforge-spike. As bibliotecas SolverForge vêm dos paths oficiais da tag (não de HEAD/main). Dependência direta adicional: serde_json = 1.0.149, já presente no lock. Resolver o grafo inteiro novamente seria erro.
 - No runner descartável, instalar toolchain via rustup, alvo aarch64-unknown-linux-musl e musl-tools/binutils via APT assinado. Registrar versão do compilador/linker e pacotes. Cargo fetch --locked baixa as dependências verificadas pelo lock; os testes e build release rodam --locked --offline. Build falha em divergência do lock. Arquivo Cargo.toml depende do workspace oficial, não é um pacote standalone para cargo install.
 - O binário deve ser ELF AArch64 sem INTERP/NEEDED, com SHA-256 registrado. Imagem scratch apenas com o binário, usuário 1001, sem shell, biblioteca de sistema dinâmica ou banco. O linker e a stdlib estática ainda precisam de auditoria própria; não concluir que imagem scratch significa ausência de vulnerabilidades.
@@ -17,12 +17,12 @@ O workflow [escalas-solverforge-experiment.yml](../../../.github/workflows/escal
 ```sh
 git clone --depth 1 --branch v0.31.2 https://github.com/SolverForge/solverforge.git /tmp/solverforge-e2
 python3 prepare_workspace.py /tmp/solverforge-e2
-rustup toolchain install 1.99.1 --profile minimal --target aarch64-unknown-linux-musl
+rustup toolchain install 1.100.0 --profile minimal --target aarch64-unknown-linux-musl
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 export RAYON_NUM_THREADS=1
-cargo +1.99.1 fetch --locked --manifest-path /tmp/solverforge-e2/Cargo.toml
-cargo +1.99.1 test --locked --offline --release --target aarch64-unknown-linux-musl --manifest-path /tmp/solverforge-e2/Cargo.toml -p perfectutilitares-solverforge-spike
-cargo +1.99.1 build --locked --offline --release --target aarch64-unknown-linux-musl --manifest-path /tmp/solverforge-e2/Cargo.toml -p perfectutilitares-solverforge-spike
+cargo +1.100.0 fetch --locked --manifest-path /tmp/solverforge-e2/Cargo.toml
+cargo +1.100.0 test --locked --offline --release --target aarch64-unknown-linux-musl --manifest-path /tmp/solverforge-e2/Cargo.toml -p perfectutilitares-solverforge-spike
+cargo +1.100.0 build --locked --offline --release --target aarch64-unknown-linux-musl --manifest-path /tmp/solverforge-e2/Cargo.toml -p perfectutilitares-solverforge-spike
 ```
 
 ## Estrutura
@@ -208,3 +208,28 @@ compiler/stdlib/musl or production certification. Update a dependency only
 with a concrete security/compatibility justification and review of the
 resulting locked graph. Existing SF58–SF60 qualification remains pending;
 do not infer a successful new compiler run before actual CI evidence.
+
+## SF62 — one approved compiler for the candidate (2026-11-26)
+
+The exact revision 3b4dc3d passed both SF61 toolchain legs in run 45839954759:
+58 Rust tests, 18 Python tests, strict candidate Clippy, static AArch64/musl
+release and lock checks, and OSV with 52 reachable crates and all 87 locked
+registry crates, no advisory matches. Rust 1.100.0 is promoted as requested.
+Remove the older leg and pin 1.100.0 in the fast workflow, long comparison
+workflow, candidate manifest/MSRV, local rust-toolchain and disposable
+verified upstream checkout. Validate the selected pin against the manifest
+and workflow environment, and reject drift. Keep the official upstream SHA,
+edition 2021, dependency graph, reviewed anyhow patch, resource budgets,
+immutable controls, and all comparison/quality gates. The upstream tag's
+historic 1.99.1 pin and previous evidence remain documented, not active.
+The 1.100.0 Cargo manifest diagnostics for eight upstream workspace
+dependencies are reported, not suppressed; candidate Rust/Clippy are strict.
+
+Rust 1.100 release notes (https://doc.rust-lang.org/releases.html#version-11000-2026-11-12)
+include stabilized sample-profile optimization; the release announcement
+(https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/) also describes
+Allocator and DropGuard and Cargo dependency cooldowns. None implies an
+automatic performance gain for this workload. Do not add unsafe/custom
+allocators or PGO without representative profile data and a separate
+reproducible comparison; dependency resolution remains locked/offline.
+The new canonical benchmark must measure quality and latency on 1.100.0.

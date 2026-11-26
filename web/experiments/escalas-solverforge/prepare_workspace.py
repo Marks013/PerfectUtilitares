@@ -5,6 +5,8 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import os
+import tomllib
 
 UPSTREAM = "78889c3ff9fda158c70e6a1f67f8c7f0fdae922e"
 MEMBER = "examples/perfectutilitares-solverforge-spike"
@@ -35,6 +37,20 @@ def verify_lock(original, candidate):
         raise ValueError("UPSTREAM_LOCK_MISMATCH")
 
 
+def verify_toolchain(toolchain, manifest, env_pin=None):
+    """The candidate has exactly one reviewed compiler; no floating stable."""
+    selected = tomllib.loads(toolchain)["toolchain"]
+    package = tomllib.loads(manifest)["package"]
+    if (selected.get("channel") != "1.100.0"
+            or package.get("rust-version") != selected["channel"]
+            or package.get("edition") != "2021"
+            or selected.get("targets") != ["aarch64-unknown-linux-musl"]
+            or sorted(selected.get("components", [])) != ["clippy", "rustfmt"]
+            or selected.get("profile") != "minimal"
+            or env_pin is not None and env_pin != selected["channel"]):
+        raise ValueError("TOOLCHAIN_PIN_MISMATCH")
+
+
 def main():
     source = pathlib.Path(__file__).resolve().parent
     checkout = pathlib.Path(sys.argv[1]).resolve()
@@ -45,6 +61,11 @@ def main():
     manifest = checkout / "Cargo.toml"
     lock = checkout / "Cargo.lock"
     wanted = (source / "Cargo.lock").read_text()
+    selected_toolchain = (source / "rust-toolchain.toml").read_text()
+    try:
+        verify_toolchain(selected_toolchain, (source / "Cargo.toml").read_text(), os.getenv("RUST_VERSION"))
+    except (ValueError, KeyError, TypeError):
+        raise SystemExit("TOOLCHAIN_PIN_MISMATCH") from None
     try:
         verify_lock(lock.read_text(), wanted)
     except ValueError:
@@ -62,6 +83,9 @@ def main():
     shutil.copytree(source / "src", destination / "src")
     manifest.write_text(original.replace(anchor, anchor + '\n    "' + MEMBER + '",'))
     lock.write_text(wanted)
+    # Only the disposable verified checkout is overlaid. Prevent accidental
+    # rustup fallback to the upstream historical 1.99.1 default.
+    (checkout / "rust-toolchain.toml").write_text(selected_toolchain)
 
 if __name__ == "__main__":
     main()

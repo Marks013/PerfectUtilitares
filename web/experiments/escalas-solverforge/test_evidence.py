@@ -1,7 +1,7 @@
 import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
-from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock
+from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock, verify_toolchain
 from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile, adaptive_gain, verify_personal
 
 class EvidenceTests(unittest.TestCase):
@@ -161,6 +161,18 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):sector_vector(metrics,dict(profile,visibleDays=35))
         bad=copy.deepcopy(metrics);bad["coverageAudit"][0]["month"]=101
         with self.assertRaises(ValueError):sector_vector(bad,profile)
+
+    def test_single_approved_toolchain_rejects_version_drift(self):
+        from pathlib import Path
+        root=Path(__file__).resolve().parent
+        toolchain=(root/"rust-toolchain.toml").read_text()
+        manifest=(root/"Cargo.toml").read_text()
+        verify_toolchain(toolchain,manifest,"1.100.0")
+        for args in ((toolchain,manifest,"1.99.1"),
+                     (toolchain.replace("1.100.0","stable"),manifest,None),
+                     (toolchain,manifest.replace("1.100.0","1.99.1"),None),
+                     (toolchain,manifest.replace('edition = "2021"','edition = "2024"'),None)):
+            with self.assertRaises(ValueError):verify_toolchain(*args)
 
 if __name__=="__main__":
     unittest.main()

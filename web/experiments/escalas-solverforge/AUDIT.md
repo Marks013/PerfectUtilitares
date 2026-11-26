@@ -262,3 +262,28 @@ do not infer a successful new compiler run before actual CI evidence.
 SF61 follow-up: run 45838861211 on 3f4ccb4 compiled successfully and executed 58 Rust tests (57 passed, one failed), plus 18 Python tests. The failing cross-sector leadership fixture cloned a 42h employee with 480/540-minute clocks from mixed-enabled sector S into T, which was not in mixed42Sectors; the mapper correctly returned NO_PERSONAL_PATTERN. Fix the synthetic fixture by enabling the existing mixed profile for both S and T, assert that the former invalid fixture is still rejected, and check that both domains consist of five working days with exactly two long turns. Preserve the original leadership and hard hourly-coverage assertions; no production constraint relaxation or compiler-version workaround. Re-run both SF61 toolchains.
 
 SF61 stable-compiler qualification follow-up: run 45839335201 on bf48fc9, jobs 139976700664 (Rust 1.99.1) and 139976701363 (1.100.0), both installed the exact toolchain, compiled and passed all 58 Rust and 18 Python tests. The official 1.99.1 leg also passed strict Clippy, static release, identical lock and OSV (52 reachable crates, 87 locked registry crates, no advisory matches at 2026-11-26T14:30:48Z). Rust 1.100.0 Clippy failed on newly detected needless_bool at temporal/rules.rs:39; replace final conditional/true return with the logically equivalent negation, preserving mixed-42 long-turn limit. No lint suppression. Cargo 1.100.0 additionally reports unused_workspace_dependencies for solverforge-bridge in the official upstream manifest. This is an upstream Cargo warning, not the candidate Clippy failure; preserve the exact upstream workspace and record it, rather than silently editing or hiding it. New qualification required for both compilers. No changes to dependencies, edition, canonical benchmark compiler or quality gates.
+
+## SF62 — one approved compiler for the candidate (2026-11-26)
+
+The exact revision 3b4dc3d passed both SF61 toolchain legs in run 45839954759:
+58 Rust tests, 18 Python tests, strict candidate Clippy, static AArch64/musl
+release and lock checks, and OSV with 52 reachable crates and all 87 locked
+registry crates, no advisory matches. Rust 1.100.0 is promoted as requested.
+Remove the older leg and pin 1.100.0 in the fast workflow, long comparison
+workflow, candidate manifest/MSRV, local rust-toolchain and disposable
+verified upstream checkout. Validate the selected pin against the manifest
+and workflow environment, and reject drift. Keep the official upstream SHA,
+edition 2021, dependency graph, reviewed anyhow patch, resource budgets,
+immutable controls, and all comparison/quality gates. The upstream tag's
+historic 1.99.1 pin and previous evidence remain documented, not active.
+The 1.100.0 Cargo manifest diagnostics for eight upstream workspace
+dependencies are reported, not suppressed; candidate Rust/Clippy are strict.
+
+Rust 1.100 release notes (https://doc.rust-lang.org/releases.html#version-11000-2026-11-12)
+include stabilized sample-profile optimization; the release announcement
+(https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/) also describes
+Allocator and DropGuard and Cargo dependency cooldowns. None implies an
+automatic performance gain for this workload. Do not add unsafe/custom
+allocators or PGO without representative profile data and a separate
+reproducible comparison; dependency resolution remains locked/offline.
+The new canonical benchmark must measure quality and latency on 1.100.0.

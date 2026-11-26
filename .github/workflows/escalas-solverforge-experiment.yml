@@ -28,7 +28,7 @@ jobs:
       BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
       TIMEFOLD_CONTROL: '71945cd6e73c48b424dab1297fbc3bf8a15ae585'
       UPSTREAM: '78889c3ff9fda158c70e6a1f67f8c7f0fdae922e'
-      RUST_VERSION: '1.99.1'
+      RUST_VERSION: '1.100.0'
       RUST_TARGET: 'aarch64-unknown-linux-musl'
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
       CARGO_INCREMENTAL: '0'
@@ -63,6 +63,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/forge-evidence"
           rustc +"$RUST_VERSION" -Vv > "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
           cargo +"$RUST_VERSION" --version > "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
+          grep -Fx "release: $RUST_VERSION" "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
+          cat "$RUNNER_TEMP/forge-evidence/rustc-version.txt" "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
           dpkg-query -W musl musl-dev musl-tools binutils > "$RUNNER_TEMP/forge-evidence/linker-packages.txt"
       - name: Build official pinned workspace with locked dependency graph
         shell: bash
