@@ -31,7 +31,7 @@ fn cgroup() -> Option<Value> {
 fn failure(http: u16, code: &str, stage: &str, detail: &str) -> Value {
     json!({"httpStatus":http,"body":{"error":code,"failureStage":stage,"failureType":detail},"maxRssKiB":null})
 }
-fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration) -> Value {
+fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:bool) -> Value {
     let root:Value=match serde_json::from_slice(bytes) {Ok(v)=>v,Err(_)=>return failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","JSON")};
     let mut plan=match wire::read(&root,start+budget-Duration::from_secs(1)) {
         Ok(v)=>v,Err("MAPPING_TIMEOUT")=>return failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
@@ -47,23 +47,47 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration) -> Value {
     let people=plan.employees.len();
     let positions:usize=plan.employees.iter().map(|p|p.facts.days).sum();
     let patterns:usize=plan.employees.iter().map(|p|p.allowed.len()).sum();
+    let incumbent=if adaptive {model::SeedGuard::capture(&plan)} else {None};
     let search_start=Instant::now();
+    let mut attempted=false;
+    let mut retained=false;
+    let mut stagnation_applied=false;
+    let mut native_cost=None;
     if !seed_only {
         let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(search_start).as_secs();
-        if remaining==0 {return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");}
-        let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")) {
-            Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
-        };
-        config=config.with_termination_seconds(remaining).with_random_seed(37);
-        config.move_thread_count=MoveThreadCount::None;
-        plan=match plan.solve_with_config(config) {Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
+        if remaining==0 {
+            if incumbent.is_some() {retained=true;}
+            else {return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");}
+        } else {
+            let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")) {
+                Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
+            };
+            config=config.with_termination_seconds(remaining).with_random_seed(37);
+            config.move_thread_count=MoveThreadCount::None;
+            // An incomplete/invalid seed gets the full remaining search budget.
+            if incumbent.is_some() {
+                if let Some(termination)=config.termination.as_mut() {
+                    termination.unimproved_seconds_spent_limit=Some(1);
+                    stagnation_applied=true;
+                } else {return failure(500,"SPIKE_FAILED","FACTORY","TERMINATION");}
+            }
+            attempted=true;
+            plan=match plan.solve_with_config(config) {Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
+            let computed=model::evaluate(&plan);
+            let expected=score::EscalasScore::of([-computed[0]],std::array::from_fn(|i|-computed[i+1]));
+            if plan.score!=Some(expected) {return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
+            native_cost=Some(computed);
+            if let Some(guard)=&incumbent {
+                if !guard.preserves(&plan) || computed>initial_cost {
+                    guard.restore(&mut plan);
+                    retained=true;
+                }
+            }
+        }
     }
-    let search_seconds=if seed_only {0.0} else {seconds(search_start)};
+    let search_seconds=if attempted {seconds(search_start)} else {0.0};
     let cost=model::evaluate(&plan);
-    if !seed_only {
-        let expected=score::EscalasScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]));
-        if plan.score!=Some(expected) {return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
-    }
+    if retained && cost!=initial_cost {return failure(500,"SPIKE_FAILED","RESULT","SEED_DRIFT");}
     let valid=model::validate_complete(&plan) && start.elapsed()<=budget;
     let mut rows=Vec::new();
     if valid {
@@ -81,9 +105,11 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration) -> Value {
     json!({"httpStatus":200,"body":{"status":if valid {"FEASIBLE"} else {"UNKNOWN"},
         "message":if valid {"Synthetic SolverForge candidate"} else {"No valid complete candidate"},
         "assignments":rows,"wallTimeSeconds":seconds(start)},"maxRssKiB":null,
-        "solverforge":{"version":"0.31.2","mode":if seed_only {"SEED_ONLY"} else {"NATIVE"},
+        "solverforge":{"version":"0.31.2","mode":if seed_only {"SEED_ONLY"} else if adaptive {"ADAPTIVE"} else {"NATIVE"},
             "mapSeconds":map_seconds,"seedSeconds":seed_seconds,"searchSeconds":search_seconds,
-            "seedComplete":seed_complete,"nativeSearch":!seed_only,"entities":people,"positions":positions,
+            "seedComplete":seed_complete,"nativeSearch":attempted,"entities":people,"positions":positions,
+            "stagnationApplied":stagnation_applied,"nativeCost":native_cost,
+            "resultSource":if seed_only {"CONSTRUCTOR_ONLY"} else if retained {"SEED_RETAINED"} else {"NATIVE"},
             "initialized":initialized,"allowedPatterns":patterns,"initialCost":initial_cost,"finalCost":cost,
             "partialModel":true,"budgetSeconds":budget.as_secs()}})
 }
@@ -95,9 +121,10 @@ fn main() {
     std::thread::spawn(|| {std::thread::sleep(Duration::from_secs(18));std::process::exit(124);});
     let args:Vec<String>=std::env::args().skip(1).collect();
     let seed_only=args.len()==1&&args[0]=="--seed-only";
+    let adaptive=args.len()==1&&args[0]=="--adaptive";
     let budget=match args.as_slice() {
         [] => Some(BUDGET),
-        [flag] if flag=="--seed-only" => Some(BUDGET),
+        [flag] if flag=="--seed-only" || flag=="--adaptive" => Some(BUDGET),
         [flag] => flag.strip_prefix("--budget-seconds=").and_then(|v|v.parse::<u64>().ok())
             .filter(|v|matches!(v,2|4|8|12)).map(Duration::from_secs),
         _=>None,
@@ -106,7 +133,7 @@ fn main() {
     let mut reply=if budget.is_none() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","ARGUMENT")}
         else if std::io::stdin().take((MAX_BYTES+1) as u64).read_to_end(&mut bytes).is_err() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","INPUT")}
         else if bytes.len()>MAX_BYTES {failure(413,"SPIKE_INPUT_LIMIT","MAPPING","SIZE")}
-        else {std::panic::catch_unwind(||solve(&bytes,start,seed_only,budget.unwrap())).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
+        else {std::panic::catch_unwind(||solve(&bytes,start,seed_only,budget.unwrap(),adaptive)).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
     reply["cgroup"]=cgroup().unwrap_or(Value::Null);
     let mut output=serde_json::to_vec(&reply).unwrap_or_default();
     if reply["body"]["status"]=="FEASIBLE" && start.elapsed()>budget.unwrap_or(BUDGET) {
@@ -239,10 +266,12 @@ mod integration {
     #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
-        let reply=solve(&bytes,Instant::now(),true,BUDGET);
+        let reply=solve(&bytes,Instant::now(),true,BUDGET,false);
         assert_eq!(reply["body"]["status"],"FEASIBLE");
         assert_eq!(reply["solverforge"]["mode"],"SEED_ONLY");
         assert_eq!(reply["solverforge"]["nativeSearch"],false);
+        assert_eq!(reply["solverforge"]["resultSource"],"CONSTRUCTOR_ONLY");
+        assert_eq!(reply["solverforge"]["nativeCost"],Value::Null);
         assert_eq!(reply["body"]["assignments"].as_array().unwrap().len(),21);
     }
 }

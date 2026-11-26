@@ -57,3 +57,10 @@ Coortes de equilíbrio por setor, cargo, geometria de relógio e limite dominica
 - Remover override Cargo default-features ignorado (upstream default=[]), export de legal só em testes e campo Member.sunday_cap redundante; Clippy com lints específicos obrigatórios e rustc -D warnings no candidato, não nas dependências. Rustfmt e lint completo ainda pendentes.
 - Verificar deadline durante construção de assinaturas dominicais, sem mudar domínio ou quotas.
 - Node24 no upload de artefatos da CI comum, mesmo SHA dos experimentos. Não suprimir depreciações. As revisões permanecem independentes e a comparação Timefold E2.5/CP-SAT permanece congelada. E3/E4 e homologação pendentes; nenhum JNI, mudança de produção, dados ou merge.
+
+## SF25–SF28 — estratégia Rust independente
+
+- Terminação por estagnação nativa e seleção conservadora do incumbente em modo adaptativo separado; validação individual e score recomputado, sem ocultar falha nativa.
+- Métricas distinguem busca realizada, custo da busca e solução devolvida; comparação pareada com construtor e busca integral, contagens de regressão e retenção. Seis variantes/seis posições. Não inferir ganhos de latência a partir de validações incompletas.
+- Corpus comum fixado por blob (6f0f97b8aaadfe1c94034937ff4f134fb4f388a5); elimina dependência de ref viva do Java. Nenhuma JNI ou runtime JVM no Rust.
+- CI anterior do Timefold 7c426f8: 41 testes Java e correção glibc comprovada; a execução Rust com lock corrigido passou build na revisão 68ff69f, auditoria integral do candidato final ainda depende da nova CI. E3/E4, auditoria toolchain/musl/notices e homologação permanecem não certificados. Não aumentar quotas nem alterar produção.

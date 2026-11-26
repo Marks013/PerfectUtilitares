@@ -66,15 +66,17 @@ async function main() {
     const shared = {...snapshot,scenario:scenario.id,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
       arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
     const variants = [
-      {id:"seed-only",seedOnly:true,budget:12},
-      ...[2,4,8,12].map(budget=>({id:"native-"+budget,seedOnly:false,budget})),
+      {id:"seed-only",seedOnly:true,budget:12,adaptive:false},
+      ...[2,4,8,12].map(budget=>({id:"native-"+budget,seedOnly:false,budget,adaptive:false})),
+      {id:"adaptive",seedOnly:false,budget:12,adaptive:true},
     ];
     // Every variant appears once in each position. This is an internal Rust
     // ablation, not a claim of equal-budget comparison with other engines.
     for (let repetition=0;repetition<variants.length;repetition++) {
+      const round: {trial: Trial; record: Record<string,unknown>}[] = [];
       for (let position=0;position<variants.length;position++) {
         const variant=variants[(repetition+position)%variants.length];
-        const adapter=solverforgeAdapter(forge,variant.seedOnly,variant.budget);
+        const adapter=solverforgeAdapter(forge,variant.seedOnly,variant.budget,variant.adaptive);
         const trial=await runTrial(scenario,frozen,adapter.adapter);
         const native=adapter.telemetry();
         if(trial.inputHash!==shared.inputHash) throw Error("FORGE_INPUT_DRIFT");
@@ -82,9 +84,12 @@ async function main() {
           ||native.positions!==profile.activePositions||native.finalCost[3]!==trial.finalAssessment?.metrics?.normalizedEstimatedShortage))
           throw Error("FORGE_INDEPENDENT_SCORE_DRIFT");
         const {proposal:_proposal,...record}=trial;
-        console.log(JSON.stringify({kind:"curve",...shared,repetition,position,variant:variant.id,
-          requestedBudgetSeconds:variant.budget,identity:images.solverforge,forge:native,...record}));
+        round.push({trial,record:{kind:"curve",...shared,repetition,position,variant:variant.id,
+          requestedBudgetSeconds:variant.budget,identity:images.solverforge,forge:native,...record}});
       }
+      const seed=round.find(x=>x.record.variant==="seed-only")!.trial;
+      const full=round.find(x=>x.record.variant==="native-12")!.trial;
+      for (const item of round) console.log(JSON.stringify({...item.record,againstSeed:compare(seed,item.trial),againstNative12:compare(full,item.trial)}));
     }
     if(source().revision!==snapshot.revision) throw Error("FORGE_SOURCE_DRIFT");
     return;

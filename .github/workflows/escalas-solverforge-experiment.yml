@@ -49,7 +49,7 @@ jobs:
           set -euo pipefail
           python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
           # Corpus must be byte-identical to the independently pinned Java test.
-          git -C .. show 7c426f887a3a1424e01d2a3e877bad196e34ecad:web/experiments/escalas-timefold/src/test/resources/e2-wire-contract.json | cmp - experiments/escalas-solverforge/src/e2-wire-contract.json
+          test "$(git hash-object experiments/escalas-solverforge/src/e2-wire-contract.json)" = "6f0f97b8aaadfe1c94034937ff4f134fb4f388a5"
           node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
       - name: Install reviewed Rust toolchain and native musl linker
         shell: bash

@@ -152,11 +152,12 @@ def valid(row, profile):
     return engine_new and sample is not None
 
 
-def native(row, profile, seed=False, budget=12):
+def native(row, profile, seed=False, budget=12, adaptive=False):
     t = row.get("forge")
     check(isinstance(t, dict) and t.get("version") == "0.31.2" and t.get("partialModel") is True
           and t.get("budgetSeconds") == budget
-          and t.get("mode") == ("SEED_ONLY" if seed else "NATIVE") and t.get("nativeSearch") is (not seed)
+          and t.get("mode") == ("SEED_ONLY" if seed else "ADAPTIVE" if adaptive else "NATIVE")
+          and type(t.get("nativeSearch")) is bool and (adaptive or t["nativeSearch"] is (not seed))
           and t.get("entities") == profile["includedOnWire"] and t.get("positions") == profile["activePositions"]
           and integer(t.get("initialized")) and t["initialized"] <= t["entities"]
           and integer(t.get("allowedPatterns")) and t["entities"] <= t["allowedPatterns"] <= t["entities"] * 50625
@@ -167,13 +168,24 @@ def native(row, profile, seed=False, budget=12):
     check(t["finalCost"][0] == 0 and t["finalCost"][3] == row["finalAssessment"]["metrics"]["normalizedEstimatedShortage"],
           "NATIVE_SCORE_DRIFT")
     check(t["mapSeconds"] + t["seedSeconds"] + t["searchSeconds"] <= row["processSeconds"] + .01, "NATIVE_TIMING")
-    if seed:
-        check(t["seedComplete"] and t["initialized"] == t["entities"] and t["searchSeconds"] == 0
-              and t["initialCost"] == t["finalCost"], "SEED_CONTROL")
+    attempted = t["nativeSearch"]
+    source = t.get("resultSource")
+    check(type(t.get("stagnationApplied")) is bool and (not t["stagnationApplied"] or adaptive and attempted),"STAGNATION")
+    if attempted:
+        cost=t.get("nativeCost")
+        check(isinstance(cost,list) and len(cost)==9 and all(integer(v) for v in cost) and t["searchSeconds"]>0,"NATIVE_COST")
     else:
-        check(t["searchSeconds"] > 0, "NATIVE_SEARCH_MISSING")
-        if t["seedComplete"]:
-            check(t["finalCost"] <= t["initialCost"], "NATIVE_SCORE_REGRESSED")
+        check(t.get("nativeCost") is None and t["searchSeconds"]==0,"NATIVE_NOT_ATTEMPTED")
+    if seed:
+        check(source=="CONSTRUCTOR_ONLY" and t["seedComplete"] and t["initialized"]==t["entities"]
+              and t["initialCost"]==t["finalCost"],"SEED_CONTROL")
+    elif source=="SEED_RETAINED":
+        check(adaptive and t["seedComplete"] and t["initialized"]==t["entities"]
+              and t["initialCost"]==t["finalCost"],"SEED_RETAINED")
+    else:
+        check(source=="NATIVE" and attempted and t["nativeCost"]==t["finalCost"],"NATIVE_SOURCE")
+    if t["seedComplete"]:
+        check(t["finalCost"]<=t["initialCost"],"NATIVE_SCORE_REGRESSED")
 
 
 def pair_detail(pair, a, b, profile, comparable):
@@ -334,8 +346,8 @@ def e2_noninferiority(report):
 
 
 def verify_curve(rows):
-    variants = [("seed-only", 12), ("native-2", 2), ("native-4", 4), ("native-8", 8), ("native-12", 12)]
-    check(len(rows) == 25 and all(isinstance(r,dict) for r in rows), "CURVE_COUNT")
+    variants = [("seed-only", 12), ("native-2", 2), ("native-4", 4), ("native-8", 8), ("native-12", 12), ("adaptive", 12)]
+    check(len(rows) == len(variants)**2 and all(isinstance(r,dict) for r in rows), "CURVE_COUNT")
     first = rows[0]
     profile = first["profile"]
     check(first["scenario"] == "branch-50-four-weeks" and profile["includedOnWire"] == 50
@@ -343,8 +355,8 @@ def verify_curve(rows):
     check(sha(first["inputHash"],64) and all(sha(first[k],40) for k in ("revision","evaluatorTree","comparatorBlob")), "CURVE_SOURCE")
     reports = {name: [] for name,_ in variants}
     for index,r in enumerate(rows):
-        repetition,position = divmod(index,5)
-        name,budget = variants[(repetition+position)%5]
+        repetition,position = divmod(index,len(variants))
+        name,budget = variants[(repetition+position)%len(variants)]
         check(r.get("kind")=="curve" and r.get("repetition")==repetition and r.get("position")==position
               and r.get("variant")==name and r.get("requestedBudgetSeconds")==budget, "CURVE_ORDER")
         for key in ("scenario","inputHash","revision","evaluatorTree","comparatorBlob","profile","baselineRevision",
@@ -360,8 +372,13 @@ def verify_curve(rows):
         ok=valid(r,profile)
         if ok:
             check(r["processSeconds"]<=budget+.1,"CURVE_BUDGET")
-            native(r,profile,name=="seed-only",budget)
+            native(r,profile,name=="seed-only",budget,name=="adaptive")
         reports[name].append((r,ok))
+    for name,_ in variants:
+        for index,(row,ok) in enumerate(reports[name]):
+            for control,field in (("seed-only","againstSeed"),("native-12","againstNative12")):
+                other,other_ok=reports[control][index]
+                pair_detail(row[field],other,row,profile,ok and other_ok)
     result={}
     for name,budget in variants:
         records=reports[name]
@@ -373,6 +390,11 @@ def verify_curve(rows):
             "mappingP50Seconds":p50([r["forge"]["mapSeconds"] for r in accepted]),
             "seedP50Seconds":p50([r["forge"]["seedSeconds"] for r in accepted]),
             "searchP50Seconds":p50([r["forge"]["searchSeconds"] for r in accepted]),
+            "nativeAttempts":sum(r["forge"]["nativeSearch"] for r in accepted),
+            "seedRetained":sum(r["forge"]["resultSource"]=="SEED_RETAINED" for r in accepted),
+            "regressionsAgainstSeed":sum(r["againstSeed"]["regressed"] is True for r,_ in records),
+            "retentionsAgainstNative12":sum(r["againstNative12"]["retained"] is True for r,_ in records),
+            "comparableAgainstNative12":sum(r["againstNative12"]["comparable"] is True for r,_ in records),
             "peakMemoryBytes":max((r["cgroup"]["memoryPeakBytes"] for r in accepted),default=None),
             "outcomes":{str(o):sum(r.get("outcome")==o for r,_ in records) for o in {r.get("outcome") for r,_ in records}}}
     return {"decision":"CANDIDATE_CURVE_DIAGNOSTIC_ONLY","productionCertified":False,
