@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { solveEscala, EscalaSolverError } from "../../../src/lib/escalas/solver-client";
 import { compareRosterCoverage, completeRoster, coverageQuality, isOperationallyReusable, type RosterCoverageMode } from "../../../src/lib/escalas/roster-quality";
 import { operationalEscalaInput } from "../../../src/lib/escalas/eligibility";
-import { dateRange } from "../../../src/lib/escalas/dates";
+import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import { validateEscala } from "../../../src/lib/escalas/validation";
 import { isHoursReferenceOnly, validateHoursReferences } from "../../../src/lib/escalas/hours-reference";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
@@ -150,6 +150,34 @@ export function measureReferences(scenario: Scenario) {
     readyToPublish: validation.readyToPublish, issueCodes: [...new Set(validation.issues.map(issue => issue.code))].sort() };
 }
 
+/** Reconstruct the sector-wise prefix of the real comparator, on the
+ * E2 fixtures only. Stable sorted ordinals, no employee/sector names or dates.
+ * Role/time guards are still checked by the real TS comparator.
+ */
+function auditSectorMetrics(input: EscalaInput, quality: ReturnType<typeof coverageQuality>) {
+  const dates = dateRange(input.startDate, input.endDate);
+  if (input.branchCode !== "SYNTH" || input.startDate !== "2026-11-01" || input.visibleMonth
+    || (dates.length !== 7 && dates.length !== 28)) return undefined;
+  const visible = new Set(visibleDates(input));
+  const sectors = [...new Set([...input.employees.map(p => p.sector), ...input.demands.map(d => d.sector)])].sort();
+  return sectors.map(sector => {
+    let horizon = 0, month = 0, sundays = 0, monthSundays = 0, closing = 0;
+    const presence: number[] = [];
+    for (const [index, day] of dates.entries()) {
+      const key = sector + "\0" + day, gap = quality.daily.get(key) ?? 0;
+      horizon += gap;
+      if (visible.has(day)) month += gap;
+      if (dayOfWeek(day) === 6) {
+        sundays += gap;
+        if (visible.has(day)) monthSundays += gap;
+      }
+      closing += quality.closing.get(key) ?? 0;
+      if (quality.present.has(day + "\0" + sector)) presence.push(index);
+    }
+    return { horizon, month, sundays, monthSundays, closing, peak: quality.peaks.get(sector) ?? 0, presence };
+  });
+}
+
 function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCoverageMode) {
   const parsed = escalaInputSchema.safeParse(input);
   if (!parsed.success) return { valid: false, complete: false, errors: ["SCHEMA_INVALID"], metrics: null, comparison: null };
@@ -170,8 +198,10 @@ function evaluate(input: EscalaInput, reference?: EscalaInput, mode?: RosterCove
   const estimated = { ...proposal, demands: proposal.demands.filter(d => d.estimated === true) };
   const quality = coverageQuality(estimated);
   const normalized = [...quality.daily.values()].reduce((sum, count) => sum + count, 0);
+  const allCoverage = proposal.demands.every(d => d.estimated === true) ? quality : coverageQuality(proposal);
+  const coverageAudit = auditSectorMetrics(proposal, allCoverage);
   return { valid, complete, errors, metrics: { shortagePersonMinutes: shortage.total, shortageBySector: shortage.bySector,
-    normalizedEstimatedShortage: normalized,
+    normalizedEstimatedShortage: normalized, ...(coverageAudit ? { coverageAudit } : {}),
     ...weekendMetrics(proposal), ...sundaySectorVariation(sundaySectorObservations(proposal)) },
     comparison: comparison ? { comparable: comparison.comparable, regressed: comparison.regressed,
       improved: comparison.improved, reason: comparison.reason } : null };

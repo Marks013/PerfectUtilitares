@@ -11,10 +11,13 @@ def rows():
                   sampleKind="cold-container", hostCapacityMeasured=False, liveHttpMeasured=False,
                   profile=dict(activePositions=70, includedOnWire=10, days=7, mode="DAYS_AND_HOURS",
                                searchBudgetSeconds=12, processBudgetSeconds=18, transportBudgetSeconds=20,
-                               savedAssignments=0))
+                               savedAssignments=0, confirmedDemands=0))
     for engine in ENGINES:
         assessment = dict(valid=True, complete=True, errors=[], comparison=None,
-                          metrics=dict(shortagePersonMinutes=60, normalizedEstimatedShortage=60))
+                          metrics=dict(shortagePersonMinutes=60, normalizedEstimatedShortage=60,
+                                       coverageAudit=[dict(horizon=60, month=60, sundays=0,
+                                                           monthSundays=0, closing=0, peak=1,
+                                                           presence=[0, 1, 2, 3, 4, 5, 6])]))
         row = dict(shared, kind="measurement", repetition=0, engine=engine, rawStatus="FEASIBLE",
                    finalStatus="FEASIBLE", httpStatus=200, processSeconds=10, engineSeconds=11, productSeconds=12,
                    timely=True, errorCode=None, acceptedNew=True, engineNew=True, sameAsRaw=True,
@@ -27,7 +30,7 @@ def rows():
                                 mappingSeconds=.1, firstFeasibleSeconds=.8)
         out.append(row)
     out.append(dict(shared, kind="paired-coverage", repetition=0, comparable=True,
-                    improved=False, regressed=False, reason="EQUAL"))
+                    improved=False, regressed=False, reason="ACCEPTED"))
     for engine in ENGINES:
         out.append(dict(shared, kind="summary", engine=engine, samples=1, validTimely=1, acceptedNew=1,
                         engineNew=1, notEngineNew=0, rejectedRawFeasible=0, decision="EXPLORATORY_NOT_CERTIFIED",
@@ -78,6 +81,8 @@ class EvidenceTests(unittest.TestCase):
 
     def test_quality_regression_is_visible_not_confused_with_validity(self):
         data = rows()
+        for assessment in ("rawAssessment", "finalAssessment"):
+            data[1][assessment]["metrics"]["coverageAudit"][0].update(sundays=60, monthSundays=60)
         data[2].update(regressed=True, improved=False, reason="SECTOR_COVERAGE",
                        regression=dict(metric="DEFICIT_PERSON_MINUTES", scope="SUNDAYS",
                                        before=0, after=60, delta=60))
@@ -92,6 +97,33 @@ class EvidenceTests(unittest.TestCase):
     def test_contradictory_pair_outcomes_are_rejected(self):
         data = rows()
         data[2].update(regressed=True, improved=True)
+        with self.assertRaises(ValueError):
+            self.validate(data)
+
+    def test_regression_numeric_mutations_are_rejected(self):
+        for key, value in (("delta", 999), ("delta", -60), ("metric", "PEAK_MISSING"),
+                           ("scope", "HORIZON"), ("after", 120), ("before", 1)):
+            with self.subTest(key=key, value=value):
+                data = rows()
+                for assessment in ("rawAssessment", "finalAssessment"):
+                    data[1][assessment]["metrics"]["coverageAudit"][0].update(sundays=60, monthSundays=60)
+                data[2].update(regressed=True, improved=False, reason="SECTOR_COVERAGE",
+                               regression=dict(metric="DEFICIT_PERSON_MINUTES", scope="SUNDAYS",
+                                               before=0, after=60, delta=60))
+                data[2]["regression"][key] = value
+                with self.assertRaises(ValueError):
+                    self.validate(data)
+
+    def test_omitted_sector_regression_is_rejected(self):
+        data = rows()
+        for assessment in ("rawAssessment", "finalAssessment"):
+            data[1][assessment]["metrics"]["coverageAudit"][0].update(sundays=60, monthSundays=60)
+        with self.assertRaisesRegex(ValueError, "PAIR_SECTOR_REGRESSION_MISMATCH"):
+            self.validate(data)
+
+    def test_impossible_sector_vector_is_rejected(self):
+        data = rows()
+        data[0]["finalAssessment"]["metrics"]["coverageAudit"][0]["horizon"] = 999
         with self.assertRaises(ValueError):
             self.validate(data)
 

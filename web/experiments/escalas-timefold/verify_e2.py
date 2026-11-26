@@ -53,6 +53,83 @@ def verify_cgroup(sample):
     return sample
 
 
+SCOPES = {"HORIZON", "MONTH", "SUNDAYS", "MONTH_SUNDAYS"}
+COVERAGE_METRICS = {
+    "SECTOR_COVERAGE": {"DEFICIT_PERSON_MINUTES"},
+    "CLOSING_COVERAGE": {"CLOSING_DEFICIT_PERSON_MINUTES"},
+    "SECTOR_PEAK": {"PEAK_MISSING"},
+    "DAILY_PRESENCE": {"DAILY_PRESENCE"},
+    "ROLE_TIME_COVERAGE": {"DEFICIT_PERSON_MINUTES", "PEAK_MISSING"},
+    "ROLE_TIME_PRESENCE": {"SERVICE_PERSON_MINUTES"},
+}
+
+
+def sector_vector(metrics, profile):
+    vector = metrics.get("coverageAudit")
+    check(isinstance(vector, list) and 0 < len(vector) <= profile["includedOnWire"] + 250, "COVERAGE_VECTOR")
+    fields = ("horizon", "month", "sundays", "monthSundays", "closing", "peak")
+    for sector in vector:
+        check(isinstance(sector, dict) and set(sector) == {*fields, "presence"}
+              and all(integer(sector[k]) for k in fields), "COVERAGE_VECTOR")
+        # E2 fixtures cover the complete visible horizon.
+        check(sector["month"] == sector["horizon"] and sector["monthSundays"] == sector["sundays"]
+              and sector["sundays"] <= sector["horizon"] and sector["closing"] <= sector["horizon"],
+              "COVERAGE_VECTOR_TOTALS")
+        presence = sector["presence"]
+        check(isinstance(presence, list) and all(integer(day) and day < profile["days"] for day in presence)
+              and presence == sorted(set(presence)), "COVERAGE_VECTOR_PRESENCE")
+    if profile.get("confirmedDemands") == 0:
+        check(sum(row["horizon"] for row in vector) == metrics["normalizedEstimatedShortage"],
+              "COVERAGE_VECTOR_SHORTAGE")
+    return vector
+
+
+def first_sector_regression(before, after):
+    check(len(before) == len(after), "SECTOR_VECTOR_COUNT")
+    for field, scope, metric, reason in (
+            ("horizon", "HORIZON", "DEFICIT_PERSON_MINUTES", "SECTOR_COVERAGE"),
+            ("month", "MONTH", "DEFICIT_PERSON_MINUTES", "SECTOR_COVERAGE"),
+            ("sundays", "SUNDAYS", "DEFICIT_PERSON_MINUTES", "SECTOR_COVERAGE"),
+            ("monthSundays", "MONTH_SUNDAYS", "DEFICIT_PERSON_MINUTES", "SECTOR_COVERAGE"),
+            ("closing", "HORIZON", "CLOSING_DEFICIT_PERSON_MINUTES", "CLOSING_COVERAGE"),
+            ("peak", "HORIZON", "PEAK_MISSING", "SECTOR_PEAK")):
+        # The vectors are sorted by the same sector key used by the TS tie-break.
+        losses = [(new[field] - old[field], old[field], new[field])
+                  for old, new in zip(before, after) if new[field] > old[field]]
+        if losses:
+            delta, prior, current = max(losses, key=lambda item: item[0])
+            return reason, dict(metric=metric, scope=scope, before=prior, after=current, delta=delta)
+    if any(set(old["presence"]) - set(new["presence"]) for old, new in zip(before, after)):
+        return "DAILY_PRESENCE", dict(metric="DAILY_PRESENCE", scope="HORIZON", before=1, after=0, delta=-1)
+    return None
+
+
+def verify_pair_detail(pair, actual, profile):
+    old = next(r for r in actual if r["engine"] == "ortools")["finalAssessment"]["metrics"]
+    new = next(r for r in actual if r["engine"] == "timefold")["finalAssessment"]["metrics"]
+    expected = first_sector_regression(sector_vector(old, profile), sector_vector(new, profile))
+    reason = pair["reason"]
+    if pair["regressed"]:
+        loss = pair.get("regression")
+        check(isinstance(loss, dict) and set(loss) == {"metric", "scope", "before", "after", "delta"}
+              and reason in COVERAGE_METRICS and loss["metric"] in COVERAGE_METRICS[reason]
+              and loss["scope"] in SCOPES and integer(loss["before"]) and integer(loss["after"])
+              and type(loss["delta"]) is int and loss["delta"] == loss["after"] - loss["before"]
+              and loss["delta"] != 0, "PAIR_REGRESSION_DETAIL")
+        if reason in ("DAILY_PRESENCE", "ROLE_TIME_PRESENCE"):
+            check(loss["delta"] < 0, "PAIR_REGRESSION_SIGN")
+        else:
+            check(loss["delta"] > 0, "PAIR_REGRESSION_SIGN")
+        if expected:
+            check((reason, loss) == expected, "PAIR_SECTOR_REGRESSION_MISMATCH")
+        else:
+            check(reason in ("ROLE_TIME_COVERAGE", "ROLE_TIME_PRESENCE"), "PAIR_SECTOR_REGRESSION_MISMATCH")
+    else:
+        check("regression" not in pair and expected is None, "PAIR_SECTOR_REGRESSION_MISMATCH")
+        check(reason == ("OPERATIONAL_IMPROVEMENT" if pair["improved"] else "ACCEPTED"), "PAIR_REASON")
+    # Independently confirm the sector/date prefix, not the full role/time decision.
+
+
 def valid_timely(row):
     final = row.get("finalAssessment")
     return (row.get("timely") is True and row.get("errorCode") is None
@@ -124,11 +201,16 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
                     if assessment_valid(assessment):
                         metrics = assessment.get("metrics") or {}
                         check(integer(metrics.get("shortagePersonMinutes")) and integer(metrics.get("normalizedEstimatedShortage")), "SHORTAGE")
+                        sector_vector(metrics, profile)
                 for flag in ("acceptedNew", "engineNew", "sameAsRaw", "unchangedReference"):
                     check(type(row.get(flag)) is bool, "FLAG_TYPE")
                 accepted = (valid_timely(row) and row.get("outcome") == "NEW_PROPOSAL" and not row["unchangedReference"])
                 engine_new = accepted and row["sameAsRaw"] and feasible and assessment_valid(raw)
                 check(row["acceptedNew"] is accepted and row["engineNew"] is engine_new, "ATTRIBUTION")
+                if row["engineNew"]:
+                    check(raw["metrics"]["coverageAudit"] == final["metrics"]["coverageAudit"]
+                          and raw["metrics"]["normalizedEstimatedShortage"] == final["metrics"]["normalizedEstimatedShortage"],
+                          "RAW_FINAL_COVERAGE_DRIFT")
                 if engine == "timefold":
                     t = row.get("spike") or {}
                     check(t.get("partialModel") is True and t.get("entities") == profile["activePositions"]
@@ -180,15 +262,7 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
                 regressed += int(pair["regressed"])
                 improved += int(pair["improved"])
                 reasons[pair["reason"]] = reasons.get(pair["reason"], 0) + 1
-                if pair["regressed"]:
-                    loss = pair.get("regression")
-                    check(isinstance(loss, dict) and set(loss) == {"metric", "scope", "before", "after", "delta"}
-                          and isinstance(loss["metric"], str) and isinstance(loss["scope"], str)
-                          and numeric(loss["before"]) and numeric(loss["after"])
-                          and type(loss["delta"]) in (int, float) and math.isfinite(loss["delta"])
-                          and loss["delta"] != 0, "PAIR_REGRESSION_DETAIL")
-                else:
-                    check("regression" not in pair, "PAIR_REGRESSION_DETAIL")
+                verify_pair_detail(pair, actual, profile)
         report["comparablePairs"] = comparable
         report["nonComparablePairs"] = repetitions - comparable
         report["regressedPairs"] = regressed
