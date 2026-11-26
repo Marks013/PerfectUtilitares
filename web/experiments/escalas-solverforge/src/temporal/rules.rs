@@ -36,8 +36,7 @@ impl Rules{
             if count!=((if first_partial{3}else{5})-weekdays).max(0)||off!=(2-sunday).max(0){return false;}
             if complete&&!self.untimed&&weekdays==0&&minutes!=target{return false;}
         }
-        if self.mixed[week]&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2{return false;}
-        true
+        !(self.mixed[week]&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2)
     }
     fn mutable(&self,d:usize)->bool{
         !self.closed[d]&&self.fixed&(1<<self.weekday(d as i32))==0&&self.old[d].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL)
