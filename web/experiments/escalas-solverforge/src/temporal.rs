@@ -774,7 +774,15 @@ mod tests{
         data["input"]["employees"][0]["leadership"]=json!({"source":"MANUAL","role":"BRANCH","sectors":["S","T"]});
         data["input"]["movementPriorities"]=json!([{"startDate":"2026-11-04","endDate":"2026-11-04","level":"HIGH"}]);
         data["input"]["demands"]=json!([{"id":"d","date":"2026-11-04","sector":"T","start":480,"end":540,"minimum":1,"estimated":false}]);
+        // Both people have 42h contracts and only 480/540-minute clocks.
+        // Without enabling the mixed 42h profile in T, that peer has no
+        // legal 2520-minute week. Keep the rejection as a negative oracle.
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("NO_PERSONAL_PATTERN")));
+        data["input"]["mixed42Sectors"]=json!(["S","T"]);
         let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert!(plan.employees.iter().all(|p|p.catalog.iter().all(|x|
+            x.states[..7].iter().filter(|&&s|work(s)).count()==5
+            &&x.states[..7].iter().filter(|&&s|s==4).count()==2)));
         let a=plan.employees[0].catalog.iter().position(|p|work(p.states[3])).unwrap();
         let b=plan.employees[1].catalog.iter().position(|p|p.states[3]==OFF).unwrap();
         plan.employees[0].pattern=Some(a);plan.employees[1].pattern=Some(b);

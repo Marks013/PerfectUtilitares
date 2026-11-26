@@ -258,3 +258,5 @@ compiler/stdlib/musl or production certification. Update a dependency only
 with a concrete security/compatibility justification and review of the
 resulting locked graph. Existing SF58–SF60 qualification remains pending;
 do not infer a successful new compiler run before actual CI evidence.
+
+SF61 follow-up: run 45838861211 on 3f4ccb4 compiled successfully and executed 58 Rust tests (57 passed, one failed), plus 18 Python tests. The failing cross-sector leadership fixture cloned a 42h employee with 480/540-minute clocks from mixed-enabled sector S into T, which was not in mixed42Sectors; the mapper correctly returned NO_PERSONAL_PATTERN. Fix the synthetic fixture by enabling the existing mixed profile for both S and T, assert that the former invalid fixture is still rejected, and check that both domains consist of five working days with exactly two long turns. Preserve the original leadership and hard hourly-coverage assertions; no production constraint relaxation or compiler-version workaround. Re-run both SF61 toolchains.
