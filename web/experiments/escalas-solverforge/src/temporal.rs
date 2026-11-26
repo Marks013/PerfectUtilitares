@@ -13,6 +13,7 @@ mod tie_rank;
 mod seed;
 mod service_guard;
 mod service_bounds;
+mod comparison;
 mod rest_guard;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
@@ -106,7 +107,7 @@ struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(us
 #[derive(Debug,PartialEq,Eq,Hash)]
 pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
     priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64,
-    protected_days:u64,protected_bands:Vec<service_bounds::Bound>}
+    protected_days:u64,protected_bands:Vec<service_bounds::Bound>,comparison:Option<comparison::Bounds>}
 impl TemporalFacts{
     fn weekday(&self,day:usize)->usize{(self.weekday_offset+day)%7}
     fn week(&self,day:usize)->usize{(self.weekday_offset+day)/7}
@@ -156,6 +157,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         }
     }
     result[0]+=service_bounds::deficit(facts,&attendance,&role_members);
+    result[0]+=comparison::deficit(facts,&attendance,&role_members);
     for band in &facts.bands{
         // Full oracle: independently union the current and preceding
         // assignment-day bitmaps on this civil interval.
@@ -454,6 +456,21 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         if estimated&&paid.contains(&day){continue;}
         demand_groups.entry((sector,day as usize,estimated)).or_default().push((a,b,i64::from(n),role));
     }
+    // Legacy private coverage floors are additional mandatory minima,
+    // never new estimated demand and never a replacement for confirmed input.
+    if input.get("_coverageProtection").is_some(){
+        for row in array(input,"_coverageProtection")?{
+            check(row.as_object().is_some_and(|o|o.keys().all(|k|["date","sector","role","start","end","minimum"].contains(&k.as_str()))),"PROTECTION_FIELDS")?;
+            let day=relative(text(row,"date")?)?;
+            let a=number(row,"start")?;let b=number(row,"end")?;let n=number(row,"minimum")?;
+            check((0..days as i32).contains(&day)&&a>=0&&a<b&&b<=1440&&range(n,0,250),"PROTECTION_BAND")?;
+            let sector=*sectors.get(text(row,"sector")?).ok_or("PROTECTION_SECTOR")?;
+            let role=match row.get("role"){None=>None,Some(v) if v.is_null()=>None,Some(v)=>{
+                Some(*roles.get(v.as_str().ok_or("PROTECTION_ROLE")?).ok_or("PROTECTION_ROLE")?)
+            }};
+            demand_groups.entry((sector,day as usize,false)).or_default().push((a,b,i64::from(n),role));
+        }
+    }
     let mut priorities=Vec::new();
     if input.get("movementPriorities").is_some(){
         for entry in array(input,"movementPriorities")?{
@@ -466,7 +483,7 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         }
     }
     let mut facts:Vec<_>=(0..sectors.len()).map(|sector|TemporalFacts{
-        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,protected_days:0,protected_bands:Vec::new(),
+        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,protected_days:0,protected_bands:Vec::new(),comparison:None,
         priority:std::array::from_fn(|d|{
             let matches=|p:&&(i32,i32,i64,Option<usize>)|p.0<=d as i32&&p.1>=d as i32;
             priorities.iter().filter(matches).filter(|p|p.3==Some(sector)).map(|p|p.2).max()
@@ -494,6 +511,7 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         }
     }
     configure_peak(&mut facts)?;
+    comparison::read(input,&calendar,&sectors,&roles,&mut facts,deadline)?;
     service_bounds::read(input,&calendar,&sectors,&roles,&mut facts)?;
     let facts:Vec<_>=facts.into_iter().map(Arc::new).collect();
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
@@ -1121,6 +1139,34 @@ mod tests{
         assert_eq!(evaluate(&plan)[0],0);
         data["input"]["shifts"][0]["segments"][4]["end"]=json!(1500);
         assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_GEOMETRY")));
+    }
+
+    #[test]
+    fn private_comparison_caps_bind_every_civil_band_and_default_to_zero(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["history"]=json!([]);
+        data["input"]["demands"]=json!([{"id":"estimate","date":"2026-11-04","sector":"S","role":"Repositor","start":480,"end":540,"minimum":1,"estimated":true}]);
+        data["input"]["_coverageComparison"]=json!({"sectors":[{"sector":"S","horizon":60,"month":60,"sundays":0,"monthSundays":0,"closing":0,"peak":1}],"bands":[]});
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let p=&mut plan.employees[0];let good=p.catalog.iter().position(|p|work(p.states[3])).unwrap();
+        let bad=p.catalog.iter().position(|p|p.states[3]==OFF).unwrap();
+        p.pattern=Some(good);assert_eq!(evaluate(&plan)[0],0);
+        plan.employees[0].pattern=Some(bad);assert!(evaluate(&plan)[0]>0);
+        // General and role scopes each require explicit permission.
+        data["input"]["_coverageComparison"]["bands"]=V::Array([None,Some("Repositor")].into_iter().flat_map(|role|
+            ["HORIZON","MONTH"].into_iter().map(move |scope|json!({"scope":scope,"sector":"S","role":role,"start":480,"end":540,"maximum":1,"peak":1}))
+        ).collect());
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        plan.employees[0].pattern=Some(bad);
+        assert_eq!(evaluate(&plan)[0],0);
+        let mut acc=TemporalAccumulator::default();let row=plan.employees[0].member();acc.accumulate(row.clone());
+        assert_eq!(acc.finish(),sector_cost(std::iter::once(&row)));
+        data["input"]["_coverageProtection"]=json!([{"date":"2026-11-04","sector":"S","role":"Repositor","start":480,"end":540,"minimum":1}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        plan.employees[0].pattern=Some(bad);
+        assert!(evaluate(&plan)[0]>0);
+        data["input"]["_coverageComparison"]["advisoryEstimateDates"]=json!(["2026-11-01"]);
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("COMPARISON_FIELDS")));
     }
 
     #[test]

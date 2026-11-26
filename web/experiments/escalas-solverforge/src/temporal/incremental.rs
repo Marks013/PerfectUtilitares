@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use solverforge::stream::collector::Accumulator;
 use crate::model::Presence;
-use super::{Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,civil_presence,clock,service_bounds,work};
+use super::{Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,civil_presence,clock,comparison,service_bounds,work};
 
 #[derive(Clone,Copy,Default)]
 struct Daily{
@@ -73,6 +73,7 @@ impl TemporalAccumulator{
         let Some(f)=&self.facts else{return [0;17];};
         let mut total=self.personal;
         total[0]+=service_bounds::deficit(f,&self.attendance,&self.role_members);
+        total[0]+=comparison::deficit(f,&self.attendance,&self.role_members);
         let mut sunday=[0i64;6];
         let mut references=0;
         for (day,d) in self.daily.iter().enumerate().take(f.days){

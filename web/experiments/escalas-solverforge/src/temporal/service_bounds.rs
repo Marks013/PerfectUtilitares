@@ -70,7 +70,8 @@ pub(super) fn deficit(facts:&TemporalFacts,attendance:&[[Presence;16];MAX_DAYS],
         let members=role_members.get(&b.role).copied().unwrap_or_default();
         let mut count=0;
         for d in 0..facts.days{
-            if b.scope&1!=0&&!facts.visible[d]||b.scope&2!=0&&facts.weekday(d)!=0{continue;}
+            if b.scope&1!=0&&!facts.visible[d]||b.scope&2!=0&&facts.weekday(d)!=0
+                ||facts.comparison.as_ref().is_some_and(|c|c.advisory(d)){continue;}
             let present=civil_presence(attendance,d,b.mask,b.previous_mask);
             count+=i64::from((present&members).count_ones());
         }
