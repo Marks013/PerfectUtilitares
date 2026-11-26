@@ -12,7 +12,9 @@ permissions:
 
 concurrency:
   group: escalas-solverforge-${{ github.ref }}
-  cancel-in-progress: false
+  # Only the newest draft revision is eligible for qualification.
+  # Superseded runs cannot certify a newer commit.
+  cancel-in-progress: true
 
 jobs:
   solverforge:

@@ -7,6 +7,8 @@ import subprocess
 import sys
 import os
 import tomllib
+import json
+import copy
 
 UPSTREAM = "78889c3ff9fda158c70e6a1f67f8c7f0fdae922e"
 MEMBER = "examples/perfectutilitares-solverforge-spike"
@@ -51,6 +53,46 @@ def verify_toolchain(toolchain, manifest, env_pin=None):
         raise ValueError("TOOLCHAIN_PIN_MISMATCH")
 
 
+# Cargo 1.100 detects these eight unused inherited aliases in the exact
+# pinned v0.31.2 root. Crate manifests use explicit version/path entries.
+# Remove aliases only from the disposable overlay, never from upstream Git.
+UNUSED_ALIASES = (
+    "solverforge-bridge", "solverforge-config", "solverforge-console",
+    "solverforge-core", "solverforge-cvrp", "solverforge-macros",
+    "solverforge-scoring", "solverforge-solver",
+)
+
+def overlay_manifest(original, members):
+    before = tomllib.loads(original)
+    declared = before["workspace"]["members"]
+    if sorted(members) != sorted(declared) or MEMBER in declared:
+        raise ValueError("UPSTREAM_MEMBER_DRIFT")
+    def uses_alias(value, alias):
+        if not isinstance(value, dict):
+            return False
+        return any((key == alias and isinstance(child, dict) and child.get("workspace") is True)
+                   or uses_alias(child, alias) for key, child in value.items())
+    parsed = [tomllib.loads(value) for value in members.values()]
+    after = original
+    expected = copy.deepcopy(before)
+    for alias in UNUSED_ALIASES:
+        line = f'{alias} = {{ path = "crates/{alias}" }}\n'
+        if (after.count(line) != 1
+                or before["workspace"]["dependencies"].get(alias) != {"path": f"crates/{alias}"}
+                or any(uses_alias(doc, alias) for doc in parsed)):
+            raise ValueError("UPSTREAM_ALIAS_DRIFT")
+        after = after.replace(line, "")
+        del expected["workspace"]["dependencies"][alias]
+    anchor = '    "examples/nqueens",'
+    if after.count(anchor) != 1:
+        raise ValueError("UPSTREAM_MANIFEST_MISMATCH")
+    after = after.replace(anchor, anchor + '\n    "' + MEMBER + '",')
+    expected["workspace"]["members"].insert(declared.index("examples/nqueens") + 1, MEMBER)
+    if tomllib.loads(after) != expected:
+        raise ValueError("UPSTREAM_MANIFEST_DRIFT")
+    return after
+
+
 def main():
     source = pathlib.Path(__file__).resolve().parent
     checkout = pathlib.Path(sys.argv[1]).resolve()
@@ -71,9 +113,17 @@ def main():
     except ValueError:
         raise SystemExit("UPSTREAM_LOCK_MISMATCH") from None
     original = manifest.read_text()
-    anchor = '    "examples/nqueens",'
-    if original.count(anchor) != 1:
-        raise SystemExit("UPSTREAM_MANIFEST_MISMATCH")
+    try:
+        members = tomllib.loads(original)["workspace"]["members"]
+        documents = {member: (checkout / member / "Cargo.toml").read_text() for member in members}
+        overlaid = overlay_manifest(original, documents)
+        candidate = tomllib.loads((source / "Cargo.toml").read_text())
+        if any(alias in candidate.get("dependencies", {}) for alias in UNUSED_ALIASES):
+            raise ValueError("CANDIDATE_ALIAS_DRIFT")
+    except (OSError, ValueError, KeyError, TypeError):
+        raise SystemExit("UPSTREAM_MANIFEST_MISMATCH") from None
+    print(json.dumps({"upstreamRevision": UPSTREAM, "removedUnusedWorkspaceAliases": list(UNUSED_ALIASES),
+                      "memberManifestsChecked": len(documents), "lockUnchanged": True}))
     destination = checkout / MEMBER
     if destination.exists():
         raise SystemExit("OVERLAY_EXISTS")
@@ -81,7 +131,7 @@ def main():
     for file in ("Cargo.toml", "solver.toml"):
         shutil.copyfile(source / file, destination / file)
     shutil.copytree(source / "src", destination / "src")
-    manifest.write_text(original.replace(anchor, anchor + '\n    "' + MEMBER + '",'))
+    manifest.write_text(overlaid)
     lock.write_text(wanted)
     # Only the disposable verified checkout is overlaid. Prevent accidental
     # rustup fallback to the upstream historical 1.99.1 default.

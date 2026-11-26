@@ -333,3 +333,8 @@ qualified for that exact revision; the new combined benchmark is pending.
   No lock/upstream/production changes. Performance improvements are
   hypotheses pending actual 1.100.0 benchmarks, with no quota or gate
   relaxation and no borrowed control roster.
+
+
+## SF66 preparation — reviewed manifest overlay and current-revision benchmark
+
+Rust 1.100 Cargo warned about eight unused workspace aliases in the exact v0.31.2 root. All 14 upstream member manifests were inspected: internal crates use explicit version/path dependencies; the examples inherit only `solverforge`. Remove precisely those eight unused aliases from the disposable, SHA-verified workspace after checking every member TOML for inheritance (including target tables). Verify structural equality except the removed aliases and the existing candidate member insertion. No source crate, upstream Git ref, version, lock or lint setting changes. The full comparison now supersedes obsolete draft runs on a new push rather than waiting behind old SHAs. Same quotas, corpus and independent gates; cancelled old runs do not certify the latest commit. Require Cargo locked build and OSV again.

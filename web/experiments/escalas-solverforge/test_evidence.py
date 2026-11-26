@@ -1,7 +1,7 @@
 import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
-from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock, verify_toolchain
+from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock, verify_toolchain, overlay_manifest, UNUSED_ALIASES
 from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile, adaptive_gain, verify_personal
 
 class EvidenceTests(unittest.TestCase):
@@ -173,6 +173,21 @@ class EvidenceTests(unittest.TestCase):
                      (toolchain,manifest.replace("1.100.0","1.99.1"),None),
                      (toolchain,manifest.replace('edition = "2021"','edition = "2024"'),None)):
             with self.assertRaises(ValueError):verify_toolchain(*args)
+
+    def test_unused_workspace_alias_removal_is_exact_and_rejects_inheritance(self):
+        import tomllib
+        original='[workspace]\nmembers = [\n    "examples/nqueens",\n]\n[workspace.dependencies]\n'
+        original+='solverforge = { path = "crates/solverforge" }\n'
+        original+=''.join(f'{alias} = {{ path = "crates/{alias}" }}\n' for alias in UNUSED_ALIASES)
+        members={"examples/nqueens":'[dependencies]\nsolverforge = { workspace = true }\n'}
+        result=tomllib.loads(overlay_manifest(original,members))
+        self.assertEqual(set(result["workspace"]["dependencies"]),{"solverforge"})
+        for alias in UNUSED_ALIASES:
+            changed=dict(members)
+            changed["examples/nqueens"]+=f'\n[target."cfg(unix)".dependencies]\n{alias} = {{ workspace = true }}\n'
+            with self.assertRaises(ValueError):overlay_manifest(original,changed)
+        with self.assertRaises(ValueError):overlay_manifest(original,{})
+        with self.assertRaises(ValueError):overlay_manifest(original.replace("crates/solverforge-core","elsewhere"),members)
 
 if __name__=="__main__":
     unittest.main()
