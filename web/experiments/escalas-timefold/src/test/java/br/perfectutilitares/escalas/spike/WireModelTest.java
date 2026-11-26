@@ -97,6 +97,44 @@ class WireModelTest {
         input.put("generationMode", "HOURS_ONLY");
         assertThrows(WireModel.Unsupported.class, () -> WireModel.read(root));
     }
+    @Test void rejectsCoercedBooleanAndUnknownPrivateField() throws Exception {
+        var root = envelope();
+        var input = (ObjectNode) root.path("input");
+        input.put("simulation", "true");
+        assertEquals("EXPECTED_BOOLEAN", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        input.put("simulation", true);
+        input.put("_unknownConstraint", true);
+        assertEquals("UNKNOWN_PRIVATE_FIELD", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
+    @Test void rejectsUnknownSundayRuleAndMalformedEmploymentDate() throws Exception {
+        var root = envelope();
+        var person = (ObjectNode) root.path("input").path("employees").get(0);
+        person.put("sundayRestRule", "UNKNOWN");
+        assertEquals("UNSUPPORTED_ENUM", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        person.put("sundayRestRule", "COMMERCE");
+        person.put("maxConsecutiveSundays", 2);
+        assertEquals(2, WireModel.read(root).days().getFirst().getSundayCap());
+        person.put("activeFrom", "0000");
+        assertEquals("ACTIVE_DATE", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
+    @Test void rejectsInvalidPolicyLimitsAndDemandBoolean() throws Exception {
+        var root = envelope();
+        var input = (ObjectNode) root.path("input");
+        var policy = (ObjectNode) input.path("policy");
+        policy.put("minWeeklyRestMinutes", 0);
+        assertEquals("POLICY_LIMITS", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        policy.put("minWeeklyRestMinutes", 2100);
+        input.set("demands", JSON.readTree("""
+            [{"date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":1,"estimated":"true"}]
+            """));
+        assertEquals("EXPECTED_BOOLEAN", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
     @Test void rejectsLockedSaturdayOff() throws Exception {
         var root = envelope();
         ((ObjectNode)root.path("input")).set("assignments", JSON.readTree(

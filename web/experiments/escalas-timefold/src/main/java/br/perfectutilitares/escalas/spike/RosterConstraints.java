@@ -22,14 +22,17 @@ public class RosterConstraints implements ConstraintProvider {
         return BendableScore.ofSoft(1, SOFT_LEVELS, index, 1L);
     }
     record SectorDay(String sector, int day) {}
-    record SectorPerson(String sector, String person) {}
+    record SundayGroup(String sector, int cap) {}
+    record SectorPerson(SundayGroup group, String person) {}
+    record SundayDate(SundayGroup group, int day) {}
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
+        var estimated = deficits(factory, true);
         return new Constraint[] {
             windowCounts(factory), emptyWindow(factory), variableRestPattern(factory),
-            confirmedCoverage(factory), totalEstimatedCoverage(factory),
-            sundayCoverage(factory), sectorPeak(factory), dailyService(factory),
-            sundaySpread(factory), changes(factory)
+            confirmedCoverage(factory), totalEstimatedCoverage(estimated),
+            sundayCoverage(estimated), sectorPeak(estimated), dailyService(factory),
+            sundaySpread(factory), sundayDateSpread(factory), changes(factory)
         };
     }
 
@@ -64,10 +67,15 @@ public class RosterConstraints implements ConstraintProvider {
     /** One gap per disjoint band, including a band with no WORK member. */
     private BiConstraintStream<Roster.Band, Long> deficits(ConstraintFactory f, boolean estimated) {
         var bands = f.forEach(Roster.Band.class).filter(b -> b.estimated() == estimated && b.minimum() > 0);
-        return bands.join(Day.class, equal(Roster.Band::day, Day::index),
-                        equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches))
+        var present = bands.join(Day.class, equal(Roster.Band::day, Day::index),
+                        equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches));
+        var general = present.filter((band, day) -> band.roleMinima().isEmpty())
+                .groupBy((band, day) -> band, countBi())
+                .map((band, count) -> band, (band, count) -> band.missing(count, Map.of()));
+        var roles = present.filter((band, day) -> !band.roleMinima().isEmpty())
                 .groupBy((band, day) -> band, countBi(), toMap((band, day) -> day.role(), (band, day) -> day.id()))
-                .map((band, count, members) -> band, (band, count, members) -> band.missing(count, members))
+                .map((band, count, members) -> band, (band, count, members) -> band.missing(count, members));
+        return general.concat(roles)
                 .concat(bands.ifNotExists(Day.class, equal(Roster.Band::day, Day::index),
                         equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches)),
                         band -> band.missing(0, Map.of()));
@@ -78,19 +86,19 @@ public class RosterConstraints implements ConstraintProvider {
                 .penalize(HARD, (band, gap) -> gap).asConstraint("Confirmed coverage");
     }
 
-    Constraint totalEstimatedCoverage(ConstraintFactory f) {
-        return deficits(f, true).filter((band, gap) -> gap > 0)
+    Constraint totalEstimatedCoverage(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.filter((band, gap) -> gap > 0)
                 .penalize(level(0), (band, gap) -> gap).asConstraint("Estimated coverage total");
     }
 
     // Only the admitted Sunday-based horizon. Not a general calendar rule.
-    Constraint sundayCoverage(ConstraintFactory f) {
-        return deficits(f, true).filter((band, gap) -> band.day() % 7 == 0 && gap > 0)
+    Constraint sundayCoverage(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.filter((band, gap) -> band.day() % 7 == 0 && gap > 0)
                 .penalize(level(1), (band, gap) -> gap).asConstraint("Sunday estimated coverage");
     }
 
-    Constraint sectorPeak(ConstraintFactory f) {
-        return deficits(f, true)
+    Constraint sectorPeak(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated
                 .groupBy((band, gap) -> band.sector(),
                         ConstraintCollectors.<Roster.Band, Long, Long>max(
                                 (band, gap) -> gap / (band.end() - band.start())))
@@ -106,16 +114,36 @@ public class RosterConstraints implements ConstraintProvider {
                 .penalize(level(3)).asConstraint("Demanded sector day without service");
     }
 
+    private static SundayGroup sundayGroup(Day day) {
+        return new SundayGroup(day.sector(), day.getSundayCap());
+    }
+    private static long rate(long worked, long opportunities) {
+        return worked * 10_000L / opportunities;
+    }
+    private Constraint spread(BiConstraintStream<SundayGroup, Long> rates, String name) {
+        return rates.groupBy((group, value) -> group,
+                        ConstraintCollectors.<SundayGroup, Long, Long>min((group, value) -> value),
+                        ConstraintCollectors.<SundayGroup, Long, Long>max((group, value) -> value))
+                .filter((group, low, high) -> high > low)
+                .penalize(level(4), (group, low, high) -> high - low).asConstraint(name);
+    }
     Constraint sundaySpread(ConstraintFactory f) {
-        // All admitted people have equal complete horizons. Include zero WORK counts.
-        return f.forEach(Day.class).filter(day -> day.index() % 7 == 0)
-                .groupBy(day -> new SectorPerson(day.sector(), day.person()),
-                        sum(day -> day.working() ? 1L : 0L))
-                .groupBy((person, count) -> person.sector(),
-                        ConstraintCollectors.<SectorPerson, Long, Long>min((person, count) -> count),
-                        ConstraintCollectors.<SectorPerson, Long, Long>max((person, count) -> count))
-                .filter((sector, low, high) -> high > low)
-                .penalize(level(4), (sector, low, high) -> high - low).asConstraint("Sunday sector spread");
+        // Include unassigned opportunities during construction; exclude imposed OFF.
+        BiConstraintStream<SundayGroup, Long> rates = f.forEachIncludingUnassigned(Day.class).filter(Day::sundayOpportunity)
+                .groupBy(day -> new SectorPerson(sundayGroup(day), day.person()),
+                        sum(day -> day.working() ? 1L : 0L), count())
+                .map((person, worked, available) -> person.group(),
+                        (person, worked, available) -> rate(worked, available));
+        return spread(rates, "Sunday personal rate spread");
+    }
+    Constraint sundayDateSpread(ConstraintFactory f) {
+        BiConstraintStream<SundayGroup, Long> rates = f.forEachIncludingUnassigned(Day.class).filter(Day::sundayOpportunity)
+                .groupBy(day -> new SundayDate(sundayGroup(day), day.index()),
+                        sum(day -> day.working() ? 1L : 0L), count())
+                .map((date, worked, available) -> date.group(),
+                        (date, worked, available) -> rate(worked, available));
+        // Same rate scale and objective level as personal spread, not a presence guard.
+        return spread(rates, "Sunday date rate spread");
     }
 
     Constraint changes(ConstraintFactory f) {

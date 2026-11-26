@@ -40,6 +40,23 @@ final class WireModel {
         v.forEach(out::add);
         return out;
     }
+    private static boolean bool(JsonNode n, String key, boolean fallback) {
+        if (!n.has(key)) return fallback;
+        check(n.path(key).isBoolean(), "EXPECTED_BOOLEAN");
+        return n.path(key).booleanValue();
+    }
+    private static String optionalEnum(JsonNode n, String key, String fallback, String... options) {
+        if (!n.has(key)) return fallback;
+        String value = str(n, key);
+        check(Arrays.asList(options).contains(value), "UNSUPPORTED_ENUM");
+        return value;
+    }
+    private static boolean startsBy(JsonNode person, LocalDate first) {
+        String value = str(person, "activeFrom");
+        if (value.isEmpty()) return true;
+        check(value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "ACTIVE_DATE");
+        return !LocalDate.parse(value).isAfter(first);
+    }
     private static boolean empty(JsonNode n, String key) {
         return !n.has(key) || n.path(key).isArray() && n.path(key).isEmpty()
                 || n.path(key).isObject() && n.path(key).isEmpty();
@@ -49,11 +66,11 @@ final class WireModel {
         check(root != null && root.isObject() && root.size() == 1 && root.path("input").isObject(), "ENVELOPE");
         JsonNode input = root.path("input"), policy = input.path("policy");
         check(integer(input, "schemaVersion") == 1 && str(input, "branchCode").equals("SYNTH")
-                && input.path("simulation").asBoolean(false), "SYNTHETIC_ONLY");
+                && bool(input, "simulation", false), "SYNTHETIC_ONLY");
         check(str(input, "timeZone").equals("America/Sao_Paulo")
                 && str(input, "planningWeekStartsOn").equals("SUNDAY")
                 && integer(input, "restRulesVersion") == 3
-                && input.path("generationMode").asText("DAYS_AND_HOURS").equals("DAYS_AND_HOURS")
+                && optionalEnum(input, "generationMode", "DAYS_AND_HOURS", "DAYS_AND_HOURS").equals("DAYS_AND_HOURS")
                 && integer(input, "defaultWeeklyHours") == 42, "MODE");
         // Exact November fixtures: no calendar clipping, DST, or transition assumptions.
         LocalDate first = LocalDate.parse(str(input, "startDate"));
@@ -63,16 +80,23 @@ final class WireModel {
                 && !input.has("visibleMonth"), "HORIZON");
         for (String field : List.of("_coverageComparison", "_coverageServiceProtection", "_coverageProtection", "_restPairTarget"))
             check(!input.has(field), "PROTECTED_COVERAGE_UNSUPPORTED");
+        input.fieldNames().forEachRemaining(field ->
+                check(!field.startsWith("_") || field.equals("_initialAssignments"), "UNKNOWN_PRIVATE_FIELD"));
         for (String field : List.of("mixed42Sectors", "movementPriorities"))
             check(empty(input, field), "UNSUPPORTED_INPUT");
         check(policy.path("calendarMode").asText().equals("MANUAL")
-                && policy.path("normativeProfile").asText("CUSTOM").equals("CUSTOM")
+                && optionalEnum(policy, "normativeProfile", "CUSTOM", "CUSTOM").equals("CUSTOM")
                 && integer(policy, "weeklyLimit") >= 42 && integer(policy, "dailyLimitMinutes") >= 504
                 && integer(policy, "maxConsecutiveWorkDays") == 5, "POLICY");
         for (String field : List.of("closedDates", "holidayDates", "authorizedHolidayDates", "paidHolidayDates"))
             check(empty(policy, field), "HOLIDAY_UNSUPPORTED");
         check(!policy.has("mealIntervalAgreement"), "MEAL_AGREEMENT_UNSUPPORTED");
         int closing = integer(input, "storeClosingMinutes");
+        check(closing >= 1 && closing <= 1440
+                && integer(policy, "minMealMinutes") >= 30 && integer(policy, "minMealMinutes") <= 180
+                && integer(policy, "minInterShiftMinutes") >= 660 && integer(policy, "minInterShiftMinutes") <= 1440
+                && integer(policy, "minWeeklyRestMinutes") >= 2100 && integer(policy, "minWeeklyRestMinutes") <= 4320,
+                "POLICY_LIMITS");
         Map<String, List<Day.Segment>> clocks = new HashMap<>();
         for (JsonNode clock : array(input, "shifts")) {
             String id = str(clock, "id");
@@ -86,7 +110,7 @@ final class WireModel {
                     && b - a + f - e == 504 && d - c >= integer(policy, "minMealMinutes") && d - c <= 120
                     && 1440 - (f - a) >= integer(policy, "minInterShiftMinutes")
                     && 2880 - (f - a) >= integer(policy, "minWeeklyRestMinutes"), "CLOCK_GEOMETRY");
-            check(!policy.path("limitContinuousWorkBlocks").asBoolean(false) || Math.max(b - a, f - e) <= 270,
+            check(!bool(policy, "limitContinuousWorkBlocks", false) || Math.max(b - a, f - e) <= 270,
                     "CLOCK_BLOCKS");
             check(clocks.put(id, List.of(new Day.Segment(a, b), new Day.Segment(e, f))) == null, "DUPLICATE_CLOCK");
         }
@@ -95,12 +119,12 @@ final class WireModel {
         for (JsonNode person : array(input, "employees")) {
             String id = str(person, "id"), name = str(person, "name");
             check(id.matches("person-[0-9]+") && name.startsWith("Synthetic person "), "SYNTHETIC_ID");
-            check(person.path("planningEnabled").asBoolean(true)
+            check(bool(person, "planningEnabled", true)
                     && str(person, "scheduleMode").equals("TIMED") && integer(person, "weeklyHours") == 42
                     && str(person, "offMode").equals("VARIABLE") && str(person, "offPattern").equals("ANY")
-                    && !person.path("historyKnown").asBoolean(false) && !person.has("simulationDailyMinutes")
-                    && !person.has("activeUntil") && (str(person, "activeFrom").isEmpty()
-                        || str(person, "activeFrom").compareTo(first.toString()) <= 0), "PERSON_PROFILE");
+                    && !bool(person, "historyKnown", false) && !person.has("simulationDailyMinutes")
+                    && !person.has("activeUntil") && startsBy(person, first), "PERSON_PROFILE");
+            optionalEnum(person, "weeklyHoursMode", "INDIVIDUAL", "INDIVIDUAL", "BRANCH");
             for (String field : List.of("history", "planningHistory", "planningFuture", "fixedOffDays",
                     "preferredOffDays", "manualShiftByDate", "manualShiftOverrides", "manualShiftBaseIds"))
                 check(empty(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
@@ -117,7 +141,9 @@ final class WireModel {
             check(clocks.containsKey(shift), "CLOCK_REFERENCE");
             int cap = integer(person, "maxConsecutiveSundays");
             check(cap == 1 || cap == 2, "SUNDAY_CAP");
-            if (!person.path("sundayRestRule").asText().equals("COMMERCE")) cap = 1;
+            String sundayRule = optionalEnum(person, "sundayRestRule", "PROTECTIVE",
+                    "PROTECTIVE", "UNREVIEWED", "CLT_386", "COMMERCE");
+            if (!sundayRule.equals("COMMERCE")) cap = 1;
             check(people.put(id, new Person(id, str(person, "sector"), str(person, "role"),
                     shift, clocks.get(shift), cap)) == null, "DUPLICATE_PERSON");
         }
@@ -146,7 +172,7 @@ final class WireModel {
             for (int i = 0; i + 5 < days; i++)
                 windows.add(new Roster.Window(person.id(), i, i + 5, 1, Day.State.WORK, 0, 5));
             for (int i = 0; i + 2 < days; i++) {
-                // Fully imposed OFF runs are outside this spike: reject them rather than alter the rules.
+                // Fully imposed OFF runs are exempt, as in the original.
                 boolean mutable = false;
                 for (int j = i; j <= i + 2; j++) {
                     Record old = saved.get(new Key(person.id(), first.plusDays(j).toString()));
@@ -167,9 +193,11 @@ final class WireModel {
                 Day.State state = locked ? old.state() : saturday ? Day.State.WORK : initial == null ? null : initial.state();
                 var pattern = comparable.size() >= 2 && comparable.contains(i / 7)
                         ? new Day.PatternKey(person.id(), i % 7, comparable.size()) : null;
-                cells.add(new Day(person.id(), person.sector(), person.role(), person.shift(), i, date,
+                var cell = new Day(person.id(), person.sector(), person.role(), person.shift(), i, date,
                         person.work(), saturday || locked, old == null ? null : old.locked(),
-                        old == null ? null : old.state(), state, pattern));
+                        old == null ? null : old.state(), state, pattern);
+                cell.setSundayCap(person.sundayCap());
+                cells.add(cell);
             }
         }
         // Disjoint bands per day/sector/demand type; preserve all function floors.
@@ -179,7 +207,7 @@ final class WireModel {
             int a = integer(demand, "start"), b = integer(demand, "end"), min = integer(demand, "minimum");
             check(day >= 0 && day < days && a >= 0 && b <= 1440 && a < b && min >= 0 && min <= 250, "DEMAND");
             String role = demand.hasNonNull("role") ? str(demand, "role") : null;
-            DemandKey key = new DemandKey(day, str(demand, "sector"), demand.path("estimated").asBoolean(false));
+            DemandKey key = new DemandKey(day, str(demand, "sector"), bool(demand, "estimated", false));
             grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(new Demand(a, b, min, role));
         }
         List<Roster.Band> bands = new ArrayList<>();

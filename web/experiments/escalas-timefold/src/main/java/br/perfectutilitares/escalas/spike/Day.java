@@ -27,6 +27,7 @@ public class Day {
     private Boolean originalLocked;
     private State saved;
     private PatternKey patternKey;
+    private int sundayCap = 1;
 
     @PlanningVariable(valueRangeProviderRefs = "states")
     private State state;
@@ -79,6 +80,8 @@ public class Day {
     public void setSaved(State saved) { this.saved = saved; }
     public PatternKey getPatternKey() { return patternKey; }
     public void setPatternKey(PatternKey patternKey) { this.patternKey = patternKey; }
+    public int getSundayCap() { return sundayCap; }
+    public void setSundayCap(int sundayCap) { this.sundayCap = sundayCap; }
     public State getState() { return state; }
     public void setState(State state) { this.state = state; }
 
@@ -95,7 +98,13 @@ public class Day {
     public boolean working() { return state == State.WORK; }
     public boolean resting() { return state == State.OFF; }
     public PatternKey patternKey() { return getPatternKey(); }
+    public boolean sundayOpportunity() {
+        return index % 7 == 0 && !(Boolean.TRUE.equals(originalLocked) && saved == State.OFF);
+    }
     public boolean covers(int start, int end) {
-        return workSegments.stream().anyMatch(s -> s.start() <= start && s.end() >= end);
+        for (Segment segment : workSegments) {
+            if (segment.start() <= start && segment.end() >= end) return true;
+        }
+        return false;
     }
 }

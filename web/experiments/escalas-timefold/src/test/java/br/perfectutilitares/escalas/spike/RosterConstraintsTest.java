@@ -102,7 +102,44 @@ class RosterConstraintsTest {
         Day first = day(0, Day.State.WORK, null);
         Day second = new Day("person-1", "Sector 1", "Repositor", "clock", 0, first.date(),
                 first.getWorkSegments(), false, false, null, Day.State.OFF, null);
-        verifier.verifyThat().given(first, second).scores(score(0, 0, 0, 0, 0, -1, 0));
+        verifier.verifyThat().given(first, second).scores(score(0, 0, 0, 0, 0, -10000, 0));
+    }
+
+    private static Day sunday(String person, int week, boolean locked, Day.State state, int cap) {
+        Day day = new Day(person, "Sector 1", "Repositor", "clock", week * 7,
+                java.time.LocalDate.of(2026, 11, 1).plusWeeks(week).toString(),
+                List.of(new Day.Segment(420, 660), new Day.Segment(780, 1044)),
+                locked, locked, locked ? state : null, state, null);
+        day.setSundayCap(cap);
+        return day;
+    }
+    @Test void sundayPersonalBalanceUsesOpportunitiesAndRuleCohorts() {
+        verifier.verifyThat(RosterConstraints::sundaySpread).given(
+                sunday("person-0", 0, false, Day.State.WORK, 1),
+                sunday("person-0", 1, true, Day.State.OFF, 1),
+                sunday("person-1", 0, false, Day.State.WORK, 1),
+                sunday("person-1", 1, false, Day.State.OFF, 1),
+                sunday("person-2", 0, true, Day.State.OFF, 1),
+                sunday("person-2", 1, true, Day.State.OFF, 1),
+                sunday("person-3", 0, false, Day.State.OFF, 2),
+                sunday("person-3", 1, false, Day.State.OFF, 2))
+                .penalizesBy(5000);
+    }
+    @Test void sundayDateBalanceUsesOnlyEligiblePeopleAndIncludesZeros() {
+        verifier.verifyThat(RosterConstraints::sundayDateSpread).given(
+                sunday("person-0", 0, false, Day.State.WORK, 1),
+                sunday("person-1", 0, true, Day.State.OFF, 1),
+                sunday("person-0", 1, false, Day.State.OFF, 1),
+                sunday("person-1", 1, false, Day.State.WORK, 1))
+                .penalizesBy(5000);
+    }
+    @Test void coverageGeneralAndRolePathsIncludeZeroAttendance() {
+        var general = new Roster.Band(1, "Sector 1", null, 480, 540, 2, true);
+        var role = new Roster.Band(1, "Sector 1", "Repositor", 540, 600, 2, true);
+        verifier.verifyThat().given(general, role, day(1, Day.State.WORK, null))
+                .scores(score(0, -120, 0, -1, 0, 0, 0));
+        verifier.verifyThat().given(general, role, day(1, Day.State.OFF, null))
+                .scores(score(0, -240, 0, -2, -1, 0, 0));
     }
 
     @Test void residualBudgetIsRoundedDownToMilliseconds() {
@@ -148,6 +185,7 @@ class RosterConstraintsTest {
             assertEquals(original.sector(), solved.sector());
             assertEquals(original.role(), solved.role());
             assertEquals(original.isPinned(), solved.isPinned());
+            assertEquals(original.getSundayCap(), solved.getSundayCap());
             assertEquals(original.originalLocked(), solved.originalLocked());
             assertEquals(original.saved(), solved.saved());
             assertEquals(original.getWorkSegments(), solved.getWorkSegments());

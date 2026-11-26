@@ -23,17 +23,31 @@ public class Roster {
     }
     /** One disjoint sector/date/type slice; role and general minima are not additive. */
     public record Band(int day, String sector, int start, int end, int generalMinimum,
-                       Map<String, Integer> roleMinima, boolean estimated) {
+                       Map<String, Integer> roleMinima, boolean estimated, int minimum) {
         public Band {
             roleMinima = Map.copyOf(roleMinima);
+            if (start < 0 || end <= start || generalMinimum < 0
+                    || minimum != totalMinimum(generalMinimum, roleMinima)) {
+                throw new IllegalArgumentException("INVALID_BAND");
+            }
+        }
+        public Band(int day, String sector, int start, int end, int generalMinimum,
+                    Map<String, Integer> roleMinima, boolean estimated) {
+            this(day, sector, start, end, generalMinimum, roleMinima, estimated,
+                    totalMinimum(generalMinimum, roleMinima));
+        }
+        private static int totalMinimum(int general, Map<String, Integer> roles) {
+            int sum = 0;
+            for (int floor : roles.values()) {
+                if (floor < 0) throw new IllegalArgumentException("INVALID_ROLE_FLOOR");
+                sum = Math.addExact(sum, floor);
+            }
+            return Math.max(general, sum);
         }
         // Convenience constructor for isolated single-floor tests.
         public Band(int day, String sector, String role, int start, int end, int minimum, boolean estimated) {
             this(day, sector, start, end, role == null ? minimum : 0,
                     role == null ? Map.of() : Map.of(role, minimum), estimated);
-        }
-        public int minimum() {
-            return Math.max(generalMinimum, roleMinima.values().stream().mapToInt(Integer::intValue).sum());
         }
         public boolean matches(Day item) {
             return item.working() && item.covers(start, end);
