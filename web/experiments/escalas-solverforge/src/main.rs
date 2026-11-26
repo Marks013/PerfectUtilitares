@@ -196,6 +196,22 @@ mod integration {
     }
 
     #[test]
+    fn distinct_roles_are_distinct_weekend_cohorts() {
+        let mut data=input();
+        data["input"]["employees"][0]["role"]=json!("Encarregado");
+        let plan=wire::read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_ne!(plan.employees[0].cohort,plan.employees[1].cohort);
+        assert_eq!(plan.employees[1].cohort,plan.employees[2].cohort);
+    }
+
+    #[test]
+    fn rejects_clock_arithmetic_outside_civil_bounds() {
+        let mut data=input();
+        data["input"]["shifts"][0]["segments"][0]["start"]=json!(2147483647);
+        assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_RANGE")));
+    }
+
+    #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
         let reply=solve(&bytes,Instant::now(),true,BUDGET);

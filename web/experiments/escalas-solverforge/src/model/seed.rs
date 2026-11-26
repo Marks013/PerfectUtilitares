@@ -7,7 +7,7 @@ use super::patterns::{rest_pairs, worked};
 // Greedy seed: only legal personal patterns, no CP-SAT/Timefold output.
 // Precompute marginal coverage gains for each civil day. Do not mutate the
 // plan if the bounded constructor cannot finish.
-pub fn seed(plan: &mut Plan, deadline: Instant) -> bool {
+fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
     if plan.employees.iter().all(|p| p.pattern.is_some()) { return true; }
     let mut selected = Vec::with_capacity(plan.employees.len());
     let mut attendance = BTreeMap::<usize, [u64; 28]>::new();
@@ -56,5 +56,12 @@ pub fn seed(plan: &mut Plan, deadline: Instant) -> bool {
     }
     if Instant::now() >= deadline { return false; }
     for (person, index) in plan.employees.iter_mut().zip(selected) { person.pattern = Some(index); }
+    true
+}
+
+// Preserve a complete greedy roster if optional repair is interrupted.
+pub fn seed(plan: &mut Plan, deadline: Instant) -> bool {
+    if !greedy(plan,deadline) {return false;}
+    super::sunday_repair::repair(plan,deadline);
     true
 }

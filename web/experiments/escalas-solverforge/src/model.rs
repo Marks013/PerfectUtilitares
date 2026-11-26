@@ -4,6 +4,7 @@ mod coverage;
 mod incremental;
 mod patterns;
 mod seed;
+mod sunday_repair;
 
 pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
 pub use incremental::SectorAccumulator;

@@ -9,6 +9,7 @@ pub struct Employee {
     pub name_id: String,
     pub shift: String,
     pub sector: usize,
+    pub cohort: usize,
     pub sunday_cap: usize,
     pub locked_work: u32,
     pub locked_off: u32,
@@ -33,6 +34,7 @@ impl Employee {
     pub fn member(&self) -> Member {
         Member {
             id: self.id,
+            cohort: self.cohort,
             mask: self.mask(),
             locked_off: self.locked_off,
             saved_known: self.saved_known,

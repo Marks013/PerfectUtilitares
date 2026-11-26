@@ -94,14 +94,14 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(policy.get(k).is_none(), "POLICY_METADATA_UNSUPPORTED")?;
     }
     check(text(policy,"calendarMode")? == "MANUAL" && optional_text(policy,"normativeProfile","CUSTOM")? == "CUSTOM"
-        && number(policy,"weeklyLimit")? >= 42 && number(policy,"dailyLimitMinutes")? >= 504
+        && matches!(number(policy,"weeklyLimit")?,42|44) && range(number(policy,"dailyLimitMinutes")?,504,600)
         && number(policy,"maxConsecutiveWorkDays")? == 5 && policy.get("mealIntervalAgreement").is_none(), "POLICY")?;
     for k in ["closedDates","holidayDates","authorizedHolidayDates","paidHolidayDates"] { check(empty(policy,k), "HOLIDAY_UNSUPPORTED")?; }
     let closing = number(input,"storeClosingMinutes")?;
     let meal = number(policy,"minMealMinutes")?;
     let inter = number(policy,"minInterShiftMinutes")?;
     let weekly_rest = number(policy,"minWeeklyRestMinutes")?;
-    check(range(closing,1,1440) && range(meal,30,180) && range(inter,660,1440) && range(weekly_rest,2100,4320), "POLICY_LIMIT")?;
+    check(range(closing,300,1440) && range(meal,30,180) && range(inter,660,1440) && range(weekly_rest,2100,4320), "POLICY_LIMIT")?;
     let limit_blocks = boolean(policy,"limitContinuousWorkBlocks",false)?;
     let mut clocks = BTreeMap::new();
     for clock in array(input,"shifts")? {
@@ -112,6 +112,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         let a=number(&segments[0],"start")?; let b=number(&segments[0],"end")?;
         let c=number(&segments[1],"start")?; let d=number(&segments[1],"end")?;
         let e=number(&segments[2],"start")?; let f=number(&segments[2],"end")?;
+        check([a,b,c,d,e,f].iter().all(|&v|range(v,0,1440)), "CLOCK_RANGE")?;
         check(a >= 300 && a < b && b == c && c < d && d == e && e < f && f <= closing.min(1200)
             && b-a+f-e == 504 && d-c >= meal && d-c <=120 && 1440-(f-a) >= inter
             && 2880-(f-a) >= weekly_rest && (!limit_blocks || (b-a).max(f-e) <= 270), "CLOCK_GEOMETRY")?;
@@ -210,6 +211,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     let catalogue=Arc::new(catalog(days));
     let mut cache=HashMap::<(u32,u32,usize,u32),Arc<[usize]>>::new();
     let mut entities=Vec::with_capacity(people.len());
+    let mut cohorts=BTreeMap::new();
     for (i,p) in people.into_iter().enumerate() {
         let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
         let mut comparable=(1u32<<(days/7))-1;
@@ -242,7 +244,9 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(!allowed.is_empty(),"NO_PERSONAL_PATTERN")?;
         let initial_index=if seed_known==full_mask(days) {catalogue.binary_search(&seed_work).ok().filter(|j|allowed.binary_search(j).is_ok())} else {None};
         let pinned=allowed.len()==1;
-        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,sunday_cap:p.cap,locked_work:lock_work,locked_off:lock_off,
+        let next=cohorts.len();
+        let cohort=*cohorts.entry((p.sector,p.role.clone(),p.segments,p.cap)).or_insert(next);
+        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,sunday_cap:p.cap,locked_work:lock_work,locked_off:lock_off,
             saved_known,saved_work,lock_flags,comparable_weeks:comparable,facts:Arc::clone(&facts[p.sector]),
             catalog:Arc::clone(&catalogue),pattern:if pinned {Some(allowed[0])} else {initial_index},allowed,pinned});
     }

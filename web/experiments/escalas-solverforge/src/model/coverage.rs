@@ -37,6 +37,7 @@ pub struct Sector {
 #[derive(Clone, Debug)]
 pub struct Member {
     pub id: usize,
+    pub cohort: usize,
     pub mask: Option<u32>,
     pub locked_off: u32,
     pub saved_known: u32,
@@ -53,10 +54,8 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let facts = &first.facts;
     let mut attendance = [0u64; 28];
     let mut cost = [0i64; 9];
-    let mut low = [i64::MAX; 3];
-    let mut high = [0i64; 3];
-    let mut date_eligible = [[0i64; 4]; 3];
-    let mut date_worked = [[0i64; 4]; 3];
+    // Compare equivalent roles and admissible clocks, as CP-SAT does.
+    let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
         let Some(mask) = member.mask else { continue; };
         for day in 0..facts.days {
@@ -67,20 +66,20 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
         cost[5] += (pairs + imposed_pairs - 2).max(0) - (imposed_pairs - 2).max(0);
         cost[6] += pairs;
         cost[8] += ((member.saved_work ^ mask) & member.saved_known).count_ones() as i64;
-        let cap = member.sunday_cap;
+        let stats = cohorts.entry(member.cohort).or_default();
+        stats.3 += 1;
         let mut available = 0;
         let mut used = 0;
         for week in 0..facts.days / 7 {
             let day = week * 7;
             if worked(member.locked_off, day) { continue; }
             available += 1;
-            date_eligible[cap][week] += 1;
-            if worked(mask, day) { used += 1; date_worked[cap][week] += 1; }
+            stats.1[week] += 1;
+            if worked(mask, day) { used += 1; stats.2[week] += 1; }
         }
         if available > 0 {
             let rate = used * 10_000 / available;
-            low[cap] = low[cap].min(rate);
-            high[cap] = high[cap].max(rate);
+            stats.0.push(rate);
         }
     }
     for band in &facts.bands {
@@ -92,13 +91,14 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
         } else { cost[0] += gap * band.minutes; }
     }
     if facts.members >= 2 { cost[2] = attendance[..facts.days].iter().filter(|&&v| v == 0).count() as i64; }
-    for cap in 1..=2 {
-        if low[cap] != i64::MAX { cost[7] += high[cap] - low[cap]; }
+    for (rates, eligible, worked, members) in cohorts.values() {
+        if *members < 2 { continue; }
+        if let (Some(lo),Some(hi))=(rates.iter().min(),rates.iter().max()) { cost[7] += hi-lo; }
         let mut min = i64::MAX;
         let mut max = 0;
         for week in 0..facts.days/7 {
-            if date_eligible[cap][week] == 0 { continue; }
-            let rate = date_worked[cap][week] * 10_000 / date_eligible[cap][week];
+            if eligible[week] == 0 { continue; }
+            let rate = worked[week] * 10_000 / eligible[week];
             min = min.min(rate); max = max.max(rate);
         }
         if min != i64::MAX { cost[7] += max - min; }

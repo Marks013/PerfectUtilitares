@@ -10,6 +10,14 @@ use solverforge::stream::collector::Accumulator;
 struct DayCost { hard:i64, estimated:i64, peak:i64 }
 
 #[derive(Default)]
+struct CohortStats {
+    rates: BTreeMap<i64,usize>,
+    eligible: [i64;4],
+    sundays: [i64;4],
+    members: usize,
+}
+
+#[derive(Default)]
 pub struct SectorAccumulator {
     rows: BTreeMap<usize, Member>,
     facts: Option<Arc<Sector>>,
@@ -17,9 +25,7 @@ pub struct SectorAccumulator {
     attendance: [u64; 28],
     day_costs: [DayCost; 28],
     personal: Cost,
-    rates: [BTreeMap<i64,usize>; 3],
-    eligible: [[i64;4];3],
-    sundays: [[i64;4];3],
+    cohorts: BTreeMap<usize,CohortStats>,
 }
 
 impl SectorAccumulator {
@@ -53,19 +59,20 @@ impl SectorAccumulator {
         self.personal[5] += sign * ((pairs+imposed-2).max(0)-(imposed-2).max(0));
         self.personal[6] += sign * pairs;
         self.personal[8] += sign * ((member.saved_work ^ mask) & member.saved_known).count_ones() as i64;
-        let cap=member.sunday_cap;
+        let stats=self.cohorts.entry(member.cohort).or_default();
+        if insert {stats.members+=1;} else {stats.members-=1;}
         let mut available=0;
         let mut used=0;
         for week in 0..days/7 {
             let day=week*7;
             if worked(member.locked_off,day) {continue;}
             available+=1;
-            self.eligible[cap][week]+=sign;
-            if worked(mask,day) {used+=1; self.sundays[cap][week]+=sign;}
+            stats.eligible[week]+=sign;
+            if worked(mask,day) {used+=1; stats.sundays[week]+=sign;}
         }
         if available>0 {
             let rate=used*10_000/available;
-            let rates=&mut self.rates[cap];
+            let rates=&mut stats.rates;
             if insert {*rates.entry(rate).or_default()+=1;}
             else {
                 let count=rates.get_mut(&rate).expect("missing Sunday rate");
@@ -86,16 +93,17 @@ impl SectorAccumulator {
             cost[4]=cost[4].max(d.peak);
             if facts.members>=2 && self.attendance[day]==0 {cost[2]+=1;}
         }
-        for cap in 1..=2 {
-            if let (Some((&lo,_)),Some((&hi,_)))=(self.rates[cap].first_key_value(),self.rates[cap].last_key_value()) {
+        for stats in self.cohorts.values() {
+            if stats.members<2 {continue;}
+            if let (Some((&lo,_)),Some((&hi,_)))=(stats.rates.first_key_value(),stats.rates.last_key_value()) {
                 cost[7]+=hi-lo;
             }
             let mut lo=i64::MAX;
             let mut hi=0;
             for week in 0..facts.days/7 {
-                let n=self.eligible[cap][week];
+                let n=stats.eligible[week];
                 if n==0 {continue;}
-                let rate=self.sundays[cap][week]*10_000/n;
+                let rate=stats.sundays[week]*10_000/n;
                 lo=lo.min(rate);
                 hi=hi.max(rate);
             }
@@ -149,7 +157,7 @@ mod tests {
             let mut rows=BTreeMap::new();
             check(&acc,&rows);
             for id in 0..5 {
-                let m=Member{id,mask:if id==4 {None} else {Some(all[id*3])},locked_off:if id%2==0 {1} else {0},
+                let m=Member{id,cohort:if id<3 {0} else {1},mask:if id==4 {None} else {Some(all[id*3])},locked_off:if id%2==0 {1} else {0},
                     saved_known:127,saved_work:all[id],sunday_cap:id%2+1,facts:Arc::clone(&facts)};
                 acc.accumulate(m.clone());rows.insert(id,m);check(&acc,&rows);
             }
