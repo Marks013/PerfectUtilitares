@@ -26,7 +26,7 @@ type SpikeTelemetry = { mappingSeconds: number; entities: number; initialized: n
   firstFeasibleSeconds: number | null; partialModel: true; beforeSeed: number;
   seedMode: "DEFAULT" | "PATTERN"; seedOutcome: "NOT_REQUESTED" | "APPLIED" | "COMPLETE" | "TIME_LIMIT" | "NO_PATTERN" | "UNSUPPORTED"; seedSeconds: number;
   guardedSeed: boolean; seedGuardViolation: number | null; scoreCalculations: number; moveEvaluations: number; solvingSeconds: number;
-  firstFeasibleSource: "NONE" | "DELIVERED_EVENT" | "FINAL_FALLBACK" };
+  seedOnly: boolean; firstFeasibleSource: "NONE" | "DELIVERED_EVENT" | "FINAL_FALLBACK" | "VALIDATED_SEED" };
 type CgroupTelemetry = { version: 2; scope: "container-before-response"; cpuUsageUsec: number;
   memoryPeakBytes: number; memoryLimitBytes: number; cpuQuotaUsec: number; cpuPeriodUsec: number; pidsLimit: number };
 export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry; cgroup?: CgroupTelemetry | null };
@@ -83,12 +83,19 @@ export function verifyReply(value: unknown): WireReply {
         : t.beforeSeed !== t.initialized || (seedOutcome === "COMPLETE" && t.beforeSeed !== t.entities)))
       throw new Error("CROSS_ENGINE_SEED_TELEMETRY_INVALID");
     const safeInteger = (v: unknown): v is number => nonnegative(v) && Number.isSafeInteger(v);
+    const seedOnly = t.seedOnly === true;
+    if (t.seedOnly !== undefined && typeof t.seedOnly !== "boolean") throw new Error("CROSS_ENGINE_SEED_ONLY_TELEMETRY");
+    if (seedOnly && (t.seedMode !== "PATTERN" || t.moveEvaluations !== 0 || t.solvingSeconds !== 0
+      || (httpStatus === 200 && asRecord(record?.body)?.status === "FEASIBLE"
+          && (t.scoreCalculations !== 1 || t.firstFeasibleSource !== "VALIDATED_SEED" || !t.guardedSeed))))
+      throw new Error("CROSS_ENGINE_SEED_ONLY_TELEMETRY");
+    if (!seedOnly && t.firstFeasibleSource === "VALIDATED_SEED") throw new Error("CROSS_ENGINE_SEED_ONLY_TELEMETRY");
     if (typeof t.guardedSeed !== "boolean" || (t.guardedSeed && seedOutcome !== "APPLIED")
       || (t.seedGuardViolation !== null && !safeInteger(t.seedGuardViolation))
       || (!t.guardedSeed && t.seedGuardViolation !== null)
       || (httpStatus === 200 && asRecord(record?.body)?.status === "FEASIBLE" && t.guardedSeed && t.seedGuardViolation !== 0)
       || !safeInteger(t.scoreCalculations) || !safeInteger(t.moveEvaluations) || !nonnegative(t.solvingSeconds)
-      || (t.firstFeasibleSource !== "NONE" && t.firstFeasibleSource !== "DELIVERED_EVENT" && t.firstFeasibleSource !== "FINAL_FALLBACK")
+      || (t.firstFeasibleSource !== "NONE" && t.firstFeasibleSource !== "DELIVERED_EVENT" && t.firstFeasibleSource !== "FINAL_FALLBACK" && t.firstFeasibleSource !== "VALIDATED_SEED")
       || (t.firstFeasibleSeconds === null) !== (t.firstFeasibleSource === "NONE"))
       throw new Error("CROSS_ENGINE_SEARCH_TELEMETRY_INVALID");
     spike = { mappingSeconds: t.mappingSeconds, entities: t.entities, initialized: t.initialized,
@@ -96,7 +103,7 @@ export function verifyReply(value: unknown): WireReply {
       beforeSeed: t.beforeSeed, seedMode: t.seedMode, seedOutcome, seedSeconds: t.seedSeconds,
       guardedSeed: t.guardedSeed, seedGuardViolation: t.seedGuardViolation,
       scoreCalculations: t.scoreCalculations, moveEvaluations: t.moveEvaluations,
-      solvingSeconds: t.solvingSeconds, firstFeasibleSource: t.firstFeasibleSource };
+      solvingSeconds: t.solvingSeconds, seedOnly, firstFeasibleSource: t.firstFeasibleSource };
   }
   let cgroup: CgroupTelemetry | null = null;
   if (record?.cgroup !== undefined && record.cgroup !== null) {

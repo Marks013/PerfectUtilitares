@@ -44,6 +44,9 @@ jobs:
           printf '%s  %s\n' 'ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3' "$archive" | sha256sum -c -
           tar -xzf "$archive" -C "$RUNNER_TEMP/trivy-bin" trivy
           scanner="$RUNNER_TEMP/trivy-bin/trivy"
+          export TRIVY_CACHE_DIR="$RUNNER_TEMP/timefold-trivy-cache"
+          "$scanner" image --download-db-only --timeout 5m
+          cp "$TRIVY_CACHE_DIR/db/metadata.json" "$audit/trivy-db-metadata.json"
           "$scanner" --version > "$audit/scanner-version.txt"
           for target in runtime build; do
             image=$(docker image inspect "e2-audit-$target:ci" --format '{{.Id}}')
@@ -52,11 +55,13 @@ jobs:
               --entrypoint java "$image" -version > "$audit/$target-java-version.txt" 2>&1
             docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1001:1001 \
               --entrypoint /bin/cat "$image" /opt/java/openjdk/release > "$audit/$target-java-release.txt"
+            docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+              --user 0:0 --entrypoint /bin/sh "$image" /usr/local/bin/verify-jdk "$target" > "$audit/$target-jdk-inventory.tsv"
             if [ "$target" = build ]; then
               docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
                 --user 1001:1001 --env MAVEN_CONFIG=/tmp --entrypoint mvn "$image" --version > "$audit/build-maven-version.txt" 2>&1
             fi
-            "$scanner" image --scanners vuln --pkg-types os,library --list-all-pkgs --format json --exit-code 0 \
+            "$scanner" image --scanners vuln --pkg-types os,library --list-all-pkgs --skip-db-update --format json --exit-code 0 \
               --timeout 8m --output "$audit/$target-trivy.json" "$image"
           done
           git rev-parse HEAD > "$audit/revision.txt"

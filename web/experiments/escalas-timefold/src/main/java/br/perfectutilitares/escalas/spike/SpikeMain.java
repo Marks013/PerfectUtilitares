@@ -1,6 +1,9 @@
 package br.perfectutilitares.escalas.spike;
 
 import ai.timefold.solver.core.api.solver.SolverManager;
+import ai.timefold.solver.core.api.solver.SolverFactory;
+import ai.timefold.solver.core.api.solver.SolutionManager;
+import ai.timefold.solver.core.api.score.BendableScore;
 import ai.timefold.solver.core.config.solver.SolverManagerConfig;
 import ai.timefold.solver.core.config.solver.SolverConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,25 +30,30 @@ public final class SpikeMain {
 
     public static void main(String[] args) throws Exception {
         long start = System.nanoTime();
-        boolean pattern = false, warm = false;
+        boolean pattern = false, warm = false, seedOnly = false;
         for (String arg : args) {
             if (arg.equals("--pattern-seed") && !pattern) pattern = true;
             else if (arg.equals("--warm-batch") && !warm) warm = true;
+            else if (arg.equals("--seed-only") && !seedOnly) seedOnly = true;
             else {
                 System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
                 return;
             }
+        }
+        if (seedOnly && (!pattern || warm)) {
+            System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
+            return;
         }
         // Warm mode repeats exactly the same bounded synthetic envelope in
         // one JVM, with fresh domain and solver manager on every invocation.
         byte[] bytes = System.in.readNBytes(LIMIT + 1);
         int repeats = warm ? 3 : 1;
         for (int i = 0; i < repeats; i++) {
-            System.out.println(solveOne(bytes, pattern, i == 0 ? start : System.nanoTime()));
+            System.out.println(solveOne(bytes, pattern, seedOnly, i == 0 ? start : System.nanoTime()));
         }
     }
 
-    private static String solveOne(byte[] bytes, boolean patternSeed, long start) throws Exception {
+    private static String solveOne(byte[] bytes, boolean patternSeed, boolean seedOnly, long start) throws Exception {
         ObjectNode reply = JSON.createObjectNode();
         ObjectNode body = reply.putObject("body");
         reply.putNull("maxRssKiB"); // JVM heap is not RSS; cgroup counters are reported separately.
@@ -80,7 +88,21 @@ public final class SpikeMain {
                 long calculations = 0, moves = 0;
                 double solvingSeconds = 0;
 
-                if (residual >= 1_000_000L) {
+                if (seedOnly) {
+                    // Diagnostic control only. Validate the identical seed with
+                    // the real incremental scoring model, but run no local search.
+                    if (guarded && residual >= 1_000_000L) {
+                        stage = "FACTORY";
+                        var factory = SolverFactory.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L)));
+                        var validator = SolutionManager.<Roster, BendableScore>create(factory);
+                        var score = validator.update(input);
+                        if (score != null && score.isFeasible() && score.softScore(0) == 0L) {
+                            result = input;
+                            calculations = 1;
+                            firstFeasible.set(System.nanoTime() - start);
+                        }
+                    }
+                } else if (residual >= 1_000_000L) {
                     stage = "FACTORY";
                     try (var manager = SolverManager.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L)),
                             new SolverManagerConfig().withParallelSolverCount("1"))) {
@@ -124,7 +146,7 @@ public final class SpikeMain {
                 // Snapshot once after manager closure. An asynchronous consumer
                 // may omit intermediate events, so distinguish the final fallback.
                 long firstTime = firstFeasible.get();
-                String firstSource = firstTime >= 0 ? "DELIVERED_EVENT" : "NONE";
+                String firstSource = firstTime >= 0 ? (seedOnly ? "VALIDATED_SEED" : "DELIVERED_EVENT") : "NONE";
                 boolean completeFeasible = result != null && result.score() != null && result.score().isFeasible()
                         && result.days().size() == cells && result.days().stream().allMatch(day -> day.state() != null);
                 if (completeFeasible && firstTime < 0) {
@@ -136,7 +158,8 @@ public final class SpikeMain {
                 boolean valid = completeFeasible && (!guarded || guardViolation != null && guardViolation == 0L)
                         && System.nanoTime() - start <= BUDGET_NS;
                 body.put("status", valid ? "FEASIBLE" : "UNKNOWN");
-                body.put("message", valid ? "Synthetic E2 partial candidate" : "Synthetic E2 no feasible candidate within budget");
+                body.put("message", valid ? (seedOnly ? "Synthetic E2 constructor-only diagnostic" : "Synthetic E2 partial candidate")
+                        : "Synthetic E2 no feasible candidate within budget");
                 var assignments = body.putArray("assignments");
                 if (valid) for (Day day : result.days()) {
                     ObjectNode row = assignments.addObject();
@@ -155,6 +178,7 @@ public final class SpikeMain {
                 telemetry.put("seedOutcome", seedOutcome);
                 telemetry.put("seedSeconds", seedSeconds);
                 telemetry.put("guardedSeed", guarded);
+                telemetry.put("seedOnly", seedOnly);
                 if (guardViolation == null) telemetry.putNull("seedGuardViolation");
                 else telemetry.put("seedGuardViolation", guardViolation);
                 telemetry.put("scoreCalculations", calculations);

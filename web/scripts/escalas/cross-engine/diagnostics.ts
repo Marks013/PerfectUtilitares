@@ -60,14 +60,15 @@ async function main() {
     { name: "E2_3_DEFAULT", image: v74, engine: "timefold" as const, pattern: false, historical: true, revision: controls[2] },
     { name: "E2_3_PATTERN", image: v74, engine: "timefold" as const, pattern: true, historical: true, revision: controls[2] },
     { name: "CONSOLIDATED_PATTERN", image: candidate, engine: "timefold" as const, pattern: true, historical: false, revision: snapshot.revision },
+    { name: "CONSTRUCTOR_ONLY", image: candidate, engine: "timefold" as const, pattern: true, historical: false, revision: snapshot.revision },
   ].map(variant => {
     const identity = inspectImage(variant.image, variant.engine);
     if (identity.revision !== variant.revision || identity.architecture !== "arm64") throw new Error("DIAGNOSTIC_IMAGE_IDENTITY");
-    return { ...variant, identity, adapter: dockerAdapter(variant.image, variant.engine, variant.pattern, variant.historical) };
+    return { ...variant, identity, adapter: dockerAdapter(variant.image, variant.engine, variant.pattern, variant.historical, variant.name === "CONSTRUCTOR_ONLY") };
   });
   const measured = new Map<string, Trial[]>();
   const comparisons = new Map<string, ReturnType<typeof comparison>[]>();
-  // Six cyclic orders give each variant each position exactly once; one
+  // Cyclic orders give each variant each position exactly once; one
   // container at a time, same exact bytes and hardware. No warm/cold mixing.
   for (let repetition = 0; repetition < variants.length; repetition++) {
     const order = [...variants.slice(repetition), ...variants.slice(0, repetition)];
@@ -75,6 +76,8 @@ async function main() {
     for (const [position, variant] of order.entries()) {
       const trial = await runTrial(scenario, frozen, variant.adapter);
       if (trial.inputHash !== metadata.inputHash) throw new Error("DIAGNOSTIC_INPUT_DRIFT");
+      if (variant.name === "CONSTRUCTOR_ONLY" && trial.spike?.seedOnly !== true) throw new Error("DIAGNOSTIC_SEED_ONLY_IDENTITY");
+      if (variant.name === "CONSOLIDATED_PATTERN" && trial.spike?.seedOnly !== false) throw new Error("DIAGNOSTIC_SEED_ONLY_IDENTITY");
       round.set(variant.name, trial);
       const list = measured.get(variant.name) ?? [];
       list.push(trial); measured.set(variant.name, list);
@@ -108,7 +111,23 @@ async function main() {
       coverageRegressions: paired.filter(row => row.regressed === true).length,
       productRetentions: paired.filter(row => row.productRetained === true).length,
       decision: "EXPLORATORY_NOT_CERTIFIED" }));
-    if (rows.length !== 6 || good.length !== 6) process.exitCode = 1;
+    if (rows.length !== variants.length || good.length !== variants.length) process.exitCode = 1;
+  }
+
+  const seedTrials = measured.get("CONSTRUCTOR_ONLY") ?? [];
+  const searchedTrials = measured.get("CONSOLIDATED_PATTERN") ?? [];
+  if (seedTrials.length !== variants.length || searchedTrials.length !== variants.length)
+    throw new Error("DIAGNOSTIC_SEARCH_ABLATION_COUNT");
+  for (const [repetition, seed] of seedTrials.entries()) {
+    const searched = searchedTrials[repetition];
+    const quality = comparison(seed, searched);
+    console.log(JSON.stringify({ kind: "search-contribution", ...metadata, repetition,
+      constructorValid: valid(seed), searchedValid: valid(searched),
+      constructorShortage: seed.finalAssessment?.metrics?.normalizedEstimatedShortage ?? null,
+      searchedShortage: searched.finalAssessment?.metrics?.normalizedEstimatedShortage ?? null,
+      constructorProductSeconds: seed.productSeconds, searchedProductSeconds: searched.productSeconds,
+      searchedMoves: searched.spike?.moveEvaluations ?? null,
+      ...quality, decision: "EXPLORATORY_ATTRIBUTION_ONLY" }));
   }
 
   // Repeat the identical payload three times in the same JVM, with fresh

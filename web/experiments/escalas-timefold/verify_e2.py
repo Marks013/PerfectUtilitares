@@ -235,6 +235,7 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
                         check(t.get("seedOutcome") == "APPLIED" and t["beforeSeed"] < t["entities"]
                               and t["initialized"] == t["entities"] and t["seedSeconds"] <= 1.35,
                               "SEED_NOT_APPLIED")
+                    check(t.get("seedOnly", False) is False, "CONSTRUCTOR_ONLY_NOT_A_SOLVER_TRIAL")
                     check(type(t.get("guardedSeed")) is bool and (not t["guardedSeed"] or t["seedOutcome"] == "APPLIED")
                           and integer(t.get("scoreCalculations")) and integer(t.get("moveEvaluations"))
                           and numeric(t.get("solvingSeconds")) and t["solvingSeconds"] <= row["processSeconds"],

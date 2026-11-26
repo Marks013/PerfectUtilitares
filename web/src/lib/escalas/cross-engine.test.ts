@@ -45,6 +45,17 @@ describe("cross-engine synthetic fixtures and fail-closed comparator", () => {
     expect(() => verifyReply({ ...reply, cgroup: { ...cgroup, cpuUsageUsec: -1 } })).toThrow();
     expect(() => verifyReply({ ...reply, cgroup: { ...cgroup, memoryLimitBytes: 2147483648 } })).toThrow();
   });
+  it("keeps constructor-only evidence separate from search telemetry", () => {
+    const spike = { mappingSeconds: .1, entities: 70, initialized: 70, bands: 14, windows: 80,
+      firstFeasibleSeconds: .4, partialModel: true, beforeSeed: 10, seedMode: "PATTERN",
+      seedOutcome: "APPLIED", seedSeconds: .2, guardedSeed: true, seedGuardViolation: 0,
+      scoreCalculations: 1, moveEvaluations: 0, solvingSeconds: 0, seedOnly: true, firstFeasibleSource: "VALIDATED_SEED" };
+    const reply = { httpStatus: 200, body: { status: "FEASIBLE" }, maxRssKiB: null, spike };
+    expect(verifyReply(reply).spike?.seedOnly).toBe(true);
+    expect(() => verifyReply({ ...reply, spike: { ...spike, moveEvaluations: 1 } })).toThrow("CROSS_ENGINE_SEED_ONLY_TELEMETRY");
+    expect(() => verifyReply({ ...reply, spike: { ...spike, seedOnly: false } })).toThrow("CROSS_ENGINE_SEED_ONLY_TELEMETRY");
+    expect(() => verifyReply({ ...reply, spike: { ...spike, guardedSeed: false } })).toThrow();
+  });
   it("captures the actual client envelope, preserves globals, and records unsuccessful trials", async () => {
     const scenario = makeScenario("team-10-week");
     const oldFetch = globalThis.fetch;

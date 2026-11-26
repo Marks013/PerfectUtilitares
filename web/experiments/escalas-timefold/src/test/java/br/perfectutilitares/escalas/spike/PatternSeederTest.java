@@ -73,6 +73,23 @@ class PatternSeederTest {
         assertEquals(Day.State.OFF, two.days().getFirst().state());
     }
 
+    @Test void constructorCanBeValidatedByTheRealScoreWithoutLocalSearch() {
+        Roster roster = roster();
+        assertEquals(PatternSeeder.Outcome.APPLIED, PatternSeeder.seed(roster, Long.MAX_VALUE));
+        assertTrue(SeedGuard.install(roster));
+        var before = roster.days().stream().map(Day::state).toList();
+        var factory = ai.timefold.solver.core.api.solver.SolverFactory.<Roster>create(
+                SpikeMain.config(java.time.Duration.ofSeconds(1)));
+        var validator = ai.timefold.solver.core.api.solver.SolutionManager
+                .<Roster, ai.timefold.solver.core.api.score.BendableScore>create(factory);
+        var score = validator.update(roster);
+        assertNotNull(score);
+        assertEquals(score, roster.score());
+        assertTrue(score.isFeasible());
+        assertEquals(0L, score.softScore(0));
+        assertEquals(before, roster.days().stream().map(Day::state).toList());
+    }
+
     @Test void expiredBudgetLeavesAllCellsUntouched() {
         Roster roster = roster();
         var before = roster.days().stream().map(Day::state).toList();

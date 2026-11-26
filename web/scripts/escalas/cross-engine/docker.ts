@@ -91,7 +91,8 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false, seedOnly = false) {
+  if (seedOnly && (engine !== "timefold" || validateOnly || warm || !patternSeed)) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (warm && (engine !== "timefold" || validateOnly || !patternSeed)) throw new Error("CROSS_ENGINE_WARM_MODE");
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
   const name = "escalas-cross-engine-" + randomUUID();
@@ -114,6 +115,7 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
   } else {
     args.push(image);
     if (patternSeed) args.push("--pattern-seed");
+    if (seedOnly) args.push("--seed-only");
   }
   try {
     return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: (warm ? 27 : 9) * 1024 * 1024 });
@@ -134,14 +136,15 @@ export function validateBaselineEnvelope(image: string, body: string) {
   }
 }
 
-export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false): Adapter {
+export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false, seedOnly = false): Adapter {
+  if (seedOnly && (historical || !patternSeed || engine !== "timefold")) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (patternSeed && engine !== "timefold") throw new Error("CROSS_ENGINE_SEED_MODE");
   const identity = inspectImage(image, engine);
   if (historical && (engine !== "timefold" || !historicalTimefold.has(identity.revision)
       || (patternSeed && identity.revision !== "335efcc09f1410266f70c6e5fb5be03a1294e33f")))
     throw new Error("CROSS_ENGINE_HISTORICAL_REVISION");
   return body => {
-    const child = runIsolated(image, engine, body, false, patternSeed);
+    const child = runIsolated(image, engine, body, false, patternSeed, false, seedOnly);
     let reply: WireReply;
     // GNU timeout 124 is a known Timefold supervisor deadline. 137 is ambiguous
     // (OOM or forced termination); do not misreport it as a normal timeout.

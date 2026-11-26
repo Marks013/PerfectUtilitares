@@ -169,6 +169,12 @@ class EvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "RAW_FINAL_COVERAGE_DRIFT"):
             self.validate(data)
 
+    def test_constructor_only_cannot_count_as_a_normal_solver_trial(self):
+        data = rows()
+        data[1]["spike"]["seedOnly"] = True
+        with self.assertRaisesRegex(ValueError, "CONSTRUCTOR_ONLY_NOT_A_SOLVER_TRIAL"):
+            self.validate(data)
+
     def test_incomplete_result(self):
         data = rows()
         data[1]["finalAssessment"]["complete"] = False
