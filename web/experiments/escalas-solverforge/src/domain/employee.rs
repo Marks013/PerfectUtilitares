@@ -10,6 +10,8 @@ pub struct Employee {
     pub shift: String,
     pub sector: usize,
     pub cohort: usize,
+    /// Product rest/weekday group: sector + effective hours + Sunday cap.
+    pub rest_group: usize,
     pub sunday_cap: usize,
     pub rules: PersonalRules,
     pub locked_work: u32,

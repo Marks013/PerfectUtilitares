@@ -268,6 +268,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     let mut cache=HashMap::<(u32,u32,usize,u32,PersonalRules),Arc<[usize]>>::new();
     let mut entities=Vec::with_capacity(people.len());
     let mut cohorts=BTreeMap::new();
+    let mut rest_groups=BTreeMap::new();
     for (i,p) in people.into_iter().enumerate() {
         let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
         let mut comparable=if p.fixed.count_ones()==2||p.rules.consecutive{0}else{(1u32<<(days/7))-1};
@@ -305,7 +306,10 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         let pinned=allowed.len()==1;
         let next=cohorts.len();
         let cohort=*cohorts.entry((p.sector,p.role.clone(),p.segments,p.cap)).or_insert(next);
-        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,sunday_cap:p.cap,rules:p.rules,locked_work:lock_work,locked_off:lock_off,
+        let next_group=rest_groups.len();
+        let weekly_minutes=p.segments.iter().map(|(a,b)|5*(b-a)).sum::<i32>();
+        let rest_group=*rest_groups.entry((p.sector,p.cap,weekly_minutes)).or_insert(next_group);
+        entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,rest_group,sunday_cap:p.cap,rules:p.rules,locked_work:lock_work,locked_off:lock_off,
             saved_known,saved_work,lock_flags,comparable_weeks:comparable,facts:Arc::clone(&facts[p.sector]),
             catalog:Arc::clone(&catalogue),pattern:if pinned {Some(allowed[0])} else {initial_index},allowed,pinned});
     }

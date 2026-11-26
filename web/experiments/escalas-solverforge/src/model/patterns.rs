@@ -27,11 +27,22 @@ impl PersonalRules {
         }
         penalty
     }
+    pub fn rest_quality(self,mask:u32,imposed:u32,days:usize)->[i64;4]{
+        if !self.adjustable(){return [0;4];}
+        let off=!mask&full_mask(days);
+        let pair_starts=(off&(off>>1))&!(imposed&(imposed>>1));
+        let pairs=pair_starts.count_ones() as i64;
+        let fixed=(off&(off>>1)&imposed&(imposed>>1)).count_ones() as i64;
+        let mut weeks=0u32;
+        for i in 0..days-1{
+            if worked(pair_starts,i){weeks|=1<<((i+1)/7);}
+        }
+        [(pairs+fixed-2).max(0)-(fixed-2).max(0),pairs,pairs*(pairs-1)/2,
+            (weeks&(weeks>>1)).count_ones() as i64]
+    }
     pub fn spacing(self,mask:u32,imposed:u32,days:usize)->(i64,i64){
-        if !self.adjustable(){return (0,0);}
-        let pairs=rest_pairs(mask,imposed,days);
-        let fixed=(imposed&(imposed>>1)).count_ones() as i64;
-        ((pairs+fixed-2).max(0)-(fixed-2).max(0),pairs)
+        let q=self.rest_quality(mask,imposed,days);
+        (q[0],q[1])
     }
 }
 
@@ -90,11 +101,6 @@ pub fn catalog(days: usize) -> Vec<u32> {
     result
 }
 
-pub fn rest_pairs(mask: u32, imposed: u32, days: usize) -> i64 {
-    let off = !mask & full_mask(days);
-    ((off & (off >> 1)) & !(imposed & (imposed >> 1))).count_ones() as i64
-}
-
 // Enumerate only prefixes compatible with the locks, streaks and Sunday
 // caps. Keep the original catalogue index and order; the complete legal()
 // predicate remains the last word. This is bounded to the current E2 horizon.
@@ -121,6 +127,16 @@ mod domain_tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    #[test]
+    fn rest_distribution_counts_imposed_pairs_and_weekly_concentration(){
+        let rules=PersonalRules::default();
+        let mask=full_mask(28)^((3<<1)|(3<<8)|(3<<15));
+        assert_eq!(rules.rest_quality(mask,0,28),[1,3,3,2]);
+        assert_eq!(rules.rest_quality(mask,3<<1,28),[1,2,1,1]);
+        assert_eq!(rules.rest_quality(mask,(3<<1)|(3<<8),28),[1,1,0,0]);
+        assert_eq!(rules.rest_quality(mask,(3<<1)|(3<<8)|(3<<15),28),[0,0,0,0]);
+        assert_eq!(PersonalRules{prefer_consecutive:true,..rules}.rest_quality(mask,0,28),[0;4]);
+    }
     #[test]
     fn individual_preferences_and_spacing_are_independent(){
         let rules=PersonalRules{prefer_consecutive:true,preferred:1<<2,..Default::default()};

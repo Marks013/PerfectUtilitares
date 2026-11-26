@@ -30,7 +30,7 @@ fn define_constraints() -> impl ConstraintSet<Plan, EscalasScore> {
     (
         g.clone().for_each(Plan::employees())
             .filter(|person: &Employee| person.pattern.is_none())
-            .penalize(fixed_weight(EscalasScore::of([1], [0; 10])))
+            .penalize(fixed_weight(EscalasScore::of([1], [0; 12])))
             .named("Required personal pattern"),
         g.for_each(Plan::employees())
             .group_by(|person: &Employee| person.sector, Members)

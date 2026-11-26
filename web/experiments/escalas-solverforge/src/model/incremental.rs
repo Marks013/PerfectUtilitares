@@ -55,12 +55,12 @@ impl SectorAccumulator {
             else { self.attendance[day] &= !bit; }
             self.refresh(day);
         }
-        let (excess,pairs)=member.rules.spacing(mask,member.locked_off,days);
-        self.personal[5]+=sign*excess;self.personal[6]+=sign*pairs;
+        let rest=member.rules.rest_quality(mask,member.locked_off,days);
+        for (i,value) in rest.into_iter().enumerate(){self.personal[5+i]+=sign*value;}
         let changes=((member.saved_work^mask)&member.saved_known).count_ones() as i64;
-        self.personal[8]+=sign*i64::from(changes>0);
-        self.personal[9]+=sign*changes;
-        self.personal[10]+=sign*member.rules.preferences(mask,days);
+        self.personal[10]+=sign*i64::from(changes>0);
+        self.personal[11]+=sign*changes;
+        self.personal[12]+=sign*member.rules.preferences(mask,days);
         let stats=self.cohorts.entry(member.cohort).or_default();
         if insert {stats.members+=1;} else {stats.members-=1;}
         let mut available=0;
@@ -85,7 +85,7 @@ impl SectorAccumulator {
     }
 
     fn cost(&self)->Cost {
-        let Some(facts)=&self.facts else{return [0;11];};
+        let Some(facts)=&self.facts else{return [0;13];};
         let mut cost=self.personal;
         for day in 0..facts.days {
             let d=self.day_costs[day];
@@ -98,7 +98,7 @@ impl SectorAccumulator {
         for stats in self.cohorts.values() {
             if stats.members<2 {continue;}
             if let (Some((&lo,_)),Some((&hi,_)))=(stats.rates.first_key_value(),stats.rates.last_key_value()) {
-                cost[7]+=hi-lo;
+                cost[9]+=hi-lo;
             }
             let mut lo=i64::MAX;
             let mut hi=0;
@@ -109,7 +109,7 @@ impl SectorAccumulator {
                 lo=lo.min(rate);
                 hi=hi.max(rate);
             }
-            if lo!=i64::MAX {cost[7]+=hi-lo;}
+            if lo!=i64::MAX {cost[9]+=hi-lo;}
         }
         cost
     }

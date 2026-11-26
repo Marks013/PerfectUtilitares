@@ -1,4 +1,4 @@
-//! Nine-level score and independent full recomputation.
+//! Thirteen-level score and independent full recomputation.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use crate::domain::Plan;
@@ -55,14 +55,14 @@ pub struct Member {
     pub facts: Arc<Sector>,
 }
 
-pub type Cost = [i64; 11];
+pub type Cost = [i64; 13];
 
 pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let mut rows = rows.into_iter();
-    let Some(first) = rows.next() else { return [0; 11]; };
+    let Some(first) = rows.next() else { return [0; 13]; };
     let facts = &first.facts;
     let mut attendance = [Presence::EMPTY; 28];
-    let mut cost = [0i64; 11];
+    let mut cost = [0i64; 13];
     // Compare equivalent roles and admissible clocks, as CP-SAT does.
     let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
@@ -70,12 +70,12 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
         for day in 0..facts.days {
             if worked(mask, day) { attendance[day] |= Presence::one(member.id); }
         }
-        let (excess,pairs)=member.rules.spacing(mask,member.locked_off,facts.days);
-        cost[5]+=excess;cost[6]+=pairs;
+        let rest=member.rules.rest_quality(mask,member.locked_off,facts.days);
+        for i in 0..4{cost[5+i]+=rest[i];}
         let changes=((member.saved_work^mask)&member.saved_known).count_ones() as i64;
-        cost[8]+=i64::from(changes>0);
-        cost[9]+=changes;
-        cost[10]+=member.rules.preferences(mask,facts.days);
+        cost[10]+=i64::from(changes>0);
+        cost[11]+=changes;
+        cost[12]+=member.rules.preferences(mask,facts.days);
         let stats = cohorts.entry(member.cohort).or_default();
         stats.3 += 1;
         let mut available = 0;
@@ -103,7 +103,7 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     if facts.members >= 2 { cost[2] = attendance[..facts.days].iter().filter(|v| v.is_empty()).count() as i64; }
     for (rates, eligible, worked, members) in cohorts.values() {
         if *members < 2 { continue; }
-        if let (Some(lo),Some(hi))=(rates.iter().min(),rates.iter().max()) { cost[7] += hi-lo; }
+        if let (Some(lo),Some(hi))=(rates.iter().min(),rates.iter().max()) { cost[9] += hi-lo; }
         let mut min = i64::MAX;
         let mut max = 0;
         for week in 0..facts.days/7 {
@@ -111,21 +111,21 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
             let rate = worked[week] * 10_000 / eligible[week];
             min = min.min(rate); max = max.max(rate);
         }
-        if min != i64::MAX { cost[7] += max - min; }
+        if min != i64::MAX { cost[9] += max - min; }
     }
     cost
 }
 
 pub fn evaluate(plan: &Plan) -> Cost {
     let mut groups = BTreeMap::<usize, Vec<Member>>::new();
-    let mut total = [0i64; 11];
+    let mut total = [0i64; 13];
     for person in &plan.employees {
         if person.pattern.is_none() { total[0] += 1; }
         groups.entry(person.sector).or_default().push(person.member());
     }
     for group in groups.values() {
         let cost = group_cost(group.iter());
-        for i in 0..11 { total[i] += cost[i]; }
+        for i in 0..13 { total[i] += cost[i]; }
     }
     total
 }
