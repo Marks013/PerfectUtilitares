@@ -1,6 +1,7 @@
 //! Bounded, deterministic constructor; does not import another engine's output.
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration,Instant};
+mod exact;
 use crate::domain::Plan;
 use super::patterns::worked;
 use super::presence::Presence;
@@ -64,6 +65,8 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
 // Preserve a complete greedy roster if optional repair is interrupted.
 pub fn seed(plan: &mut Plan, deadline: Instant) -> (bool,super::sunday_repair::RepairStats) {
     if !greedy(plan,deadline) {return (false,super::sunday_repair::RepairStats{deadline_reached:Instant::now()>=deadline,..Default::default()});}
+    // Constructor work stays inside the original budget and attribution.
+    exact::improve(plan,deadline.min(Instant::now()+Duration::from_millis(450)));
     let mut stats=super::sunday_repair::repair(plan,deadline);
     stats.rest=super::rest_repair::polish_rests(plan,deadline);
     stats.peak=super::peak_repair::polish_peaks(plan,deadline);

@@ -5,6 +5,8 @@ use std::time::Instant;
 use crate::model::PersonalRules;
 use super::{ABS,Clock,HOL,INACTIVE,MAX_DAYS,OFF,Pattern,Record,Result,check,clock,work};
 
+mod witnesses;
+
 const MAX_WEEK:usize=30_000;
 pub(super) const PATH_LIMIT:usize=384;
 const PATH_ATTEMPTS:usize=2048;
@@ -223,6 +225,7 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
             if complete{paths.insert(path);if paths.len()>=PATH_LIMIT{break;}}
         }
     }
+    paths=witnesses::enrich(paths,options,rules,clocks,deadline);
     check(!paths.is_empty(),"NO_PERSONAL_PATTERN")?;
     Ok(paths.into_iter().map(|p|rules.pattern(p,clocks)).collect())
 }

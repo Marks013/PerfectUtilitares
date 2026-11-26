@@ -47,6 +47,7 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - name: Validate offline evidence tests and common client
+        id: offline
         run: |
           set -euo pipefail
           python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
@@ -69,6 +70,7 @@ jobs:
           cat "$RUNNER_TEMP/forge-evidence/rustc-version.txt" "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
           dpkg-query -W musl musl-dev musl-tools binutils > "$RUNNER_TEMP/forge-evidence/linker-packages.txt"
       - name: Build official pinned workspace with locked dependency graph
+        id: build
         shell: bash
         run: |
           set -euo pipefail
@@ -82,7 +84,7 @@ jobs:
           cargo +"$RUST_VERSION" fetch --locked --manifest-path "$manifest"
           cargo +"$RUST_VERSION" metadata --locked --offline --format-version 1 --filter-platform "$RUST_TARGET" --manifest-path "$manifest" > "$RUNNER_TEMP/forge-metadata.json"
           cargo +"$RUST_VERSION" test --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
-          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D deprecated -D unused_imports -D dead_code
+          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/forge-evidence/clippy-strict.txt"
           cargo +"$RUST_VERSION" rustc --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike -- -D warnings
           cmp "$checkout/Cargo.lock" experiments/escalas-solverforge/Cargo.lock
           cp "$checkout/Cargo.lock" "$RUNNER_TEMP/forge-evidence/Cargo.lock"
@@ -117,7 +119,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/forge-evidence"
           python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
       - name: SF54 six-week 115 and 250 employee diagnostic
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        id: scale
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -126,7 +129,8 @@ jobs:
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
       - name: SF54d-f combined temporal feature and scale comparison through original client
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        id: temporal
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -135,7 +139,8 @@ jobs:
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" temporal | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" temporal | tee "$RUNNER_TEMP/forge-evidence/temporal-summary.json"
       - name: Expanded scale and temporal noninferiority qualification (not production parity)
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        id: expanded_quality
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
         run: |
           python3 - "$RUNNER_TEMP/forge-evidence/scale-summary.json" "$RUNNER_TEMP/forge-evidence/temporal-summary.json" <<'PY'
           import json,sys
@@ -152,7 +157,8 @@ jobs:
               raise SystemExit(",".join(failures))
           PY
       - name: Three-engine smoke and balanced paired comparison
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        id: paired
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -165,8 +171,16 @@ jobs:
             node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode" | tee "$output"
             python3 experiments/escalas-solverforge/verify_comparison.py "$output" "$mode" | tee "$RUNNER_TEMP/forge-evidence/$mode-summary.json"
           done
+      - name: E2 candidate noninferiority gate (not production parity)
+        id: quality
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' && steps.paired.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 experiments/escalas-solverforge/verify_comparison.py "$RUNNER_TEMP/forge-evidence/paired-summary.json" quality | tee "$RUNNER_TEMP/forge-evidence/quality-summary.json"
       - name: Personal configuration parity through the original client (three modes)
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        id: personal
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' && steps.paired.outcome == 'success' && steps.quality.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -175,7 +189,8 @@ jobs:
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" personal | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" personal | tee "$RUNNER_TEMP/forge-evidence/personal-summary.json"
       - name: Candidate-only time budget and seed ablation
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        id: curve
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' && steps.paired.outcome == 'success' && steps.quality.outcome == 'success' && steps.personal.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -186,15 +201,9 @@ jobs:
           output="$RUNNER_TEMP/forge-evidence/curve.jsonl"
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" curve | tee "$RUNNER_TEMP/forge-evidence/curve-summary.json"
-      - name: E2 candidate noninferiority gate (not production parity)
-        id: quality
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 experiments/escalas-solverforge/verify_comparison.py "$RUNNER_TEMP/forge-evidence/paired-summary.json" quality | tee "$RUNNER_TEMP/forge-evidence/quality-summary.json"
       - name: Independent 32-repeat tail latency and adaptive qualification
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        id: tail
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' && steps.paired.outcome == 'success' && steps.quality.outcome == 'success' && steps.personal.outcome == 'success' && steps.curve.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -203,7 +212,8 @@ jobs:
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" tail | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" tail | tee "$RUNNER_TEMP/forge-evidence/tail-summary.json"
       - name: Require measured adaptive gain (not production certification)
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        id: adaptive_gain
+        if: ${{ !cancelled() && steps.offline.outcome == 'success' && steps.build.outcome == 'success' && steps.controls.outcome == 'success' && steps.security.outcome == 'success' && steps.scale.outcome == 'success' && steps.temporal.outcome == 'success' && steps.expanded_quality.outcome == 'success' && steps.paired.outcome == 'success' && steps.quality.outcome == 'success' && steps.personal.outcome == 'success' && steps.curve.outcome == 'success' && steps.tail.outcome == 'success' }}
         run: |
           python3 - "$RUNNER_TEMP/forge-evidence/tail-summary.json" <<'PY'
           import json,sys
@@ -211,15 +221,27 @@ jobs:
               result=json.load(source)
           assert result["adaptiveGain"]["decision"]=="ADAPTIVE_GAIN_OBSERVED","ADAPTIVE_GAIN_NOT_PROVEN"
           PY
-      - name: Require zero candidate Clippy warnings
-        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+      - name: Require every qualification stage to succeed
+        if: always()
         shell: bash
+        env:
+          FORGE_OFFLINE: ${{ steps.offline.outcome }}
+          FORGE_BUILD: ${{ steps.build.outcome }}
+          FORGE_CONTROLS: ${{ steps.controls.outcome }}
+          FORGE_SECURITY: ${{ steps.security.outcome }}
+          FORGE_SCALE: ${{ steps.scale.outcome }}
+          FORGE_TEMPORAL: ${{ steps.temporal.outcome }}
+          FORGE_EXPANDED_QUALITY: ${{ steps.expanded_quality.outcome }}
+          FORGE_PAIRED: ${{ steps.paired.outcome }}
+          FORGE_QUALITY: ${{ steps.quality.outcome }}
+          FORGE_PERSONAL: ${{ steps.personal.outcome }}
+          FORGE_CURVE: ${{ steps.curve.outcome }}
+          FORGE_TAIL: ${{ steps.tail.outcome }}
+          FORGE_ADAPTIVE_GAIN: ${{ steps.adaptive_gain.outcome }}
         run: |
           set -euo pipefail
-          export CARGO_HOME="$RUNNER_TEMP/solverforge-cargo"
-          export CARGO_TARGET_DIR="$RUNNER_TEMP/solverforge-target"
-          manifest="$RUNNER_TEMP/solverforge-upstream/Cargo.toml"
-          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/forge-evidence/clippy-strict.txt"
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          python3 experiments/escalas-solverforge/qualify_execution.py | tee "$RUNNER_TEMP/forge-evidence/qualification-summary.json"
       - name: Retain only aggregate evidence and public inventory
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
