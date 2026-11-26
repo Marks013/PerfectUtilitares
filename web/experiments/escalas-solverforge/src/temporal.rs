@@ -1,4 +1,4 @@
-//! SF54b: isolated one-week temporal prototype; not a production adapter.
+//! SF54d/e: bounded temporal horizon, synthetic-only, not a production adapter.
 //! OFF, ABSENCE and HOLIDAY are separate states; work is a concrete clock.
 //! Only admitted, synthetic, same-civil-day shifts before the transition date.
 use std::collections::{BTreeMap,BTreeSet};
@@ -7,7 +7,8 @@ use std::time::{Duration,Instant};
 use serde_json::{json,Value as V};
 use solverforge::{MoveThreadCount,SolverConfig};
 use solverforge::stream::collector::Accumulator;
-use crate::model::PersonalRules;
+mod rules;
+use rules::{Rules,enumerate,PATH_LIMIT};
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
 use crate::temporal_score::TemporalScore;
 use crate::wire::{array,boolean,check,civil_date,empty,empty_array,identifier,number,optional_text,personal_rules,range,text};
@@ -17,17 +18,18 @@ pub type Cost=[i64;17];
 const OFF:u8=0;
 const ABS:u8=1;
 const HOL:u8=2;
-const MAX_PATTERNS:usize=30_000;
+pub const MAX_DAYS:usize=42;
+const DUTY:u8=15;
 const OBJECTIVES:[(&str,&str);16]=[
-    ("COVERAGE","SCOPED"),("SUNDAY_COVERAGE","SCOPED"),("SUNDAY_PEAK","NOT_APPLICABLE_ONE_WEEK"),
+    ("COVERAGE","SCOPED"),("SUNDAY_COVERAGE","SCOPED"),("SUNDAY_PEAK","PARTIAL_GLOBAL_BOUND"),
     ("MOVEMENT_COVERAGE","SCOPED"),("CLOSING_COVERAGE","SCOPED"),
-    ("UNTIMED_ROTATION","NOT_APPLICABLE_TIMED_ONLY"),("SUNDAY_BALANCE","PARTIAL_COHORT"),
+    ("UNTIMED_ROTATION","SCOPED_WEEKDAY_AND_SUNDAY"),("SUNDAY_BALANCE","SCOPED_COHORT_AND_DATES"),
     ("REST_SPACING","PARTIAL_PAIR_SCORE"),("LEADERSHIP","PARTIAL_LOCAL_RESPONSIBILITY"),
     ("SATURDAY_BALANCE","PARTIAL_COHORT"),("REST_DISTRIBUTION","PARTIAL_SECTOR_ROLE"),
     ("REST_ROTATION","SCOPED"),("PEOPLE_CHANGED","SCOPED"),("STABILITY","SCOPED"),
     ("PREFERENCES","SCOPED"),("TIE_BREAK","PENDING"),
 ];
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Clock {id:String,segments:[(i32,i32);2],paid:i32}
 impl Clock {
     fn start(&self)->i32{self.segments[0].0}
@@ -36,17 +38,18 @@ impl Clock {
 }
 fn clock(clocks:&[Clock],state:u8)->Option<&Clock>{state.checked_sub(3).and_then(|i|clocks.get(i as usize))}
 fn work(state:u8)->bool{state>=3}
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub struct Pattern{states:[u8;7],personal:Cost,rates:[Option<i64>;2]}
-#[derive(Clone,Copy)]
+#[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
+pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rates:[Option<i64>;2],sunday_opportunities:u64}
+#[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord)]
 struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
-#[derive(Clone,Debug)]
+#[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>}
-#[derive(Debug)]
-pub struct TemporalFacts{clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;7],closing:i32,priority:[Option<i64>;7],movement_enabled:bool}
+#[derive(Debug,PartialEq,Eq,Hash)]
+pub struct TemporalFacts{pub(crate) days:usize,clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
+    priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64}
 #[derive(Clone)]
 pub struct Member{
-    pub id:usize,pub role:usize,pub cohort:usize,pub leader:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
+    pub id:usize,pub role:usize,pub cohort:usize,pub leader:bool,pub untimed:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
 }
 #[derive(Default)]
 pub struct TemporalAccumulator{members:BTreeMap<usize,Member>}
@@ -65,6 +68,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let mut result=[0;17];
     let Some(first)=rows.first() else{return result;};
     let facts=&first.facts;
+    let mut sunday=[0i64;6];let mut sunday_ref=[false;6];
     for row in &rows{
         if let Some(p)=row.pattern{add(&mut result,p.personal);}
     }
@@ -81,18 +85,23 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         if band.estimated{
             let cost=gap*i64::from(band.end-band.start);
             result[1]+=cost;
-            if band.day==0{result[2]+=cost;}
+            if band.day.is_multiple_of(7){result[2]+=cost;sunday[band.day/7]+=cost/facts.peak_quantum;sunday_ref[band.day/7]=true;}
             if facts.movement_enabled{result[4]+=cost*facts.priority[band.day].unwrap_or(2);}
             let close=(band.end.min(facts.closing)-band.start.max(facts.closing-60)).max(0);
             result[5]+=gap*i64::from(close);
         }else{result[0]+=gap*i64::from(band.end-band.start);}
     }
-    for (day,weight) in facts.priority.iter().enumerate(){
+    if sunday_ref.iter().filter(|&&r|r).count()>=2{
+        result[3]=sunday.iter().max().copied().unwrap_or(0)*facts.peak_weight+sunday.iter().map(|x|x*x).sum::<i64>();
+    }
+    for (day,weight) in facts.priority.iter().enumerate().take(facts.days){
         if !facts.closed[day]&&weight.is_some()&&!rows.iter().any(|r|r.leader&&r.pattern.is_some_and(|p|work(p.states[day]))){
             result[9]+=weight.unwrap_or(0);
         }
     }
     let mut cohorts=BTreeMap::<(usize,usize),(i64,i64)>::new();
+    let mut sunday_cohorts=BTreeMap::<usize,Vec<&Member>>::new();
+    for row in &rows{sunday_cohorts.entry(row.cohort).or_default().push(row);}
     for row in &rows{
         if let Some(p)=row.pattern{
             for (i,value) in p.rates.iter().enumerate(){
@@ -104,13 +113,26 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         }
     }
     for ((_,i),(lo,hi)) in cohorts{result[if i==0{7}else{10}]+=hi-lo;}
+    // Spread across dates uses actual eligible people, not all headcount.
+    for cohort in sunday_cohorts.values(){
+        if cohort.len()<2{continue;}
+        let mut rates=Vec::new();
+        for day in (0..facts.days).step_by(7){
+            let eligible:Vec<_>=cohort.iter().filter_map(|r|r.pattern).filter(|p|p.sunday_opportunities&(1u64<<day)!=0).collect();
+            if !eligible.is_empty(){rates.push(eligible.iter().filter(|p|work(p.states[day])).count() as i64*10_000/eligible.len() as i64);}
+        }
+        if let (Some(lo),Some(hi))=(rates.iter().min(),rates.iter().max()){
+            result[7]+=hi-lo;
+            if cohort.iter().all(|r|r.untimed){result[6]+=hi-lo;}
+        }
+    }
     // Unique sector + role groups; don't double-count a sector with one role.
     let mut groups=BTreeMap::<usize,Vec<&Member>>::new();
     for row in &rows{groups.entry(row.role).or_default().push(row);}
     let mut all_groups=vec![rows.clone()];
     if groups.len()>1{all_groups.extend(groups.into_values());}
     for group in all_groups{
-        for day in 0..7{
+        for day in 0..facts.days{
             if facts.closed[day]{continue;}
             let states:Vec<_>=group.iter().filter_map(|r|r.pattern.map(|p|p.states[day])).filter(|&s|s!=ABS).collect();
             if states.len()>=2{
@@ -133,7 +155,7 @@ fn expected(cost:Cost)->TemporalScore{TemporalScore::of([-cost[0]],std::array::f
 fn relative(date:&str)->Result<i32>{
     check(civil_date(date),"DATE")?;
     let n=date[8..].parse::<i32>().map_err(|_|"DATE")?;
-    match &date[..7]{"2026-10"=>Ok(n-32),"2026-11"=>Ok(n-1),"2026-12"=>Ok(n+29),_=>Err("TEMPORAL_DATE")}
+    match &date[..7]{"2026-09"=>Ok(n-62),"2026-10"=>Ok(n-32),"2026-11"=>Ok(n-1),"2026-12"=>Ok(n+29),"2027-01"=>Ok(n+60),_=>Err("TEMPORAL_DATE")}
 }
 fn dates(policy:&V,key:&str)->Result<BTreeSet<i32>>{
     let mut out=BTreeSet::new();
@@ -151,114 +173,43 @@ fn code(row:&V,ids:&BTreeMap<String,u8>,pid:&str)->Result<Record>{
         check(row.get(k).is_none(),"ASSIGNMENT_METADATA_UNSUPPORTED")?;
     }
     let kind=text(row,"kind")?;
-    let state=match kind{"OFF"=>OFF,"ABSENCE"=>ABS,"HOLIDAY"=>HOL,
+    let state=match kind{"OFF"=>OFF,"ABSENCE"=>ABS,"HOLIDAY"=>HOL,"DUTY"=>DUTY,
         "WORK"=>*ids.get(text(row,"shiftId")?).ok_or("CLOCK_REFERENCE")?,_=>return Err("ASSIGNMENT_KIND")};
-    check(work(state)||row.get("shiftId").is_none(),"ASSIGNMENT_CLOCK")?;
+    check((work(state)&&state!=DUTY)||row.get("shiftId").is_none(),"ASSIGNMENT_CLOCK")?;
     let locked=row.get("locked").map(|v|v.as_bool().ok_or("LOCK_TYPE")).transpose()?;
     let manual_absence=match row.get("absenceSource"){None=>false,Some(v)=>{
         check(state==ABS&&v.as_str()==Some("MANUAL"),"ABSENCE_SOURCE")?;true
     }};
     Ok(Record{state,locked,manual_absence})
 }
-struct Rules{
-    personal:PersonalRules, fixed:u8, cap:i32, target:i32, weekly_limit:i32, inter:i32, weekly_rest:i32,
-    mixed:bool, closed:[bool;7], holiday:[bool;7], old:[Option<Record>;7],
-    context:BTreeMap<i32,u8>,
-}
-impl Rules{
-    fn legal(&self,states:[u8;7],clocks:&[Clock])->bool{
-        let count=states.iter().filter(|&&s|work(s)).count() as i32;
-        let off=states.iter().filter(|&&s|s==OFF).count() as i32;
-        let absent=states.contains(&ABS);
-        let weekdays=states[1..].iter().filter(|&&s|s==HOL).count() as i32;
-        let sunday=i32::from(states[0]==HOL);
-        let minutes:i32=states.iter().filter_map(|&s|clock(clocks,s)).map(|c|c.paid).sum();
-        if count>5||minutes>self.target.min(self.weekly_limit){return false;}
-        if !absent&&(count!=(5-weekdays).max(0)||off!=2-sunday||weekdays==0&&minutes!=self.target){return false;}
-        if self.mixed&&states.iter().filter_map(|&s|clock(clocks,s)).filter(|c|c.paid==540).count()>2{return false;}
-        let state=|d:i32|if (0..7).contains(&d){Some(states[d as usize])}else{self.context.get(&d).copied()};
-        let max=i32::from(self.personal.max_run);
-        for start in -max..7{
-            if (start..=start+max).all(|d|state(d).is_some_and(work)){return false;}
+// The global peak weight dominates every possible secondary squared deficit.
+// Use checked wide arithmetic and reject exceptional envelopes rather than
+// overflowing the safe-integer telemetry or silently changing precedence.
+fn configure_peak(facts:&mut [TemporalFacts])->Result<()>{
+    let mut quantum=0i64;
+    for sector in facts.iter(){
+        for band in sector.bands.iter().filter(|b|b.estimated&&b.day.is_multiple_of(7)){
+            let mut n=i64::from(band.end-band.start);
+            while n!=0{let rem=quantum%n;quantum=n;n=rem;}
         }
-        for start in -self.cap..=0{
-            if (start..=start+self.cap).all(|w|state(w*7).is_some_and(work)){return false;}
-        }
-        if self.personal.variable{
-            for start in -2..7{
-                let mutable=(start..start+3).any(|d|(0..7).contains(&d)&&!self.closed[d as usize]
-                    &&self.old[d as usize].is_none_or(|r|r.locked!=Some(true)&&r.state!=ABS&&r.state!=HOL));
-                if mutable&&(start..start+3).all(|d|state(d)==Some(OFF)){return false;}
-            }
-        }
-        if self.personal.consecutive{
-            let rest=|d:i32|state(d)==Some(OFF)||d.rem_euclid(7)==0&&state(d)==Some(HOL);
-            for d in 0..7{
-                if rest(d)&&!rest(d-1)&&!rest(d+1){return false;}
-            }
-            if state(7)==Some(OFF)&&state(8).is_some_and(|s|work(s)||s==ABS)&&state(6)!=Some(OFF){return false;}
-        }
-        for a in -5..7{
-            let Some(ca)=state(a).and_then(|s|clock(clocks,s)) else{continue;};
-            for b in a+1..=a+5{
-                if b<0{continue;}
-                let Some(cb)=state(b).and_then(|s|clock(clocks,s)) else{continue;};
-                let gap=(b-a)*1440+cb.start()-ca.end();
-                if gap<self.inter{return false;}
-                if (a+1..b).any(|d|matches!(state(d),Some(OFF|HOL)))&&gap<self.weekly_rest{return false;}
-            }
-        }
-        true
     }
-    fn pattern(&self,states:[u8;7])->Pattern{
-        let mut cost=[0;17];
-        let changes=states.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
-        cost[13]=i64::from(changes>0);cost[14]=changes;
-        cost[15]=states.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<*d)!=0).count() as i64;
-        if self.personal.prefer_consecutive{cost[15]+=6-states.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;}
-        if self.personal.adjustable(){
-            let mut pairs=0;let mut imposed=0;
-            for (d,&current) in states.iter().enumerate(){
-                let prev=if d==0{self.context.get(&-1).copied()}else{Some(states[d-1])};
-                if prev==Some(OFF)&&current==OFF{
-                    let mutable=|i:usize|self.old[i].is_none_or(|r|r.locked!=Some(true))&&!self.closed[i];
-                    if mutable(d)||d>0&&mutable(d-1){pairs+=1;}else{imposed+=1;}
-                }
-            }
-            cost[8]=pairs+1000*((pairs+imposed-2i64).max(0)-(imposed-2i64).max(0));
+    quantum=quantum.max(1);
+    let mut peak=0i128;let mut secondary=0i128;
+    for sector in facts.iter(){
+        let mut days=[0i128;6];let mut referenced=[false;6];
+        for band in sector.bands.iter().filter(|b|b.estimated&&b.day.is_multiple_of(7)){
+            days[band.day/7]+=i128::from(band.general)*i128::from(band.end-band.start)/i128::from(quantum);
+            referenced[band.day/7]=true;
         }
-        let mut rates=[None;2];
-        for (day,&state) in states.iter().enumerate(){
-            let prior:Vec<_>=self.context.iter().filter(|(d,s)|**d<0&&d.rem_euclid(7)==day as i32&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
-            let opportunities=prior.len() as i64+i64::from(state!=ABS);
-            let rests=prior.iter().filter(|&&s|s==OFF).count() as i64+i64::from(state==OFF);
-            cost[12]+=(7*rests-2*opportunities).abs();
-            if (day==0||day==6)&&!self.closed[day]&&!self.holiday[day]
-                &&state!=ABS&&self.fixed&(1<<day)==0&&!self.old[day].is_some_and(|r|r.locked==Some(true)&&r.state==OFF){
-                let worked=prior.iter().filter(|&&s|work(s)).count() as i64+i64::from(work(state));
-                rates[usize::from(day==6)]=Some(worked*10_000/(prior.len() as i64+1));
-            }
+        if referenced.iter().filter(|&&x|x).count()>=2{
+            peak+=days.iter().max().copied().unwrap_or(0);
+            secondary+=days.iter().map(|x|x*x).sum::<i128>();
         }
-        Pattern{states,personal:cost,rates}
     }
-}
-fn enumerate(options:&[Vec<u8>;7],rules:&Rules,clocks:&[Clock],deadline:Instant)->Result<Vec<Pattern>>{
-    fn visit(day:usize,states:&mut [u8;7],options:&[Vec<u8>;7],rules:&Rules,clocks:&[Clock],
-             deadline:Instant,out:&mut Vec<Pattern>)->Result<()>{
-        check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
-        if day==7{
-            if rules.legal(*states,clocks){
-                check(out.len()<MAX_PATTERNS,"TEMPORAL_DOMAIN_LIMIT")?;
-                out.push(rules.pattern(*states));
-            }
-        }else{
-            for &state in &options[day]{
-                states[day]=state;visit(day+1,states,options,rules,clocks,deadline,out)?;
-            }
-        }
-        Ok(())
-    }
-    let mut out=Vec::new();visit(0,&mut [OFF;7],options,rules,clocks,deadline,&mut out)?;Ok(out)
+    let weight=secondary+1;
+    check(peak*weight+secondary<=9_007_199_254_740_991,"TEMPORAL_PEAK_BOUND")?;
+    for sector in facts{sector.peak_weight=weight as i64;sector.peak_quantum=quantum;}
+    Ok(())
 }
 fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     check(root.as_object().is_some_and(|o|o.len()==1)&&root["input"].is_object(),"ENVELOPE")?;
@@ -266,7 +217,8 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     check(number(input,"schemaVersion")?==1&&text(input,"branchCode")?=="SYNTH"&&boolean(input,"simulation",false)?
         &&text(input,"timeZone")?=="America/Sao_Paulo"&&text(input,"planningWeekStartsOn")?=="SUNDAY"
         &&number(input,"restRulesVersion")?==3&&text(input,"startDate")?=="2026-11-01"
-        &&text(input,"endDate")?=="2026-11-07"&&input.get("visibleMonth").is_none(),"TEMPORAL_HORIZON")?;
+        &&input.get("visibleMonth").is_none(),"TEMPORAL_HORIZON")?;
+    let days=match text(input,"endDate")?{"2026-11-07"=>7,"2026-11-28"=>28,"2026-12-12"=>42,_=>return Err("TEMPORAL_HORIZON")};
     for k in input.as_object().unwrap().keys(){check(!k.starts_with('_'),"PRIVATE_FIELD_UNSUPPORTED")?;}
     check(input.get("planningCalendarSource").is_none(),"TEMPORAL_METADATA")?;
     for k in ["calendarProvenance","collectiveAgreement","operationalCertificate","mealIntervalAgreement"]{
@@ -287,14 +239,14 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     let closed=dates(policy,"closedDates")?;let holidays=dates(policy,"holidayDates")?;
     let paid=dates(policy,"paidHolidayDates")?;let authorized=dates(policy,"authorizedHolidayDates")?;
     check(paid.is_subset(&closed)&&paid.is_subset(&holidays)&&authorized.is_subset(&holidays),"HOLIDAY_POLICY")?;
-    let closed_days=std::array::from_fn(|d|closed.contains(&(d as i32)));
-    let holiday_days=std::array::from_fn(|d|holidays.contains(&(d as i32)));
+    let closed_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&closed.contains(&(d as i32)));
+    let holiday_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&holidays.contains(&(d as i32)));
     let mut mixed_sectors=BTreeSet::new();
     if input.get("mixed42Sectors").is_some(){
         for s in array(input,"mixed42Sectors")?{check(default_hours==42&&mixed_sectors.insert(s.as_str().ok_or("MIXED_SECTOR")?),"MIXED_SECTOR")?;}
     }
     let clock_rows=array(input,"shifts")?;
-    check(!clock_rows.is_empty()&&clock_rows.len()<=12,"CLOCK_LIMIT")?;
+    check(clock_rows.len()<=12,"CLOCK_LIMIT")?;
     let mut clocks=Vec::new();let mut ids=BTreeMap::new();
     for row in clock_rows{
         let seg=array(row,"segments")?;
@@ -311,7 +263,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     }
     let clocks=Arc::new(clocks);
     let people=array(input,"employees")?;
-    check(!people.is_empty()&&people.len()<=12,"TEMPORAL_PEOPLE_LIMIT")?;
+    check(!people.is_empty()&&people.len()<=if days==7{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
     let mut sectors=BTreeMap::<String,usize>::new();let mut roles=BTreeMap::<String,usize>::new();
     for row in people{
         let n=sectors.len();sectors.entry(text(row,"sector")?.to_string()).or_insert(n);
@@ -323,20 +275,21 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     for d in array(input,"demands")?{
         check(demand_ids.insert(identifier(d,"id")?),"DUPLICATE_DEMAND")?;
         let day=relative(text(d,"date")?)?;let a=number(d,"start")?;let b=number(d,"end")?;let n=number(d,"minimum")?;
-        check((0..7).contains(&day)&&a>=0&&a<b&&b<=1440&&range(n,0,250),"DEMAND")?;
+        check((0..days as i32).contains(&day)&&a>=0&&a<b&&b<=1440&&range(n,0,250),"DEMAND")?;
         let sector=*sectors.get(text(d,"sector")?).ok_or("DEMAND_SECTOR")?;
         let role=match d.get("role"){None=>None,Some(v) if v.is_null()=>None,Some(v)=>{
             let r=v.as_str().ok_or("ROLE")?;
             let next=roles.len();Some(*roles.entry(r.to_string()).or_insert(next))
         }};
         let estimated=boolean(d,"estimated",false)?;
+        if estimated&&paid.contains(&day){continue;}
         demand_groups.entry((sector,day as usize,estimated)).or_default().push((a,b,i64::from(n),role));
     }
     let mut priorities=Vec::new();
     if input.get("movementPriorities").is_some(){
         for entry in array(input,"movementPriorities")?{
             let a=relative(text(entry,"startDate")?)?;let b=relative(text(entry,"endDate")?)?;
-            check((0..7).contains(&a)&&(a..7).contains(&b),"MOVEMENT_DATES")?;
+            check((0..days as i32).contains(&a)&&(a..days as i32).contains(&b),"MOVEMENT_DATES")?;
             let weight=match text(entry,"level")?{"LOW"=>1,"NORMAL"=>2,"HIGH"=>3,_=>return Err("MOVEMENT_LEVEL")};
             let name=optional_text(entry,"sector","")?;
             let sector=if name.is_empty(){None}else{Some(*sectors.get(name).ok_or("MOVEMENT_SECTOR")?)};
@@ -344,7 +297,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }
     }
     let mut facts:Vec<_>=(0..sectors.len()).map(|sector|TemporalFacts{
-        clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),
+        days,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,
         priority:std::array::from_fn(|d|{
             let matches=|p:&&(i32,i32,i64,Option<usize>)|p.0<=d as i32&&p.1>=d as i32;
             priorities.iter().filter(matches).filter(|p|p.3==Some(sector)).map(|p|p.2).max()
@@ -367,21 +320,35 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
             if general>0{check(facts[sector].bands.len()<12000,"BAND_LIMIT")?;facts[sector].bands.push(Band{day,start:a,end:b,estimated,general,roles:floors.into_iter().collect()});}
         }
     }
+    configure_peak(&mut facts)?;
     let facts:Vec<_>=facts.into_iter().map(Arc::new).collect();
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
-    type CohortKey=(usize,usize,Vec<u8>,i32,i32);
+    type CohortKey=(usize,usize,bool,Vec<[(i32,i32);2]>,i32,i32);
     let mut cohorts=BTreeMap::<CohortKey,usize>::new();
     let assignment_rows=array(input,"assignments")?;
+    type CachedDomain=(Arc<Vec<Pattern>>,Arc<[usize]>);
+    let mut domains=BTreeMap::<(Rules,Vec<Vec<u8>>),CachedDomain>::new();
+    let rest_weight=1+(people.len()*days) as i64;
     for p in people{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
         let pid=identifier(p,"id")?;
         check(pid.strip_prefix("person-").is_some_and(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit()))
             &&text(p,"name")?.starts_with("Synthetic person ")&&seen.insert(pid),"SYNTHETIC_ID")?;
         let active=text(p,"activeFrom")?;
+        let schedule=text(p,"scheduleMode")?;
+        let untimed=matches!(schedule,"UNTIMED"|"MISSING");
         check((active.is_empty()||civil_date(active)&&active<="2026-11-01")&&p.get("activeUntil").is_none()
-            &&boolean(p,"planningEnabled",true)?&&text(p,"scheduleMode")?=="TIMED"&&p.get("simulationDailyMinutes").is_none(),"PERSON_PROFILE")?;
+            &&boolean(p,"planningEnabled",true)?&&(untimed||schedule=="TIMED")&&p.get("simulationDailyMinutes").is_none(),"PERSON_PROFILE")?;
         for k in ["manualShiftOverrides","manualShiftBaseIds"]{check(empty_array(p,k),"MANUAL_PROVENANCE_UNSUPPORTED")?;}
-        check(empty(p,"manualShiftByDate"),"DATED_OVERRIDE_PENDING")?;
+        let mut manual=BTreeMap::new();
+        if !empty(p,"manualShiftByDate"){
+            check(!untimed,"DATED_OVERRIDE_UNTIMED")?;
+            let entries=p["manualShiftByDate"].as_object().ok_or("DATED_OVERRIDE")?;
+            for (date,sid) in entries{
+                let day=relative(date)?;check((0..days as i32).contains(&day),"DATED_OVERRIDE_DATE")?;
+                manual.insert(day,*ids.get(sid.as_str().ok_or("DATED_OVERRIDE")?).ok_or("CLOCK_REFERENCE")?);
+            }
+        }
         let sector_name=text(p,"sector")?;let sector=sectors[sector_name];let role_name=text(p,"role")?;let role=roles[role_name];
         let leader=if let Some(l)=p.get("leadership"){
             check(["MANUAL","INFERRED"].contains(&text(l,"source")?),"LEADERSHIP_UNSUPPORTED")?;
@@ -398,7 +365,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         };
         let hours=number(p,"weeklyHours")?;check(matches!(hours,40|42|44)&&hours<=weekly,"WEEKLY_MINUTES")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(p,"weeklyHoursMode","INDIVIDUAL")?),"WEEKLY_MODE")?;
-        let mixed=mixed_sectors.contains(sector_name)&&hours==42;
+        let mixed=!untimed&&mixed_sectors.contains(sector_name)&&hours==42;
         let (fixed,personal)=personal_rules(p,max_run.min(5) as u8)?;
         let cap=number(p,"maxConsecutiveSundays")?;let rule=optional_text(p,"sundayRestRule","PROTECTIVE")?;
         check(matches!(cap,1|2)&&["PROTECTIVE","UNREVIEWED","CLT_386","COMMERCE"].contains(&rule),"SUNDAY_RULE")?;
@@ -408,66 +375,80 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
             let id=v.as_str().ok_or("CLOCK_REFERENCE")?;let s=*ids.get(id).ok_or("CLOCK_REFERENCE")?;
             check(unique.insert(s),"DUPLICATE_CLOCK")?;options.push(s);
         }
-        check(!options.is_empty()&&options.len()<=4,"TEMPORAL_CLOCK_OPTIONS")?;
+        check(if untimed{options.is_empty()}else{!options.is_empty()&&options.len()<=4},"TEMPORAL_CLOCK_OPTIONS")?;
         let imported=optional_text(p,"fixedImportedShiftId","")?;
         if !imported.is_empty(){
+            check(!untimed,"CLOCK_REFERENCE")?;
             let s=*ids.get(imported).ok_or("CLOCK_REFERENCE")?;check(unique.contains(&s),"CLOCK_REFERENCE")?;options=vec![s];
         }else if mode=="REST_ONLY"{
             let mut durations=BTreeSet::new();options.retain(|&s|durations.insert(clock(&clocks,s).unwrap().paid));
         }
-        let allowed_clock=|s:u8|clock(&clocks,s).is_some_and(|c|if mixed{matches!(c.paid,480|540)}else{c.paid!=540&&c.paid<=daily});
-        let mut old=[None;7];
+        let allowed_clock=|s:u8|!untimed&&clock(&clocks,s).is_some_and(|c|if mixed{c.paid==540||c.paid==480&&c.paid<=daily}else{c.paid!=540&&c.paid<=daily});
+        let mut old=[None;MAX_DAYS];
         for row in assignment_rows{
             if text(row,"employeeId")?!=pid{continue;}
-            let d=relative(text(row,"date")?)?;check((0..7).contains(&d),"DATE")?;
+            let d=relative(text(row,"date")?)?;check((0..days as i32).contains(&d),"DATE")?;
             check(old[d as usize].replace(code(row,&ids,pid)?).is_none(),"DUPLICATE_ASSIGNMENT")?;
         }
-        if mode=="HOURS_ONLY"{check(old.iter().all(Option::is_some),"HOURS_ONLY_GRID")?;}
+        if mode=="HOURS_ONLY"{check(old[..days].iter().all(Option::is_some),"HOURS_ONLY_GRID")?;}
         let mut context=BTreeMap::new();
         for key in ["planningHistory","history","planningFuture"]{
             if p.get(key).is_none(){continue;}
             let mut local=BTreeSet::new();
             for row in array(p,key)?{
                 let d=relative(text(row,"date")?)?;
-                check(if key=="planningFuture"{(7..28).contains(&d)}else{(-21..0).contains(&d)},"CONTEXT_DATE")?;
+                check(if key=="planningFuture"{(days as i32..days as i32+21).contains(&d)}else{(-56..0).contains(&d)},"CONTEXT_DATE")?;
                 check(local.insert(d),"DUPLICATE_CONTEXT")?;
                 context.insert(d,code(row,&ids,pid)?.state);
             }
         }
-        let mut daily_options:[Vec<u8>;7]=std::array::from_fn(|_|Vec::new());
+        let mut daily_options=vec![Vec::<u8>::new();days];
         for (day,out) in daily_options.iter_mut().enumerate(){
             let saved=old[day];let date=day as i32;let absence=saved.is_some_and(|r|r.state==ABS);
-            let holiday=paid.contains(&date)||saved.is_some_and(|r|r.state==HOL);
+            let holiday=mode!="HOURS_ONLY"&&paid.contains(&date)||saved.is_some_and(|r|r.state==HOL);
             if absence{out.push(ABS);}else if holiday{
                 check(paid.contains(&date),"HOLIDAY_POLICY")?;
                 check(saved.is_none_or(|r|r.locked!=Some(true)||r.state==HOL),"LOCKED_HOLIDAY")?;
                 out.push(HOL);
             }else{
-                let force_off=fixed&(1<<day)!=0;
-                let off_allowed=day!=6&&(!holidays.contains(&date)||day==0||boolean(policy,"holidayRestAllowed",false)?);
+                let force_off=fixed&(1<<(day%7))!=0;
+                let off_allowed=day%7!=6&&(!holidays.contains(&date)||day.is_multiple_of(7)||boolean(policy,"holidayRestAllowed",false)?);
                 if off_allowed{out.push(OFF);}
                 if !force_off&&!closed.contains(&date){
-                    out.extend(options.iter().copied().filter(|&s|allowed_clock(s)));
-                    if let Some(r)=saved{
-                        if r.locked==Some(true)&&allowed_clock(r.state)&&!out.contains(&r.state){out.push(r.state);}
+                    if untimed{out.push(DUTY);}
+                    else if let Some(&s)=manual.get(&date){
+                        if allowed_clock(s){out.push(s);}
+                    }else{
+                        out.extend(options.iter().copied().filter(|&s|allowed_clock(s)));
+                        if let Some(r)=saved{
+                            if r.locked==Some(true)&&allowed_clock(r.state)&&!out.contains(&r.state){out.push(r.state);}
+                        }
                     }
                 }
                 if force_off{out.retain(|&s|s==OFF);}
             }
             if let Some(r)=saved{
                 if r.locked==Some(true){out.retain(|&s|s==r.state);}
-                if mode=="HOURS_ONLY"{out.retain(|&s|if work(r.state){work(s)}else{s==r.state});}
+                if mode=="HOURS_ONLY"{out.retain(|&s|if work(r.state){work(s)&&(s==DUTY)==(r.state==DUTY)}else{s==r.state});}
             }
         }
-        let rules=Rules{personal,fixed,cap,target:hours*60,weekly_limit:weekly*60,inter,weekly_rest,mixed,
-            closed:closed_days,holiday:holiday_days,old,context};
-        let catalog=Arc::new(enumerate(&daily_options,&rules,&clocks,deadline)?);
-        check(!catalog.is_empty(),"NO_PERSONAL_PATTERN")?;
-        let allowed:Arc<[usize]>=Arc::from((0..catalog.len()).collect::<Vec<_>>());
+        let profile:Vec<_>=daily_options.iter().flatten().filter_map(|&s|clock(&clocks,s).map(|c|c.segments)).collect::<BTreeSet<_>>().into_iter().collect();
+        let rules=Rules{days,personal,fixed,cap,target:hours*60,weekly_limit:weekly*60,inter,weekly_rest,mixed,
+            untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,rest_weight};
+        let key=(rules,daily_options);
+        let (catalog,allowed)=match domains.entry(key){
+            std::collections::btree_map::Entry::Occupied(entry)=>entry.get().clone(),
+            std::collections::btree_map::Entry::Vacant(entry)=>{
+                let (rules,options)=entry.key();
+                let catalog=Arc::new(enumerate(options,rules,&clocks,deadline)?);
+                let allowed:Arc<[usize]>=Arc::from((0..catalog.len()).collect::<Vec<_>>());
+                entry.insert((catalog,allowed)).clone()
+            }
+        };
         let pinned=allowed.len()==1;
-        let next=cohorts.len();let cohort=*cohorts.entry((sector,role,options,hours,cap)).or_insert(next);
+        let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{0}else{hours},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader,untimed,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -496,7 +477,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         for p in &plan.employees{
             if !p.leader{continue;}
             if let Some(i)=p.pattern{
-                for (day,&s) in p.catalog[i].states.iter().enumerate(){
+                for (day,&s) in p.catalog[i].states.iter().enumerate().take(p.facts.days){
                     if work(s)&&p.facts.priority[day]==Some(3)&&!p.facts.closed[day]{out.insert((p.sector,day));}
                 }
             }
@@ -526,9 +507,9 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     let mut assignments=Vec::new();
     for person in &plan.employees{
         let p=person.catalog[person.pattern.unwrap()];
-        for (day,&s) in p.states.iter().enumerate(){
+        for (day,&s) in p.states.iter().enumerate().take(person.facts.days){
             let mut row=json!({"employeeId":person.name_id,"date":crate::wire::date(day),
-                "kind":match s{OFF=>"OFF",ABS=>"ABSENCE",HOL=>"HOLIDAY",_=>"WORK"}});
+                "kind":match s{OFF=>"OFF",ABS=>"ABSENCE",HOL=>"HOLIDAY",DUTY=>"DUTY",_=>"WORK"}});
             if let Some(c)=clock(&person.facts.clocks,s){row["shiftId"]=json!(c.id);}
             if let Some(lock)=person.lock_flags[day]{row["locked"]=json!(lock);}
             if s==ABS&&person.manual_absences[day]{row["absenceSource"]=json!("MANUAL");}
@@ -536,13 +517,22 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         }
     }
     let priorities=plan.employees.iter().any(|p|p.facts.movement_enabled);
+    let days=plan.employees[0].facts.days;
+    let untimed=plan.employees.iter().filter(|p|p.untimed).count();
+    debug_assert!(days==7||plan.employees.iter().all(|p|p.catalog.len()<=PATH_LIMIT));
     let objective_audit:Vec<_>=OBJECTIVES.iter().enumerate().map(|(i,(name,status))|{
-        let status=if !priorities&&(*name=="MOVEMENT_COVERAGE"||*name=="LEADERSHIP"){"NOT_APPLICABLE_NO_PRIORITIES"}else{*status};
+        let status=match *name{
+            "MOVEMENT_COVERAGE"|"LEADERSHIP" if !priorities=>"NOT_APPLICABLE_NO_PRIORITIES",
+            "UNTIMED_ROTATION" if untimed==0=>"NOT_APPLICABLE_TIMED_ONLY",
+            "SUNDAY_PEAK" if days==7=>"NOT_APPLICABLE_ONE_WEEK",
+            _=>*status,
+        };
         json!({"name":name,"status":status,"cost":if status.starts_with("SCOPED")||status.starts_with("PARTIAL"){Some(cost[i+1])}else{None}})
     }).collect();
-    json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":"Synthetic one-week temporal candidate; independent validation required",
+    json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":"Synthetic bounded temporal candidate; independent validation required",
         "assignments":assignments,"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null,
-        "temporal":{"version":1,"scope":"SYNTHETIC_ONE_WEEK_TIMED","partialModel":true,"mapSeconds":mapped,
+        "temporal":{"version":2,"scope":"SYNTHETIC_TEMPORAL","days":days,"untimed":untimed,
+            "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,
             "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
             "entities":plan.employees.len(),"patterns":patterns,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
 }
