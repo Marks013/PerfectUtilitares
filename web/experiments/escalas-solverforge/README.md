@@ -72,3 +72,53 @@ Pontuação de 13 níveis: hard, domingo, presença, total, pico, excesso de par
 ### E3a.2: ajuste de horários com referências fixas
 
 HOURS_ONLY é admitido quando existe grade completa e cada participante possui um único relógio efetivo. Domínio unitário preserva cada WORK/OFF e bloqueio original; turno antigo conhecido pode ser substituído apenas no WORK editável. Não marcar todas as folgas como impostas para o score. Grade incompatível é recusada, sem alterar dias. REST_ONLY admite múltiplos relógios de igual duração, preservando o primeiro por duração como no Python; alternativas de duração distinta continuam fora do recorte. Testes positivos/negativos no mapper e na resposta serializada. Não é ajuste variável, nem porta para histórico/ausência/feriado.
+
+
+## SF54b: opt-in temporal proof of concept (not E3/E4 parity)
+
+`--temporal` is a separate synthetic-only native planning model with 1 hard
+and 16 named soft positions, using enumerated legal weekly patterns and
+concrete work segments. The legacy fixed-clock E2 adapter is unchanged.
+Admitted scope: 1–12 timed synthetic people, 2026-11-01 through 2026-11-07,
+SUNDAY, rest rules v3, CUSTOM/MANUAL simulated policy; up to 4 normal clock
+alternatives per person and 12 globally. It distinguishes OFF, ABSENCE,
+HOLIDAY and WORK; preserves existing manual absences and locks. Includes
+40/42/44h, mixed 42h (3 × 480 + 2 × 540 in an ordinary full week), actual
+daily clock selection, REST_ONLY first per duration, HOURS_ONLY fixed
+day kinds, dated holiday/absence reductions and explicit preceding/following
+history. Historical context is never emitted as a new assignment.
+
+The scope excludes monthly cutover and multi-week temporal optimization,
+partial employment, DUTY/UNTIMED, overnight clocks, manual date-specific
+overrides, carry metadata, cross-sector leadership and private reference
+guards. Unsupported input is rejected, not relaxed. No production proof,
+nor proof of non-inferiority of this model, is asserted. A candidate with
+mandatory shortage or incomplete assignments returns UNKNOWN.
+
+The score exposes the original 16 objective names in their original order.
+A scoped or partial metric has a numeric cost; an unimplemented or
+inapplicable objective reports null and the reason. The scope does not
+establish equality of objectives, phase guards or lexicographic policies.
+
+| Objective | SF54b status |
+|---|---|
+| COVERAGE | Scoped: actual work intervals and role floors |
+| SUNDAY_COVERAGE | Scoped: Sunday minutes |
+| SUNDAY_PEAK | N/A single week; multi-week per-sector dispersion pending |
+| MOVEMENT_COVERAGE | Scoped: explicit day/sector weights |
+| CLOSING_COVERAGE | Scoped: last 60 minutes |
+| UNTIMED_ROTATION | N/A timed-only; untimed model pending |
+| SUNDAY_BALANCE | Partial: cohort rate spread |
+| REST_SPACING | Partial: adjustable pairs and excess |
+| LEADERSHIP | Partial: local responsibility; high-priority incumbent guard |
+| SATURDAY_BALANCE | Partial: cohort rate spread |
+| REST_DISTRIBUTION | Partial: sector/role groups |
+| REST_ROTATION | Scoped: known historical weekdays |
+| PEOPLE_CHANGED | Scoped: saved assignments |
+| STABILITY | Scoped: saved kind and clock |
+| PREFERENCES | Scoped: preferred OFF and consecutive preferences |
+| TIE_BREAK | Pending: exact original SHA-256 rank |
+
+The next gate is original client and frozen OR-Tools parity for every
+admitted temporal feature, then multi-week temporal domains and combined
+115/250 cases. A passing fixed-clock scale diagnostic alone is not E4.

@@ -6,14 +6,14 @@ use crate::domain::{Employee, Plan};
 use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, bounded_patterns, catalog, full_mask, legal_profile};
 
 type Result<T> = std::result::Result<T, &'static str>;
-fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
-fn text<'a>(v: &'a V, k: &str) -> Result<&'a str> { v.get(k).and_then(V::as_str).ok_or("EXPECTED_TEXT") }
-fn identifier<'a>(v: &'a V, k: &str) -> Result<&'a str> {
+pub(crate) fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
+pub(crate) fn text<'a>(v: &'a V, k: &str) -> Result<&'a str> { v.get(k).and_then(V::as_str).ok_or("EXPECTED_TEXT") }
+pub(crate) fn identifier<'a>(v: &'a V, k: &str) -> Result<&'a str> {
     let value=text(v,k)?;
     check(!value.is_empty() && value.chars().count()<=100,"IDENTIFIER")?;
     Ok(value)
 }
-fn empty_array(v:&V,k:&str)->bool {
+pub(crate) fn empty_array(v:&V,k:&str)->bool {
     v.get(k).is_none_or(|x|x.as_array().is_some_and(Vec::is_empty))
 }
 fn weekday_bit(v:&V)->Result<u8>{
@@ -29,7 +29,7 @@ fn weekday_mask(person:&V,key:&str)->Result<u8>{
     }
     Ok(mask)
 }
-fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
+pub(crate) fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
     let fixed=weekday_mask(person,"fixedOffDays")?;
     let mode=text(person,"offMode")?;
     check(match mode{"VARIABLE"=>fixed==0,"MIXED"=>fixed.count_ones()==1,
@@ -55,26 +55,26 @@ fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
     Ok((fixed,PersonalRules{max_run,variable:mode=="VARIABLE",consecutive:pattern=="CONSECUTIVE",
         prefer_consecutive:pattern=="PREFER_CONSECUTIVE",preferred:weekday_mask(person,"preferredOffDays")?}))
 }
-fn number(v: &V, k: &str) -> Result<i32> {
+pub(crate) fn number(v: &V, k: &str) -> Result<i32> {
     v.get(k).and_then(V::as_i64).and_then(|n| i32::try_from(n).ok()).ok_or("EXPECTED_INTEGER")
 }
-fn boolean(v: &V, k: &str, default: bool) -> Result<bool> {
+pub(crate) fn boolean(v: &V, k: &str, default: bool) -> Result<bool> {
     match v.get(k) { None => Ok(default), Some(value) => value.as_bool().ok_or("EXPECTED_BOOLEAN") }
 }
-fn optional_text<'a>(v: &'a V, k: &str, default: &'a str) -> Result<&'a str> {
+pub(crate) fn optional_text<'a>(v: &'a V, k: &str, default: &'a str) -> Result<&'a str> {
     if v.get(k).is_none() { Ok(default) } else { text(v, k) }
 }
-fn array<'a>(v: &'a V, k: &str) -> Result<&'a Vec<V>> {
+pub(crate) fn array<'a>(v: &'a V, k: &str) -> Result<&'a Vec<V>> {
     let items = v.get(k).and_then(V::as_array).ok_or("EXPECTED_ARRAY")?;
     check(items.len() <= 12000, "ARRAY_LIMIT")?;
     Ok(items)
 }
-fn empty(v: &V, k: &str) -> bool {
+pub(crate) fn empty(v: &V, k: &str) -> bool {
     v.get(k).is_none_or(|x| x.as_array().is_some_and(Vec::is_empty) || x.as_object().is_some_and(|o| o.is_empty()))
 }
-fn range(v: i32, low: i32, high: i32) -> bool { v >= low && v <= high }
+pub(crate) fn range(v: i32, low: i32, high: i32) -> bool { v >= low && v <= high }
 
-fn civil_date(value: &str) -> bool {
+pub(crate) fn civil_date(value: &str) -> bool {
     let s = value.as_bytes();
     if s.len() != 10 || s[4] != b'-' || s[7] != b'-'
         || !s.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()) { return false; }

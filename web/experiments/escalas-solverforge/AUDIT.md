@@ -116,3 +116,54 @@ Resolve the 16 historical Clippy warnings from run 45751363810: negative assignm
 ## SF54a — six-week fixed-clock scale expansion (not E3/E4 certification)
 
 Preserve the passing 79bca2c E2 controls and gates. Widen civil masks/attendance to 42 days, keep 7/28-day exact catalogue, admit the frozen Nov 1–Dec 12 six-week synthetic horizon and up to 250 timed employees. Use exact suffix counts with deterministic rank-stratified selection of at most 2048 legal paths per profile (plus a legal supplied seed if necessary); do not materialize 15^6 raw masks or claim full-domain search. Shared Arc catalogues, 6-week Sunday repair and full/incremental score agree; keep all deadline and lock checks. Exact count and selected count are separately reported. A bounded neighborhood can omit useful paths; no optimality claim. Six-week diagnostic separately compares frozen OR-Tools against Rust native/adaptive, three balanced rounds per 115/42 and 250/42, actual client and unchanged independent evaluator. No historical Java comparison on its unsupported domain, no P95 claim. A validity failure rejects this step; noninferiority is reported separately and is required before E4. New Rust scale and sample tests, Python missing-evidence test; ARM64/strict lint/benchmarks still pending. Variable clocks, mixed 42h, civil exceptions, history and all original objectives require separate temporal model work.
+
+
+
+## SF54b: opt-in temporal proof of concept (not E3/E4 parity)
+
+`--temporal` is a separate synthetic-only native planning model with 1 hard
+and 16 named soft positions, using enumerated legal weekly patterns and
+concrete work segments. The legacy fixed-clock E2 adapter is unchanged.
+Admitted scope: 1–12 timed synthetic people, 2026-11-01 through 2026-11-07,
+SUNDAY, rest rules v3, CUSTOM/MANUAL simulated policy; up to 4 normal clock
+alternatives per person and 12 globally. It distinguishes OFF, ABSENCE,
+HOLIDAY and WORK; preserves existing manual absences and locks. Includes
+40/42/44h, mixed 42h (3 × 480 + 2 × 540 in an ordinary full week), actual
+daily clock selection, REST_ONLY first per duration, HOURS_ONLY fixed
+day kinds, dated holiday/absence reductions and explicit preceding/following
+history. Historical context is never emitted as a new assignment.
+
+The scope excludes monthly cutover and multi-week temporal optimization,
+partial employment, DUTY/UNTIMED, overnight clocks, manual date-specific
+overrides, carry metadata, cross-sector leadership and private reference
+guards. Unsupported input is rejected, not relaxed. No production proof,
+nor proof of non-inferiority of this model, is asserted. A candidate with
+mandatory shortage or incomplete assignments returns UNKNOWN.
+
+The score exposes the original 16 objective names in their original order.
+A scoped or partial metric has a numeric cost; an unimplemented or
+inapplicable objective reports null and the reason. The scope does not
+establish equality of objectives, phase guards or lexicographic policies.
+
+| Objective | SF54b status |
+|---|---|
+| COVERAGE | Scoped: actual work intervals and role floors |
+| SUNDAY_COVERAGE | Scoped: Sunday minutes |
+| SUNDAY_PEAK | N/A single week; multi-week per-sector dispersion pending |
+| MOVEMENT_COVERAGE | Scoped: explicit day/sector weights |
+| CLOSING_COVERAGE | Scoped: last 60 minutes |
+| UNTIMED_ROTATION | N/A timed-only; untimed model pending |
+| SUNDAY_BALANCE | Partial: cohort rate spread |
+| REST_SPACING | Partial: adjustable pairs and excess |
+| LEADERSHIP | Partial: local responsibility; high-priority incumbent guard |
+| SATURDAY_BALANCE | Partial: cohort rate spread |
+| REST_DISTRIBUTION | Partial: sector/role groups |
+| REST_ROTATION | Scoped: known historical weekdays |
+| PEOPLE_CHANGED | Scoped: saved assignments |
+| STABILITY | Scoped: saved kind and clock |
+| PREFERENCES | Scoped: preferred OFF and consecutive preferences |
+| TIE_BREAK | Pending: exact original SHA-256 rank |
+
+The next gate is original client and frozen OR-Tools parity for every
+admitted temporal feature, then multi-week temporal domains and combined
+115/250 cases. A passing fixed-clock scale diagnostic alone is not E4.

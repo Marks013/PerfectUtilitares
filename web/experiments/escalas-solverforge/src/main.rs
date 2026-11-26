@@ -2,6 +2,9 @@ mod domain;
 mod model;
 mod score;
 mod wire;
+mod temporal;
+mod temporal_domain;
+mod temporal_score;
 
 use serde_json::{json, Value};
 use solverforge::{MoveThreadCount, SolverConfig};
@@ -160,11 +163,12 @@ fn main() {
     // External process deadline; 12s request acceptance stays separate.
     std::thread::spawn(|| {std::thread::sleep(Duration::from_secs(18));std::process::exit(124);});
     let args:Vec<String>=std::env::args().skip(1).collect();
+    let temporal=args.len()==1&&args[0]=="--temporal";
     let seed_only=args.len()==1&&args[0]=="--seed-only";
     let adaptive=args.len()==1&&args[0]=="--adaptive";
     let budget=match args.as_slice() {
         [] => Some(BUDGET),
-        [flag] if flag=="--seed-only" || flag=="--adaptive" => Some(BUDGET),
+        [flag] if flag=="--seed-only" || flag=="--adaptive" || flag=="--temporal" => Some(BUDGET),
         [flag] => flag.strip_prefix("--budget-seconds=").and_then(|v|v.parse::<u64>().ok())
             .filter(|v|matches!(v,2|4|8|12)).map(Duration::from_secs),
         _=>None,
@@ -173,7 +177,7 @@ fn main() {
     let mut reply=if budget.is_none() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","ARGUMENT")}
         else if std::io::stdin().take((MAX_BYTES+1) as u64).read_to_end(&mut bytes).is_err() {failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","INPUT")}
         else if bytes.len()>MAX_BYTES {failure(413,"SPIKE_INPUT_LIMIT","MAPPING","SIZE")}
-        else {std::panic::catch_unwind(||solve(&bytes,start,seed_only,budget.unwrap(),adaptive)).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
+        else {std::panic::catch_unwind(||if temporal {temporal::solve(&bytes,start,budget.unwrap())} else {solve(&bytes,start,seed_only,budget.unwrap(),adaptive)}).unwrap_or_else(|_|failure(500,"SPIKE_FAILED","RESULT","PANIC"))};
     reply["cgroup"]=cgroup().unwrap_or(Value::Null);
     let mut output=serde_json::to_vec(&reply).unwrap_or_default();
     if reply["body"]["status"]=="FEASIBLE" && start.elapsed()>budget.unwrap_or(BUDGET) {
