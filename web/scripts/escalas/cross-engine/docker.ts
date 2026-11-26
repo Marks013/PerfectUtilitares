@@ -262,7 +262,7 @@ export function temporalForgeAdapter(image: string) {
         const t=value.temporal,integer=(x:unknown)=>typeof x==="number"&&Number.isSafeInteger(x)&&x>=0;
         const vector=(x:unknown)=>Array.isArray(x)&&x.length===17&&x.every(integer);
         if(!t||t.version!==2||t.scope!=="SYNTHETIC_TEMPORAL"||t.partialModel!==true
-          ||![7,28,42].includes(t.days)||!integer(t.entities)||t.entities<1||t.entities>(t.days===7?12:250)
+          ||![7,14,21,28,35,42].includes(t.days)||!integer(t.entities)||t.entities<1||t.entities>(t.days===7?12:250)
           ||!integer(t.untimed)||t.untimed>t.entities
           ||t.domainMode!==(t.days===7?"EXACT_WEEK":"BOUNDED_PATHS")||t.pathLimit!==(t.days===7?30000:384)
           ||!integer(t.patterns)||t.patterns<t.entities||t.patterns>t.entities*t.pathLimit

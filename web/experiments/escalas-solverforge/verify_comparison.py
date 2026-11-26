@@ -142,7 +142,7 @@ def valid(row, profile):
         if assessment_valid(a):
             metrics = a["metrics"]
             check(integer(metrics.get("normalizedEstimatedShortage")), "SHORTAGE")
-            if profile["days"]!=42:
+            if profile["days"]!=42 and (row.get("kind")!="temporal" or "coverageAudit" in metrics):
                 sector_vector(metrics, profile)
                 verify_rest_metrics(metrics.get("restAudit"))
     accepted = (row.get("errorCode") is None and row["timely"] and row.get("outcome") == "NEW_PROPOSAL"
@@ -152,12 +152,14 @@ def valid(row, profile):
     check(row.get("acceptedNew") is accepted and row.get("engineNew") is engine_new, "ATTRIBUTION")
     if engine_new:
         check(row["rawAssessment"]["metrics"] == final["metrics"], "RAW_FINAL_DRIFT")
-        if profile["days"]==42:
-            # Frozen core omits both vectors for six weeks. These supplemental
-            # metrics come from the identical accepted candidate and the
-            # original coverage/rest evaluators, not the native solver.
-            sector_vector({**final["metrics"],"coverageAudit":row.get("scaleCoverageAudit")},profile)
-            verify_rest_metrics(row.get("scaleRestAudit"))
+        if profile["days"]==42 or row.get("kind")=="temporal":
+            # Frozen core only exports both vectors at the November E2
+            # horizons. Require supplements from the same original evaluators.
+            vector=sector_vector({**final["metrics"],"coverageAudit":row.get("scaleCoverageAudit")},profile)
+            rest=row.get("scaleRestAudit")
+            verify_rest_metrics(rest)
+            if "coverageAudit" in final["metrics"]:
+                check(vector==final["metrics"]["coverageAudit"] and rest==final["metrics"]["restAudit"],"SUPPLEMENT_DRIFT")
     sample = verify_cgroup(row.get("cgroup"))
     return engine_new and sample is not None
 
@@ -282,7 +284,7 @@ def pair_detail(pair, a, b, profile, comparable):
           and not (pair["regressed"] and pair["improved"]), "PAIR_FLAGS")
     def vector(row):
         metrics=row["finalAssessment"]["metrics"]
-        if profile["days"]==42:
+        if profile["days"]==42 or row.get("kind")=="temporal":
             metrics={**metrics,"coverageAudit":row.get("scaleCoverageAudit")}
         return sector_vector(metrics,profile)
     expected = first_sector_regression(vector(a),vector(b))
@@ -605,6 +607,7 @@ def verify_temporal(rows):
         check(first["scenario"]==case and profile["days"]==days and profile["includedOnWire"]==people
               and profile["activePositions"]==people*days
               and (days==7 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
+              and profile["paidHolidayCount"]==(1 if case=="holiday-absence-history" or days==42 else 0)
               and profile["searchBudgetSeconds"]==12
               and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"TEMPORAL_PROFILE")
         records={"ortools":[],"temporal":[]}
@@ -626,8 +629,7 @@ def verify_temporal(rows):
             if ok:
                 check(integer(r.get("tieBreakAudit")),"TEMPORAL_TIE_AUDIT")
                 metrics=r["finalAssessment"]["metrics"]
-                if days==42:
-                    sector_vector({**metrics,"coverageAudit":r.get("scaleCoverageAudit")},profile)
+                sector_vector({**metrics,"coverageAudit":r.get("scaleCoverageAudit")},profile)
             t=r.get("temporal")
             if name=="ortools":
                 check(t is None,"TEMPORAL_CONTROL")

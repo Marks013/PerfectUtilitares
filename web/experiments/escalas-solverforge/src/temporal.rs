@@ -7,10 +7,12 @@ use std::time::{Duration,Instant};
 use serde_json::{json,Value as V};
 use solverforge::{MoveThreadCount,SolverConfig};
 use solverforge::stream::collector::Accumulator;
+mod calendar;
 mod rules;
 mod tie_rank;
 mod seed;
 use rules::{Rules,enumerate,PATH_LIMIT};
+use calendar::Calendar;
 use crate::model::Presence;
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
 use crate::temporal_score::TemporalScore;
@@ -48,7 +50,7 @@ struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16}
 #[derive(Debug,PartialEq,Eq,Hash)]
-pub struct TemporalFacts{pub(crate) days:usize,clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
+pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
     priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64}
 #[derive(Clone)]
 pub struct Member{
@@ -172,16 +174,13 @@ fn prefix_preserved(before:&BTreeMap<usize,[i64;5]>,after:&BTreeMap<usize,[i64;5
     before.iter().all(|(s,c)|after.get(s).is_some_and(|next|next.iter().zip(c).all(|(a,b)|a<=b)))
 }
 fn expected(cost:Cost)->TemporalScore{TemporalScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]))}
-fn relative(date:&str)->Result<i32>{
-    check(civil_date(date),"DATE")?;
-    let n=date[8..].parse::<i32>().map_err(|_|"DATE")?;
-    match &date[..7]{"2026-09"=>Ok(n-62),"2026-10"=>Ok(n-32),"2026-11"=>Ok(n-1),"2026-12"=>Ok(n+29),"2027-01"=>Ok(n+60),_=>Err("TEMPORAL_DATE")}
-}
-fn dates(policy:&V,key:&str)->Result<BTreeSet<i32>>{
+fn dates(policy:&V,key:&str,calendar:&Calendar)->Result<BTreeSet<i32>>{
     let mut out=BTreeSet::new();
     if policy.get(key).is_none(){return Ok(out);}
     for item in array(policy,key)?{
-        let d=relative(item.as_str().ok_or("DATE")?)?;
+        let date=item.as_str().ok_or("DATE")?;
+        if key=="paidHolidayDates"{check(calendar::paid_date(date),"PAID_HOLIDAY_DATE")?;}
+        let d=calendar.relative(date)?;
         check(out.insert(d),"DUPLICATE_DATE")?;
     }
     Ok(out)
@@ -236,9 +235,13 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     let input=&root["input"];let policy=&input["policy"];
     check(number(input,"schemaVersion")?==1&&text(input,"branchCode")?=="SYNTH"&&boolean(input,"simulation",false)?
         &&text(input,"timeZone")?=="America/Sao_Paulo"&&text(input,"planningWeekStartsOn")?=="SUNDAY"
-        &&number(input,"restRulesVersion")?==3&&text(input,"startDate")?=="2026-11-01"
+        &&number(input,"restRulesVersion")?==3
         &&input.get("visibleMonth").is_none(),"TEMPORAL_HORIZON")?;
-    let days=match text(input,"endDate")?{"2026-11-07"=>7,"2026-11-28"=>28,"2026-12-12"=>42,_=>return Err("TEMPORAL_HORIZON")};
+    let first=text(input,"startDate")?;
+    let calendar=Calendar::new(first,text(input,"endDate")?)?;
+    let days=calendar.labels.len();
+    let labels=Arc::new(calendar.labels.clone());
+    let relative=|date:&str|calendar.relative(date);
     for k in input.as_object().unwrap().keys(){check(!k.starts_with('_'),"PRIVATE_FIELD_UNSUPPORTED")?;}
     check(input.get("planningCalendarSource").is_none(),"TEMPORAL_METADATA")?;
     for k in ["calendarProvenance","collectiveAgreement","operationalCertificate","mealIntervalAgreement"]{
@@ -256,8 +259,8 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         &&range(meal,30,180)&&range(inter,660,1440)&&range(weekly_rest,2100,4320)&&range(max_run,1,6)
         &&range(closing,300,1440),"POLICY_LIMIT")?;
     let limit_blocks=boolean(policy,"limitContinuousWorkBlocks",false)?;
-    let closed=dates(policy,"closedDates")?;let holidays=dates(policy,"holidayDates")?;
-    let paid=dates(policy,"paidHolidayDates")?;let authorized=dates(policy,"authorizedHolidayDates")?;
+    let closed=dates(policy,"closedDates",&calendar)?;let holidays=dates(policy,"holidayDates",&calendar)?;
+    let paid=dates(policy,"paidHolidayDates",&calendar)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
     check(paid.is_subset(&closed)&&paid.is_subset(&holidays)&&authorized.is_subset(&holidays),"HOLIDAY_POLICY")?;
     let closed_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&closed.contains(&(d as i32)));
     let holiday_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&holidays.contains(&(d as i32)));
@@ -317,7 +320,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }
     }
     let mut facts:Vec<_>=(0..sectors.len()).map(|sector|TemporalFacts{
-        days,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,
+        days,dates:Arc::clone(&labels),clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,
         priority:std::array::from_fn(|d|{
             let matches=|p:&&(i32,i32,i64,Option<usize>)|p.0<=d as i32&&p.1>=d as i32;
             priorities.iter().filter(matches).filter(|p|p.3==Some(sector)).map(|p|p.2).max()
@@ -361,7 +364,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let active=text(p,"activeFrom")?;
         let schedule=text(p,"scheduleMode")?;
         let untimed=matches!(schedule,"UNTIMED"|"MISSING");
-        check((active.is_empty()||civil_date(active)&&active<="2026-11-01")&&p.get("activeUntil").is_none()
+        check((active.is_empty()||civil_date(active)&&active<=first)&&p.get("activeUntil").is_none()
             &&boolean(p,"planningEnabled",true)?&&(untimed||schedule=="TIMED")&&p.get("simulationDailyMinutes").is_none(),"PERSON_PROFILE")?;
         for k in ["manualShiftOverrides","manualShiftBaseIds"]{check(empty_array(p,k),"MANUAL_PROVENANCE_UNSUPPORTED")?;}
         let mut manual=BTreeMap::new();
@@ -472,7 +475,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let pinned=allowed.len()==1;
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{0}else{hours},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,untimed,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&crate::wire::date(d))}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader,untimed,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -532,7 +535,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     for person in &plan.employees{
         let p=person.catalog[person.pattern.unwrap()];
         for (day,&s) in p.states.iter().enumerate().take(person.facts.days){
-            let mut row=json!({"employeeId":person.name_id,"date":crate::wire::date(day),
+            let mut row=json!({"employeeId":person.name_id,"date":person.facts.dates[day],
                 "kind":match s{OFF=>"OFF",ABS=>"ABSENCE",HOL=>"HOLIDAY",DUTY=>"DUTY",_=>"WORK"}});
             if let Some(c)=clock(&person.facts.clocks,s){row["shiftId"]=json!(c.id);}
             if let Some(lock)=person.lock_flags[day]{row["locked"]=json!(lock);}
@@ -594,9 +597,16 @@ mod tests{
         data["input"]["policy"]["closedDates"]=json!(["2026-11-03"]);
         data["input"]["policy"]["holidayDates"]=json!(["2026-11-03"]);
         data["input"]["policy"]["paidHolidayDates"]=json!(["2026-11-03"]);
-        data["input"]["assignments"]=json!([{"employeeId":"person-0","date":"2026-11-05","kind":"ABSENCE","locked":true}]);
+        assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("PAID_HOLIDAY_DATE")));
+        data["input"]["startDate"]=json!("2026-04-26");data["input"]["endDate"]=json!("2026-05-02");
+        data["input"]["employees"][0]["history"][0]["date"]=json!("2026-04-19");
+        data["input"]["policy"]["closedDates"]=json!(["2026-05-01"]);
+        data["input"]["policy"]["holidayDates"]=json!(["2026-05-01"]);
+        data["input"]["policy"]["paidHolidayDates"]=json!(["2026-05-01"]);
+        data["input"]["assignments"]=json!([{"employeeId":"person-0","date":"2026-04-30","kind":"ABSENCE","locked":true}]);
         let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
-        assert!(plan.employees[0].catalog.iter().all(|p|p.states[2]==HOL&&p.states[4]==ABS));
+        assert!(plan.employees[0].catalog.iter().all(|p|p.states[5]==HOL&&p.states[4]==ABS&&p.states[0]==OFF));
+        assert_eq!(plan.employees[0].facts.dates[5],"2026-05-01");
     }
     #[test]
     fn locked_hours_only_grid_and_manual_absence_are_preserved(){

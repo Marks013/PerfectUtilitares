@@ -157,10 +157,15 @@ function temporalScenario(name:TemporalCase):Scenario{
     id:"person-"+i,name:"Synthetic person "+i,registration:String(i),sector:"S",role:"Repositor",scheduleMode:"TIMED" as const}));
   input.demands=[{id:"late-demand",date:"2026-11-04",sector:"S",start:1050,end:1140,minimum:1,estimated:false}];
   if(name==="holiday-absence-history"){
-    input.policy.holidayDates=["2026-11-03"];input.policy.closedDates=["2026-11-03"];input.policy.paidHolidayDates=["2026-11-03"];
+    // The frozen product admits paid closed holidays only on Jan 1, May 1
+    // and Dec 25. May 1 keeps this fixture before the weekly-law transition.
+    input.startDate="2026-04-26";input.endDate="2026-05-02";
+    Object.assign(input.policy,{validFrom:input.startDate,validUntil:input.endDate,
+      holidayDates:["2026-05-01"],closedDates:["2026-05-01"],paidHolidayDates:["2026-05-01"]});
+    input.demands[0].date="2026-04-29";
     input.employees[0].historyKnown=true;
-    input.employees[0].history=[{employeeId:"person-0",date:"2026-10-25",kind:"WORK",shiftId:"eight"}];
-    input.assignments=[{employeeId:"person-0",date:"2026-11-05",kind:"ABSENCE",locked:true,absenceSource:"MANUAL"}];
+    input.employees[0].history=[{employeeId:"person-0",date:"2026-04-19",kind:"WORK",shiftId:"eight"}];
+    input.assignments=[{employeeId:"person-0",date:"2026-04-30",kind:"ABSENCE",locked:true,absenceSource:"MANUAL"}];
   }
   if(name==="hours-only"){
     const off=[[0,2],[1,4],[0,3]];
@@ -178,9 +183,9 @@ function temporalScenario(name:TemporalCase):Scenario{
 
 function combinedTemporalScenario(size:number):Scenario{
   const input=newInput("SYNTH","Synthetic six-week combined temporal","2026-11",42);
-  Object.assign(input,{startDate:"2026-11-01",endDate:"2026-12-12",visibleMonth:undefined,
+  Object.assign(input,{startDate:"2026-04-05",endDate:"2026-05-16",visibleMonth:undefined,
     simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:"DAYS_AND_HOURS"});
-  const holiday="2026-11-20";
+  const holiday="2026-05-01";
   Object.assign(input.policy,{calendarMode:"MANUAL",validFrom:input.startDate,validUntil:input.endDate,
     closedDates:[holiday],holidayDates:[holiday],paidHolidayDates:[holiday]});
   const shift=(id:string,start:number,block:number,meal:number):EscalaInput["shifts"][number]=>({id,name:id,segments:[
@@ -198,27 +203,27 @@ function combinedTemporalScenario(size:number):Scenario{
       ...(untimed?{leadership:{role:"SECTOR",source:"MANUAL",sectors:[sector]}}:{})};
     if(i%12===0||i%12===3){
       person.historyKnown=true;
-      person.history=[untimed?{employeeId:id,date:"2026-10-25",kind:"DUTY"}:
-        {employeeId:id,date:"2026-10-25",kind:"WORK",shiftId:clocks[0]}];
+      person.history=[untimed?{employeeId:id,date:"2026-03-29",kind:"DUTY"}:
+        {employeeId:id,date:"2026-03-29",kind:"WORK",shiftId:clocks[0]}];
     }
     return person;
   });
   const sectors=[...new Set(input.employees.map(p=>p.sector))];
   input.mixed42Sectors=sectors;
-  input.movementPriorities=[{startDate:"2026-11-04",endDate:"2026-11-04",level:"HIGH"}];
-  input.assignments=input.employees.filter((_,i)=>i%12===1).map(p=>({employeeId:p.id,date:"2026-11-12",
+  input.movementPriorities=[{startDate:"2026-04-08",endDate:"2026-04-08",level:"HIGH"}];
+  input.assignments=input.employees.filter((_,i)=>i%12===1).map(p=>({employeeId:p.id,date:"2026-04-16",
     kind:"ABSENCE" as const,locked:true,absenceSource:"MANUAL" as const}));
   // Explicitly retain one timed clock and one duty in each sector.
   for(const p of input.employees.filter((_,i)=>i%12===0||i%12===2)){
-    input.assignments.push(p.scheduleMode==="UNTIMED"?{employeeId:p.id,date:"2026-11-04",kind:"DUTY",locked:true}:
-      {employeeId:p.id,date:"2026-11-04",kind:"WORK",shiftId:p.shiftIds[0],locked:true});
+    input.assignments.push(p.scheduleMode==="UNTIMED"?{employeeId:p.id,date:"2026-04-08",kind:"DUTY",locked:true}:
+      {employeeId:p.id,date:"2026-04-08",kind:"WORK",shiftId:p.shiftIds[0],locked:true});
   }
   const days=dateRange(input.startDate,input.endDate);
   input.demands=sectors.flatMap((sector,s)=>days.flatMap((date,d)=>{
     if(date===holiday)return [];
     const base:EscalaInput["demands"]=[{id:"coverage-"+s+"-"+d,date,sector,start:480,end:540,minimum:3,estimated:true}];
     if(dayOfWeek(date)===6)base.push({id:"sunday-"+s+"-"+d,date,sector,start:1050,end:1140,minimum:1,estimated:true});
-    if(date==="2026-11-04")base.push({id:"confirmed-"+s,date,sector,role:"Repositor",start:480,end:540,minimum:1,estimated:false});
+    if(date==="2026-04-08")base.push({id:"confirmed-"+s,date,sector,role:"Repositor",start:480,end:540,minimum:1,estimated:false});
     return base;
   }));
   const parsed=escalaInputSchema.parse(input);
@@ -274,9 +279,9 @@ function temporalChecks(name:TemporalCase,scenario:Scenario,trial:Trial){
   const lookup=new Map(rows.map(a=>[a.employeeId+"\0"+a.date,a]));
   if(name==="hours-only"&&old.some(a=>{const b=lookup.get(a.employeeId+"\0"+a.date);return !b||a.kind!==b.kind||a.locked&&a.shiftId!==b.shiftId;}))return false;
   if(name==="holiday-absence-history"){
-    if(rows.filter(a=>a.date==="2026-11-03"&&a.kind==="HOLIDAY").length!==3)return false;
-    const absent=lookup.get("person-0\0"+"2026-11-05");
-    if(absent?.kind!=="ABSENCE"||lookup.get("person-0\0"+"2026-11-01")?.kind==="WORK")return false;
+    if(rows.filter(a=>a.date==="2026-05-01"&&a.kind==="HOLIDAY").length!==3)return false;
+    const absent=lookup.get("person-0\0"+"2026-04-30");
+    if(absent?.kind!=="ABSENCE"||lookup.get("person-0\0"+"2026-04-26")?.kind==="WORK")return false;
   }else{
     for(const p of scenario.prepared.employees){
       const own=rows.filter(a=>a.employeeId===p.id&&a.kind==="WORK");
@@ -284,7 +289,7 @@ function temporalChecks(name:TemporalCase,scenario:Scenario,trial:Trial){
     }
   }
   if(name==="rest-only"&&rows.some(a=>a.shiftId==="late"))return false;
-  return rows.some(a=>a.date==="2026-11-04"&&a.shiftId==="nine");
+  return rows.some(a=>a.date===scenario.prepared.demands[0].date&&a.shiftId==="nine");
 }
 
 async function main() {
@@ -296,9 +301,16 @@ async function main() {
   if (images.ortools.revision!==baselineRevision||images.timefold.revision!==CONTROL||images.solverforge.revision!==snapshot.revision
     ||Object.values(images).some(x=>x.architecture!=="arm64")) throw Error("FORGE_IMAGE_IDENTITY");
   if(mode==="temporal"){
+    let failures=0;
     for(const name of TEMPORAL_CASES){
-      const scenario=temporalScenario(name),frozen=await captureEnvelope(scenario);
+      let stage="SCHEMA";
+      try{
+      const scenario=temporalScenario(name);
+      stage="CAPTURE";
+      const frozen=await captureEnvelope(scenario);
+      stage="PREFLIGHT";
       validateBaselineEnvelope(baseline,frozen);
+      stage="MEASURE";
       const profile=envelopeProfile(frozen);
       const size=combinedSize(name)||3,days=combinedSize(name)?42:7;
       if(profile.includedOnWire!==size||profile.days!==days||profile.activePositions!==size*days
@@ -316,14 +328,25 @@ async function main() {
           round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
             identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
             featureChecks:temporalChecks(name,scenario,trial),tieBreakAudit:temporalTieAudit(trial),
-            scaleCoverageAudit:days===42?scaleCoverageAudit(trial):null,
-            scaleRestAudit:days===42?scaleRestAudit(trial):null,...record}});
+            scaleCoverageAudit:scaleCoverageAudit(trial),scaleRestAudit:scaleRestAudit(trial),...record}});
         }
         const control=round.find(x=>x.variant==="ortools")!.trial;
         for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(control,item.trial)}));
       }
+      }catch(error){
+        failures++;
+        // Every fixture is synthetic, but still log only known stage and
+        // schema paths/codes, not messages, IDs or assignment contents.
+        const issues=error&&typeof error==="object"&&"issues" in error&&Array.isArray(error.issues)
+          ?error.issues.slice(0,12).map((issue:{path?:unknown;code?:unknown})=>({
+            path:Array.isArray(issue.path)?issue.path.map(x=>typeof x==="number"?"[]":typeof x==="string"&&/^[a-zA-Z][a-zA-Z0-9_]{0,59}$/.test(x)?x:"?").join("."):"",
+            code:typeof issue.code==="string"&&/^[a-z_]+$/.test(issue.code)?issue.code:"unknown"})):[];
+        const code=error instanceof Error&&/^(FORGE|CROSS_ENGINE)_[A-Z_]+$/.test(error.message)?error.message:"TEMPORAL_CASE_ERROR";
+        console.error(JSON.stringify({event:"temporal-case-failed",scenario:name,stage,code,issues}));
+      }
     }
     if(source().revision!==snapshot.revision)throw Error("FORGE_SOURCE_DRIFT");
+    if(failures)throw Error("FORGE_TEMPORAL_CASE_FAILED");
     return;
   }
   if(mode==="scale"){
