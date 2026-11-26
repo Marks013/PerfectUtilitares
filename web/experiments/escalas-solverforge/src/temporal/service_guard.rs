@@ -3,7 +3,7 @@
 //! each represented deficit and peak. No external solver roster is imported.
 use std::collections::{BTreeMap,BTreeSet};
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
-use super::clock;
+use super::{Member,clock};
 
 type ServiceKey=(usize,usize,u8,i32,i32);
 type GapKey=(usize,bool,Option<usize>,u8,i32,i32);
@@ -15,9 +15,15 @@ pub(super) struct Snapshot{
 }
 impl Snapshot{
     pub fn capture(plan:&TemporalPlan)->Self{
+        let members:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+        Self::capture_members(members.iter())
+    }
+    // Construction replacements already have resolved Member values. Reuse
+    // the native guard, not a weaker day-count or aggregate-cost surrogate.
+    pub fn capture_members<'a>(members:impl IntoIterator<Item=&'a Member>)->Self{
         let mut result=Self::default();
-        let mut groups=BTreeMap::<usize,Vec<&TemporalEmployee>>::new();
-        for person in &plan.employees{groups.entry(person.sector).or_default().push(person);}
+        let mut groups=BTreeMap::<usize,Vec<&Member>>::new();
+        for person in members{groups.entry(person.sector).or_default().push(person);}
         for (sector,people) in groups{
             let facts=&people[0].facts;
             let mut edges=BTreeSet::from([facts.closing-60,facts.closing]);
@@ -26,8 +32,8 @@ impl Snapshot{
             let edges:Vec<_>=edges.into_iter().collect();
             let mut counts=BTreeMap::<(usize,usize,usize),i64>::new();
             for p in &people{
-                let Some(index)=p.pattern else{continue;};
-                for (day,&state) in p.catalog[index].states.iter().enumerate().take(facts.days){
+                let Some(pattern)=p.pattern else{continue;};
+                for (day,&state) in pattern.states.iter().enumerate().take(facts.days){
                     let Some(c)=clock(&facts.clocks,state) else{continue;};
                     for (offset,a,b) in c.civil_parts(){
                         let civil=day+offset;
@@ -67,7 +73,11 @@ impl Snapshot{
         result
     }
     pub fn preserves(&self,plan:&TemporalPlan)->bool{
-        let after=Self::capture(plan);
+        let members:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+        self.preserves_members(members.iter())
+    }
+    pub fn preserves_members<'a>(&self,members:impl IntoIterator<Item=&'a Member>)->bool{
+        let after=Self::capture_members(members);
         self.days.is_subset(&after.days)
             &&self.service.iter().all(|(key,count)|after.service.get(key).is_some_and(|next|next>=count))
             &&after.gaps.iter().all(|(key,next)|{

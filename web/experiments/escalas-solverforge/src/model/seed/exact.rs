@@ -100,6 +100,20 @@ pub(super) fn improve(plan:&mut Plan,deadline:Instant)->usize{
                 'neighbors: for add in (0..42).step_by(7){
                     if worked(old,add)||!facts.bands.iter().any(|b|b.estimated&&b.day==add
                         &&b.gap(att[add]|bit)<b.gap(att[add])){continue;}
+                    // A legal profile can still have spare Sunday capacity.
+                    // Do not require deleting a worked (possibly locked) Sunday
+                    // when one same-week weekday exchange is sufficient.
+                    for from in add+1..add+6{
+                        if !worked(old,from){continue;}
+                        if trials>=MAX_TRIALS||Instant::now()>=until{break 'neighbors;}
+                        trials+=1;
+                        let mask=old^(1u64<<add)^(1u64<<from);
+                        if !legal(p,mask)||!personal(p,old,mask){continue;}
+                        let after=changed_cost(&rows,(slot,mask),None);
+                        if !acceptable(before,after)||best.as_ref().is_some_and(|(c,_,_)|after>=*c){continue;}
+                        let mut trial=att;apply(&mut trial,p,old,mask);
+                        if coverage_preserved(&facts,&att,&trial){best=Some((after,mask,None));}
+                    }
                     for remove in (0..42).step_by(7){
                         if !worked(old,remove){continue;}
                         for from in add+1..add+6{
@@ -203,5 +217,31 @@ mod tests{
             estimated:true,minimum:1,eligible:a|b,role_floors:vec![(a,1)]}]};
         let mut before=[Presence::EMPTY;42];before[1]=a;let mut after=before;after[1]=b;
         assert!(!coverage_preserved(&facts,&before,&after));
+    }
+
+    #[test]
+    fn sunday_can_be_added_without_removing_a_locked_sunday(){
+        let mut plan=fixture();plan.employees.truncate(2);
+        let old=4_190_533_238_396u64;
+        let sundays=(0..42).step_by(7).fold(0u64,|mask,d|mask|(1u64<<d));
+        let eligible=Presence::one(0)|Presence::one(1);
+        let facts=Arc::new(Sector{days:42,members:2,bands:vec![Band{
+            day:0,start:480,minutes:60,estimated:true,minimum:1,eligible,
+            role_floors:vec![(eligible,1)]}]});
+        for p in &mut plan.employees{
+            p.facts=Arc::clone(&facts);p.cohort=p.id;
+            p.catalog=Arc::new(vec![old]);p.allowed=Arc::from(vec![0usize]);
+            p.pattern=Some(0);p.pinned=p.id!=0;p.locked_work=old&sundays;
+            assert!(legal(p,old));
+        }
+        let before=model::evaluate(&plan);assert_eq!(before[1],60);
+        assert!(improve(&mut plan,Instant::now()+Duration::from_secs(1))>0);
+        assert!(model::validate_complete(&plan));
+        let after=model::evaluate(&plan);assert_eq!(after[1],0);
+        assert!(after.iter().zip(before).all(|(a,b)|*a<=b));
+        assert_eq!(plan.employees[0].mask().unwrap()&plan.employees[0].locked_work,
+            plan.employees[0].locked_work);
+        assert_eq!((plan.employees[0].mask().unwrap()&sundays).count_ones(),3);
+        assert_eq!(plan.employees[1].mask(),Some(old));
     }
 }

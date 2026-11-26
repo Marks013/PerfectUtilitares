@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
 use super::super::{Cost,Member,clock,work,global_cost,sector_cost};
+use super::super::service_guard::Snapshot;
 
 const SHORTLIST:usize=8;
 const MAX_EVALUATIONS:usize=200_000;
@@ -72,6 +73,7 @@ pub(super) fn improve(plan:&mut TemporalPlan,deadline:Instant){
                 .fold(0,|mask,d|mask|1u64<<d)
         }).collect();
         let mut global=global_cost(all.iter());
+        let mut service_guard=Snapshot::capture_members(rows.iter());
         for _ in 0..2{
             let mut changed=false;let mut shortlist=vec![Vec::<(Rank,usize)>::new();indices.len()];
             for (slot,&i) in indices.iter().enumerate(){
@@ -86,13 +88,20 @@ pub(super) fn improve(plan:&mut TemporalPlan,deadline:Instant){
                     let after=rank(&rows,&all,&indices,global,coupled(&old),opportunities);
                     let options=&mut shortlist[slot];let at=options.partition_point(|(r,_)|r<=&after);
                     if at<SHORTLIST{options.insert(at,(after,index));options.truncate(SHORTLIST);}
+                    // Keep unguarded individual alternatives in the shortlist:
+                    // a partner may repair their intermediate service loss.
+                    // Only the complete candidate can be accepted.
                     if acceptable(&before,&after,before_pairs,pairs(&rows))
-                        &&best.as_ref().is_none_or(|(r,_)|after<*r){best=Some((after,index));}
+                        &&best.as_ref().is_none_or(|(r,_)|after<*r)
+                        &&service_guard.preserves_members(rows.iter()){
+                        best=Some((after,index));
+                    }
                 }
                 rows[slot]=old;
                 if let Some((_,index))=best{
                     selected[slot]=index;rows[slot]=member_at(&plan.employees[i],index);all[i]=rows[slot].clone();
-                    plan.employees[i].pattern=Some(index);global=global_cost(all.iter());changed=true;
+                    plan.employees[i].pattern=Some(index);global=global_cost(all.iter());
+                    service_guard=Snapshot::capture_members(rows.iter());changed=true;
                 }
             }
             if Instant::now()>=until||evaluated>=MAX_EVALUATIONS{break;}
@@ -135,7 +144,10 @@ pub(super) fn improve(plan:&mut TemporalPlan,deadline:Instant){
                             rows[a]=next_a;rows[b]=next_b;
                             let after=rank(&rows,&all,&indices,global,coupled(&old_a)||coupled(&old_b),opportunities);
                             if acceptable(&before,&after,before_pairs,pairs(&rows))
-                                &&best.as_ref().is_none_or(|(r,_,_,_,_)|after<*r){best=Some((after,a,ia,b,ib));}
+                                &&best.as_ref().is_none_or(|(r,_,_,_,_)|after<*r)
+                                &&service_guard.preserves_members(rows.iter()){
+                                best=Some((after,a,ia,b,ib));
+                            }
                         }
                     }
                     rows[a]=old_a;rows[b]=old_b;
@@ -146,7 +158,8 @@ pub(super) fn improve(plan:&mut TemporalPlan,deadline:Instant){
                     let i=indices[slot];selected[slot]=index;rows[slot]=member_at(&plan.employees[i],index);
                     all[i]=rows[slot].clone();plan.employees[i].pattern=Some(index);
                 }
-                global=global_cost(all.iter());changed=true;
+                global=global_cost(all.iter());
+                service_guard=Snapshot::capture_members(rows.iter());changed=true;
             }
             if !changed{break;}
         }
@@ -195,12 +208,16 @@ mod tests{
         data["input"]["defaultWeeklyHours"]=json!(hours);data["input"]["assignments"]=json!([]);data["input"]["movementPriorities"]=json!([]);
     }
     #[test]
-    fn compound_manager_worker_repair_crosses_a_single_move_trap(){
+    fn compound_manager_worker_repair_preserves_existing_timed_dates(){
         let mut plan=trapped();let before=evaluate(&plan);assert_eq!(before[16],135);
+        let guard=super::super::super::service_guard::Snapshot::capture(&plan);
         improve(&mut plan,Instant::now()+Duration::from_secs(2));let after=evaluate(&plan);
-        assert_eq!(&after[..16],&before[..16]);assert_eq!(after[16],125);
+        // The former expected tie gain (135 -> 125) removed the only timed
+        // worker from Friday in sector S. That is not an admissible gain.
+        assert!(guard.preserves(&plan));
+        assert!(after<=before);
         let worker=&plan.employees[1];let path=worker.catalog[worker.pattern.unwrap()];
-        assert!(work(path.states[4])&&path.states[5]==0);
+        assert!(work(path.states[5]));
         assert!(plan.employees.iter().all(|p|p.pattern.is_some_and(|i|p.allowed.binary_search(&i).is_ok())));
         assert!(work(plan.employees[0].catalog[plan.employees[0].pattern.unwrap()].states[3]));
     }
@@ -276,5 +293,60 @@ mod tests{
         let p=&plan.employees[1];let path=p.catalog[p.pattern.unwrap()];
         assert!(path.states[..3].iter().chain(&path.states[17..21]).all(|&s|s==16));assert_eq!(path.states[4],3);
         assert_eq!(p.lock_flags[4],Some(true));
+    }
+
+    #[test]
+    fn member_snapshot_agrees_with_native_plan_snapshot(){
+        let plan=trapped();let members:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+        let native=super::super::super::service_guard::Snapshot::capture(&plan);
+        let construction=super::super::super::service_guard::Snapshot::capture_members(members.iter());
+        assert!(native.preserves_members(members.iter()));
+        assert!(construction.preserves(&plan));
+    }
+    #[test]
+    fn unchanged_day_count_cannot_hide_a_lost_date(){
+        let plan=trapped();let mut rows:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+        let guard=super::super::super::service_guard::Snapshot::capture_members(rows.iter());
+        // Swap the worker's Thursday OFF with Friday WORK: same number of
+        // covered days and weekly minutes, but Friday service disappears.
+        rows[1].pattern.as_mut().unwrap().states.swap(4,5);
+        assert!(!guard.preserves_members(rows.iter()));
+    }
+    #[test]
+    fn individual_loss_is_allowed_only_when_the_compound_restores_service(){
+        let plan=trapped();let mut rows:Vec<_>=plan.employees.iter().map(TemporalEmployee::member).collect();
+        rows[2].sector=rows[1].sector;rows[2].role=rows[1].role;
+        rows[2].facts=std::sync::Arc::clone(&rows[1].facts);
+        // Align actual worker service and then move a clock between peers.
+        rows[2].pattern=rows[1].pattern;
+        rows[2].pattern.as_mut().unwrap().states[5]=super::super::super::OFF;
+        let guard=super::super::super::service_guard::Snapshot::capture_members(rows.iter());
+        let state=rows[1].pattern.unwrap().states[5];
+        rows[1].pattern.as_mut().unwrap().states[5]=super::super::super::OFF;
+        assert!(!guard.preserves_members(rows.iter()));
+        rows[2].pattern.as_mut().unwrap().states[5]=state;
+        assert!(guard.preserves_members(rows.iter()));
+        rows[2].pattern.as_mut().unwrap().states[5]=super::super::super::DUTY;
+        assert!(!guard.preserves_members(rows.iter()));
+    }
+    #[test]
+    fn sunday_service_loss_is_rejected_even_without_a_sunday_demand(){
+        let mut data=fixture();timed_people(&mut data,42,&["eight","nine"]);
+        data["input"]["mixed42Sectors"]=json!(["S"]);
+        data["input"]["shifts"]=Value::Array([("eight",240,60),("nine",270,180)]
+            .into_iter().map(|(id,n,meal)|json!({"id":id,"segments":[
+                {"kind":"WORK","start":420,"end":420+n},
+                {"kind":"BREAK","start":420+n,"end":420+n+meal},
+                {"kind":"WORK","start":420+n+meal,"end":420+2*n+meal}]})).collect());
+        data["input"]["demands"]=json!([{"id":"d","date":"2026-11-04","sector":"S",
+            "start":480,"end":540,"minimum":1,"estimated":false}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        for p in &mut plan.employees{
+            p.pattern=p.catalog.iter().position(|path|path.states[..7]==[4,0,3,4,0,3,3]);
+            assert!(p.pattern.is_some());
+        }
+        let guard=super::super::super::service_guard::Snapshot::capture(&plan);
+        improve(&mut plan,Instant::now()+Duration::from_secs(2));
+        assert!(guard.preserves(&plan));assert_eq!(evaluate(&plan)[0],0);
     }
 }
