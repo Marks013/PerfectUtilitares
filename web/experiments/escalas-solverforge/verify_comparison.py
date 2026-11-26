@@ -424,6 +424,70 @@ def verify_curve(rows):
             "qualityGatePassed":False,"tailSampleSufficient":False,"variants":result}
 
 
+def verify_personal(rows):
+    modes=("DAYS_AND_HOURS","REST_ONLY","HOURS_ONLY")
+    names=("ortools","native-12","adaptive")
+    check(len(rows)==27 and all(isinstance(r,dict) for r in rows),"PERSONAL_COUNT")
+    result={}
+    source=None
+    images={}
+    for case_index,mode in enumerate(modes):
+        subset=rows[case_index*9:(case_index+1)*9]
+        first=subset[0]
+        profile=first["profile"]
+        check(profile["includedOnWire"]==3 and profile["activePositions"]==21 and profile["days"]==7
+              and profile["mode"]==mode and profile["savedAssignments"]==(21 if mode=="HOURS_ONLY" else 0)
+              and profile["confirmedDemands"]==7 and profile["searchBudgetSeconds"]==12
+              and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"PERSONAL_PROFILE")
+        check(sha(first["inputHash"],64) and all(sha(first[k],40) for k in ("revision","evaluatorTree","comparatorBlob")),"PERSONAL_SOURCE")
+        current=tuple(first[k] for k in ("revision","evaluatorTree","comparatorBlob"))
+        source=source or current
+        check(source==current,"PERSONAL_SOURCE_DRIFT")
+        records={name:[] for name in names}
+        for index,r in enumerate(subset):
+            repetition,position=divmod(index,3)
+            name=names[(repetition+position)%3]
+            check(r["kind"]=="personal" and r["scenario"]=="personal-"+mode and r["variant"]==name
+                and r["repetition"]==repetition and r["position"]==position,"PERSONAL_ORDER")
+            for key in ("scenario","inputHash","revision","evaluatorTree","comparatorBlob","profile","baselineRevision",
+                        "timefoldRevision","resources","arch","sampleKind","hostCapacityMeasured","liveHttpMeasured"):
+                check(r.get(key)==first.get(key),"PERSONAL_DRIFT")
+            check(r["baselineRevision"]==BASE and r["timefoldRevision"]==CONTROL and r["resources"]==RESOURCES
+                and r["arch"]=="arm64" and r["sampleKind"]=="cold-container"
+                and r["hostCapacityMeasured"] is False and r["liveHttpMeasured"] is False,"PERSONAL_ISOLATION")
+            im=r["identity"];engine="ortools" if name=="ortools" else "solverforge"
+            check(im.get("architecture")=="arm64" and im.get("revision")==(BASE if engine=="ortools" else r["revision"])
+                and isinstance(im.get("image"),str) and im["image"].startswith("sha256:") and sha(im["image"][7:],64),"PERSONAL_IMAGE")
+            check(images.setdefault(engine,im)==im,"PERSONAL_IMAGE_DRIFT")
+            check(type(r.get("personalRulesPreserved")) is bool,"PERSONAL_RULES_FLAG")
+            ok=valid(r,profile)
+            if engine=="solverforge":
+                check(r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"),"PERSONAL_PROOF")
+                if ok:native(r,profile,adaptive=name=="adaptive")
+            else:check(r.get("forge") is None,"PERSONAL_FORGE_TELEMETRY")
+            records[name].append((r,ok))
+        reports={}
+        for name in names:
+            accepted=[r for r,ok in records[name] if ok and r["personalRulesPreserved"]]
+            comparisons={}
+            for control,field in (("ortools","againstOrtools"),("native-12","againstNative12")):
+                for i,(r,ok) in enumerate(records[name]):
+                    other,other_ok=records[control][i]
+                    pair_detail(r[field],other,r,profile,ok and other_ok)
+                comparisons[control]={"comparable":sum(r[field]["comparable"] is True for r,_ in records[name]),
+                    "regressions":sum(r[field]["regressed"] is True for r,_ in records[name]),
+                    "retained":sum(r[field]["retained"] is True for r,_ in records[name])}
+            reports[name]={"validPersonal":len(accepted),"samples":3,"comparisons":comparisons,
+                "productP50Seconds":p50([r["productSeconds"] for r in accepted])}
+        result[mode]=reports
+    passed=all(reports[name]["validPersonal"]==3 for reports in result.values() for name in names)
+    noninferior=passed and all(c["comparable"]==3 and c["regressions"]==0 and c["retained"]==0
+        for reports in result.values() for name in ("native-12","adaptive")
+        for control,c in reports[name]["comparisons"].items() if name=="adaptive" or control=="ortools")
+    return {"decision":"E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED" if noninferior else "E3A_FIXED_CLOCK_REVIEW_REQUIRED",
+        "modes":result,"fullE3Parity":False,"productionCertified":False}
+
+
 def tail_percentile(values):
     return sorted(values)[math.ceil(.95*len(values))-1] if len(values)>=30 else None
 
@@ -529,9 +593,9 @@ if __name__ == "__main__":
             sys.exit(0)
         with open(sys.argv[1],encoding="utf-8") as stream:
             rows=[json.loads(line) for line in stream if line.strip()]
-            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify(rows,sys.argv[2])
+            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify(rows,sys.argv[2])
         print(json.dumps(report,separators=(",",":")))
-        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED") else 1)
+        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED") else 1)
     except (ValueError,KeyError,TypeError,IndexError,AttributeError,OSError,OverflowError):
         print("SolverForge comparison rejected: invalid or inconsistent evidence",file=sys.stderr)
         sys.exit(1)

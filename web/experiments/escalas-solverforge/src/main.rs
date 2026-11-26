@@ -55,7 +55,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
     let mut native_cost=None;
     if !seed_only {
         let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(search_start).as_secs();
-        if remaining==0 {
+        if remaining==0 || incumbent.is_some()&&plan.employees.iter().all(|p|p.pinned) {
             if incumbent.is_some() {retained=true;}
             else {return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");}
         } else {

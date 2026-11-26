@@ -18,7 +18,7 @@ jobs:
   solverforge:
     name: Pinned Rust build and three-engine comparison (ARM64)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 75
+    timeout-minutes: 90
     defaults:
       run:
         working-directory: web
@@ -117,6 +117,15 @@ jobs:
             node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode" | tee "$output"
             python3 experiments/escalas-solverforge/verify_comparison.py "$output" "$mode" | tee "$RUNNER_TEMP/forge-evidence/$mode-summary.json"
           done
+      - name: Personal configuration parity through the original client (three modes)
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          output="$RUNNER_TEMP/forge-evidence/personal.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" personal | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" personal | tee "$RUNNER_TEMP/forge-evidence/personal-summary.json"
       - name: Candidate-only time budget and seed ablation
         if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
         shell: bash
@@ -153,6 +162,15 @@ jobs:
           output="$RUNNER_TEMP/forge-evidence/tail.jsonl"
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" tail | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" tail | tee "$RUNNER_TEMP/forge-evidence/tail-summary.json"
+      - name: Require measured adaptive gain (not production certification)
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        run: |
+          python3 - "$RUNNER_TEMP/forge-evidence/tail-summary.json" <<'PY'
+          import json,sys
+          with open(sys.argv[1],encoding="utf-8") as source:
+              result=json.load(source)
+          assert result["adaptiveGain"]["decision"]=="ADAPTIVE_GAIN_OBSERVED","ADAPTIVE_GAIN_NOT_PROVEN"
+          PY
       - name: Retain only aggregate evidence and public inventory
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

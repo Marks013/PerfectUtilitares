@@ -93,3 +93,7 @@ Evidência da revisão 2c81c75 (45746863995): 18/18 válidas; 0 regressões cont
 ## SF45: três modos no recorte de referência fixa
 
 HOURS_ONLY grade completa, singleton legal preserva dias e flags; relógio conhecido anterior pode mudar apenas no WORK desbloqueado. REST_ONLY primeira referência da mesma duração, como solver.py. Testes de troca de 40/42h com dias intactos, conflito de lock e falta de grade. Evitar cache de projeções cruzar domínios unitários distintos. O modo ainda não oferece escolha de horários diferentes por dia ou exceções de calendário e não constitui paridade geral.
+
+## SF46: qualificação diferencial dos parâmetros pessoais
+
+27 medições (três modos, três variantes CP-SAT/native/adaptive, três rotações), usando corpus E3A-FIXED-CLOCK-1, schema e cliente original com 40/42/44h simultâneas e demanda confirmada por dia. HOURS_ONLY parte de grade com referência de relógio editável incompatível, mas preserva dias/locks e corrige apenas o relógio. O modo adaptive retorna incumbente completo sem busca quando todos os domínios são unitários, com telemetria SEED_RETAINED. Teste de identidade, validade/atribuição, comparador real, telemetria e gate independente no escopo. Controle Java histórico não suporta E3a: não incluí-lo neste ensaio, manter comparação tripla E2 separada. Timeout de workflow 90 minutos para as amostras adicionais; prazos de solução e quotas intactos. Gate de ganho adaptativo falha se resultado não prova 25% de redução pareada e P95, sem regressões. Não certifica paridade de regras não implementadas.

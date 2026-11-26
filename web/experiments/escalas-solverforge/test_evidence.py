@@ -2,7 +2,7 @@ import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
 from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock
-from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile, adaptive_gain
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile, adaptive_gain, verify_personal
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -49,6 +49,10 @@ class EvidenceTests(unittest.TestCase):
         comparisons["timefold"]["retained"]=0
         for _,candidate in rows:candidate["productSeconds"]=11
         self.assertEqual(adaptive_gain(rows,comparisons)["decision"],"ADAPTIVE_GAIN_NOT_PROVEN")
+
+    def test_personal_parity_requires_full_corpus(self):
+        with self.assertRaises(ValueError):verify_personal([])
+        with self.assertRaises(ValueError):verify_personal([{}]*26)
 
     def test_curve_requires_full_balanced_evidence(self):
         with self.assertRaises(ValueError):verify_curve([])
