@@ -279,3 +279,45 @@ qualified for that exact revision; the new combined benchmark is pending.
   No lock/upstream/production changes. Performance improvements are
   hypotheses pending actual 1.100.0 benchmarks, with no quota or gate
   relaxation and no borrowed control roster.
+
+## SF66–SF68 — employment validity, isolated civil-night and private contracts
+
+- Manifest fix 9c44d28: actual fast ARM64 run 45850616979 passed
+  61 Rust/20 Python tests, strict lint, locked static release and OSV.
+  Cargo unused_workspace_dependencies diagnostics fell from 8 to 0;
+  all 14 upstream member manifests and the identical lock were checked.
+  No changes to upstream source, tag or dependency graph.
+- SF66: explicit inactive internal state distinct from OFF/ABSENCE/HOLIDAY,
+  no generated assignment or opportunity outside employment. Exact 5x2,
+  workload and mixed-42 targets remain on fully active weeks; partial
+  admission/termination weeks retain the original upper bounds. Reject
+  saved/context cells outside employment, and unauthorized holiday work.
+  Adjust month-pair ownership and telemetry to active/untimed positions.
+- SF67: isolated `--temporal-civil-night` opt-in, only synthetic simulation
+  with explicit 1440 closing; split actual WORK over current/next civil
+  day, update adjacent coverage cache and service floors, preserve rest,
+  Sunday occupation, employment and closure/holiday restrictions. No
+  overnight carry-in/out from published neighboring rosters, no spill past
+  horizon, no credit of reduced night hour/payroll. The frozen product
+  `fitsStoreClosing` prohibits any segment after minute 1440; normal
+  `--temporal` still rejects it, and no production/client change is made.
+  Fast run 45851145556 on f308715 passed 63 Rust/20 Python and strict
+  lint (includes the employment and civil-night unit cases).
+- SF68: optional complete legal `_initialAssignments` hint, not a lock;
+  verify every active cell, personal domain and global hard score, discard
+  incomplete/infeasible initialization. A legal missing sampled witness
+  may replace one selected path within the original cap. Enforce
+  `_coverageProtection` mandatory floors, `_coverageComparison` sector
+  totals/peaks and civil band sum/peak by role and scope, including daily
+  December bands and the exact admitted five advisory dates; default
+  absent caps to zero. Private service aggregate scopes exclude those
+  dates, while explicit day floors remain. Bound compilation and
+  complexity, keep unknown rather than infer infeasibility. Original
+  `_restPairTarget=20` presence-priority recovery (23/27/32s) and full
+  provenance/overnight reference support remain rejected, not silently
+  treated as ordinary search. Independent client fixture for admitted
+  December demand protection plus partial employment; 14 temporal cases,
+  56 paired observations, original E2/scale/tail/security gates retained.
+- Full qualification still requires a completed benchmark at the final
+  SHA; latest-only draft workflow supersedes earlier runs. No merge,
+  deploy, production, main, Timefold, lockfile or control changes.

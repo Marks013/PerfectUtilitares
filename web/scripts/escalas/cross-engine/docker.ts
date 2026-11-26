@@ -240,7 +240,7 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
 
 type TemporalTelemetry = {
   version: 2; scope: "SYNTHETIC_TEMPORAL"; partialModel: true;
-  days: number; visibleDays: number; untimed: number; domainMode: "EXACT_WEEK" | "BOUNDED_PATHS"; pathLimit: number;
+  days: number; visibleDays: number; untimed: number; activePositions: number; untimedPositions: number; domainMode: "EXACT_WEEK" | "BOUNDED_PATHS"; pathLimit: number;
   mapSeconds: number; seedSeconds: number; searchSeconds: number; nativeSearch: boolean;
   nativeCandidateCost: number[] | null; nativeAccepted: boolean; guardPreserved: boolean | null;
   resultSource: "NATIVE" | "SEED_RETAINED" | "CONSTRUCTOR_ONLY";
@@ -266,7 +266,8 @@ export function temporalForgeAdapter(image: string) {
         const vector=(x:unknown)=>Array.isArray(x)&&x.length===17&&x.every(integer);
         if(!t||t.version!==2||t.scope!=="SYNTHETIC_TEMPORAL"||t.partialModel!==true
           ||![7,14,21,28,31,35,42].includes(t.days)||!integer(t.visibleDays)||t.visibleDays<1||t.visibleDays>t.days||!integer(t.entities)||t.entities<1||t.entities>(t.days===7?12:250)
-          ||!integer(t.untimed)||t.untimed>t.entities
+          ||!integer(t.untimed)||t.untimed>t.entities||!integer(t.activePositions)||t.activePositions<t.entities||t.activePositions>t.entities*t.days
+          ||!integer(t.untimedPositions)||t.untimedPositions<t.untimed||t.untimedPositions>t.activePositions||t.untimedPositions>t.untimed*t.days
           ||t.domainMode!==(t.days===7?"EXACT_WEEK":"BOUNDED_PATHS")||t.pathLimit!==(t.days===7?30000:384)
           ||!integer(t.patterns)||t.patterns<t.entities||t.patterns>t.entities*t.pathLimit
           ||typeof t.seedSeconds!=="number"||!Number.isFinite(t.seedSeconds)||t.seedSeconds<0

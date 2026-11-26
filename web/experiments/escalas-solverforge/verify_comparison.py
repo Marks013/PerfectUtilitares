@@ -603,7 +603,7 @@ def adaptive_gain(paired,comparisons):
 
 
 TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks",
-    "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership","paid-break-same-day")
+    "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership","paid-break-same-day","partial-employment","private-december-demand")
 TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERAGE","CLOSING_COVERAGE",
     "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
     "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
@@ -631,10 +631,14 @@ def verify_temporal(rows):
     for offset,case in enumerate(TEMPORAL_CASES):
         group=rows[offset*4:(offset+1)*4];first=group[0];profile=first["profile"]
         people={"combined-115-six-weeks":115,"combined-250-six-weeks":250}.get(case,3)
-        cutover=case=="monthly-cutover-december"
-        days=31 if cutover else 7 if people==3 else 42
+        cutover=case in ("monthly-cutover-december","private-december-demand")
+        days=31 if cutover else 21 if case=="partial-employment" else 7 if people==3 else 42
         check(first["scenario"]==case and profile["days"]==days and profile["includedOnWire"]==people
-              and profile["activePositions"]==people*days and profile.get("cutover") is cutover
+              and profile["activePositions"]==(49 if case=="partial-employment" else people*days) and profile.get("cutover") is cutover
+              and integer(profile.get("untimedPeople")) and profile["untimedPeople"]<=people
+              and (case!="partial-employment" or profile["untimedPeople"]==1 and profile["untimedPositions"]==14)
+              and (case!="private-december-demand" or all(integer(profile.get(k)) and profile[k]>0
+                  for k in ("protectedBands","protectedDays","comparisonBands","comparisonDailyBands")))
               and integer(profile.get("visibleDays")) and 1<=profile["visibleDays"]<=days
               and (days!=42 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
               and (case!="cross-sector-leadership" or profile["untimedPositions"]==7)
@@ -672,7 +676,8 @@ def verify_temporal(rows):
                 if ok:
                     check(isinstance(t,dict) and t.get("version")==2 and t.get("scope")=="SYNTHETIC_TEMPORAL"
                           and t.get("partialModel") is True and t.get("entities")==people and t.get("days")==days
-                          and t.get("untimed")==profile["untimedPositions"]//days and t.get("visibleDays")==profile["visibleDays"]
+                          and t.get("untimed")==profile["untimedPeople"] and t.get("visibleDays")==profile["visibleDays"]
+                          and t.get("activePositions")==profile["activePositions"] and t.get("untimedPositions")==profile["untimedPositions"]
                           and t.get("domainMode")==("EXACT_WEEK" if days==7 else "BOUNDED_PATHS")
                           and t.get("pathLimit")== (30000 if days==7 else 384)
                           and integer(t.get("patterns")) and people<=t["patterns"]<=people*t["pathLimit"]
