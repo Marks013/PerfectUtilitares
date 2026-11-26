@@ -11,6 +11,7 @@ mod calendar;
 mod rules;
 mod tie_rank;
 mod seed;
+mod service_guard;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
 use crate::model::Presence;
@@ -512,10 +513,12 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     };
     let protected=if initial[0]==0{critical(&plan)}else{BTreeSet::new()};
     let sector_guard=if initial[0]==0{Some(sector_prefix(&plan))}else{None};
+    let service_guard=if initial[0]==0{Some(service_guard::Snapshot::capture(&plan))}else{None};
     let saved:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
     let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(Instant::now()).as_secs();
     let attempted=remaining>0&&plan.employees.iter().any(|p|!p.pinned);
     let search_start=Instant::now();
+    let mut native_candidate=None;let mut guard_preserved=None;let mut native_accepted=false;
     if attempted{
         let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")){
             Ok(v)=>v,Err(_)=>return super::failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
@@ -525,7 +528,13 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         plan=match plan.solve_with_config(config){Ok(v)=>v,Err(_)=>return super::failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
         let cost=evaluate(&plan);
         if plan.score!=Some(expected(cost)){return super::failure(500,"SPIKE_FAILED","RESULT","TEMPORAL_SCORE_DRIFT");}
-        if cost>initial||!protected.is_subset(&critical(&plan))||sector_guard.as_ref().is_some_and(|before|!prefix_preserved(before,&sector_prefix(&plan))){for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
+        native_candidate=Some(cost);
+        let preserves=protected.is_subset(&critical(&plan))
+            &&sector_guard.as_ref().is_none_or(|before|prefix_preserved(before,&sector_prefix(&plan)))
+            &&service_guard.as_ref().is_none_or(|before|before.preserves(&plan));
+        guard_preserved=Some(preserves);
+        native_accepted=preserves&&cost<initial;
+        if !native_accepted{for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
     }
     let cost=evaluate(&plan);
     if cost[0]!=0||start.elapsed()>budget||!plan.employees.iter().all(|p|p.pattern.is_some_and(|i|p.allowed.binary_search(&i).is_ok())){
@@ -561,6 +570,8 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         "temporal":{"version":2,"scope":"SYNTHETIC_TEMPORAL","days":days,"untimed":untimed,
             "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,"seedSeconds":seed_seconds,
             "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
+            "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,
+            "resultSource":if native_accepted{"NATIVE"}else if attempted{"SEED_RETAINED"}else{"CONSTRUCTOR_ONLY"},
             "entities":plan.employees.len(),"patterns":patterns,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
 }
 #[cfg(test)]
@@ -688,6 +699,27 @@ mod tests{
         plan.employees[0].pattern=Some(0);
         assert_eq!(evaluate(&plan)[0],60);
         assert_eq!(plan.employees[0].member().pattern.unwrap().personal[16],plan.employees[0].pattern_cost(0)[16]);
+    }
+    #[test]
+    fn temporal_guard_rejects_loss_of_role_clock_service_without_demand(){
+        let mut plan=read(&fixture(),Instant::now()+Duration::from_secs(5)).unwrap();
+        let domain=&plan.employees[0].catalog;
+        let mut pair=None;
+        for (i,p) in domain.iter().enumerate(){
+            if let Some(day)=p.states[..7].iter().position(|&s|s==3){
+                let mut shifted=p.states;shifted[day]=5;
+                if let Some(j)=domain.iter().position(|x|x.states==shifted){
+                    pair=Some((i,j));break;
+                }
+            }
+        }
+        let (early,late)=pair.expect("both legal clocks on the same day");
+        plan.employees[0].pattern=Some(early);
+        let guard=service_guard::Snapshot::capture(&plan);
+        assert!(guard.preserves(&plan));
+        plan.employees[0].pattern=Some(late);
+        assert_eq!(evaluate(&plan)[0],0);
+        assert!(!guard.preserves(&plan));
     }
     #[test]
     fn native_variable_shift_covers_confirmed_demand(){

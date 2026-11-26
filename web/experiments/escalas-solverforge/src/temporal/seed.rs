@@ -3,7 +3,7 @@
 //! receives the full selected domain and the independent score is recomputed.
 use std::{collections::BTreeMap,sync::Arc,time::Instant};
 use crate::temporal_domain::TemporalPlan;
-use super::{Band,MAX_DAYS,TemporalFacts,work};
+use super::{Band,MAX_DAYS,TemporalFacts,clock,work};
 
 struct Counts{
     total:i64,roles:Vec<i64>,
@@ -22,7 +22,7 @@ impl Counts{
     }
 }
 struct Sector{
-    facts:Arc<TemporalFacts>,counts:Vec<Counts>,presence:[i64;MAX_DAYS],
+    facts:Arc<TemporalFacts>,counts:Vec<Counts>,presence:[i64;MAX_DAYS],timed:[i64;MAX_DAYS],
 }
 pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     let mut sectors=BTreeMap::<usize,Sector>::new();
@@ -31,7 +31,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     for i in order{
         let p=&plan.employees[i];
         let sector=sectors.entry(p.sector).or_insert_with(||Sector{
-            facts:Arc::clone(&p.facts),counts:p.facts.bands.iter().map(Counts::new).collect(),presence:[0;MAX_DAYS]
+            facts:Arc::clone(&p.facts),counts:p.facts.bands.iter().map(Counts::new).collect(),presence:[0;MAX_DAYS],timed:[0;MAX_DAYS]
         });
         let choice=if let Some(index)=p.pattern{index}
         else if Instant::now()>=deadline{0}
@@ -55,17 +55,32 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             for &index in p.allowed.iter(){
                 if index.is_multiple_of(64)&&Instant::now()>=deadline{break;}
                 let mut score=p.pattern_cost(index);
+                let mut new_timed_days=0i64;let mut sunday_days=0i64;let mut sunday_load=0i64;let mut sunday_minutes=0i64;
                 for (day,&state) in p.catalog[index].states.iter().enumerate().take(p.facts.days){
                     for (cost,gain) in score[..6].iter_mut().zip(benefits[day][usize::from(state)]){*cost-=gain;}
-                    if work(state){score[11]+=sector.presence[day];}
+                    if work(state){
+                        score[11]+=sector.presence[day];
+                        if day.is_multiple_of(7){sunday_days+=1;sunday_load+=sector.presence[day];}
+                    }
+                    if let Some(c)=clock(&sector.facts.clocks,state){
+                        new_timed_days+=i64::from(sector.timed[day]==0);
+                        if day.is_multiple_of(7){sunday_minutes+=i64::from(c.paid);}
+                    }
                 }
-                if best.as_ref().is_none_or(|(old,_)|score<*old){best=Some((score,index));}
+                // These are construction preferences, not invented hard
+                // floors or extra published CP-SAT objectives. Avoid empty
+                // timed days and prefer actual, balanced Sunday service
+                // before later soft penalties once demand gains tie.
+                let coverage:[i64;6]=std::array::from_fn(|j|score[j]);
+                let rank=(coverage,-new_timed_days,-sunday_days,sunday_load,-sunday_minutes,score);
+                if best.as_ref().is_none_or(|(old,_)|rank<*old){best=Some((rank,index));}
             }
             best.map_or(0,|(_,i)|i)
         };
         let pattern=p.catalog[choice];
         for (day,&state) in pattern.states.iter().enumerate().take(p.facts.days){
             if work(state){sector.presence[day]+=1;}
+            if clock(&sector.facts.clocks,state).is_some(){sector.timed[day]+=1;}
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
             if band.clock_mask&(1u16<<pattern.states[band.day])!=0{count.insert(band,p.role);}
