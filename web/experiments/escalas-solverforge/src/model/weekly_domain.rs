@@ -1,6 +1,6 @@
 //! Compact automaton for the fixed-clock 5x2 domain, independent of the
 //! search engine. Six-week counting does not materialize the Cartesian product.
-//! E2 wire still admits only the separately validated 7/28-day cases.
+//! Exact 7/28-day catalogue plus bounded, rank-stratified 42-day witnesses.
 use std::collections::BTreeMap;
 use std::time::Instant;
 use super::patterns::PersonalRules;
@@ -77,6 +77,49 @@ impl WeeklyDomain{
         }
         Some((states.values().sum(),peak))
     }
+    /// Count legal suffixes and unrank evenly spaced paths without enumerating
+    /// the full product. Exact count is not an optimality proof.
+    pub fn sample(&self,limit:usize,deadline:Instant)->Option<(usize,Vec<u64>)>{
+        if limit==0||Instant::now()>=deadline{return None;}
+        if self.locked_work>>(self.weeks*7)!=0{return Some((0,Vec::new()));}
+        fn suffix(domain:&WeeklyDomain,week:usize,state:State,deadline:Instant,
+                  memo:&mut BTreeMap<(usize,State),usize>)->Option<usize>{
+            if Instant::now()>=deadline{return None;}
+            if week==domain.weeks{return Some(1);}
+            if let Some(&count)=memo.get(&(week,state)){return Some(count);}
+            let mut count=0usize;
+            for &pattern in &domain.weekly{
+                if let Some(child)=domain.transition(week,state,pattern){
+                    count=count.checked_add(suffix(domain,week+1,child,deadline,memo)?)?;
+                }
+            }
+            memo.insert((week,state),count);Some(count)
+        }
+        let mut memo=BTreeMap::new();
+        let count=suffix(self,0,State::default(),deadline,&mut memo)?;
+        let take=count.min(limit);
+        let mut masks=Vec::with_capacity(take);
+        for index in 0..take{
+            if Instant::now()>=deadline{return None;}
+            let mut rank=index.checked_mul(count)?/take;
+            let mut state=State::default();let mut mask=0u64;
+            for week in 0..self.weeks{
+                let mut chosen=None;
+                for &pattern in &self.weekly{
+                    if let Some(child)=self.transition(week,state,pattern){
+                        let n=suffix(self,week+1,child,deadline,&mut memo)?;
+                        if rank<n{chosen=Some((pattern,child));break;}
+                        rank-=n;
+                    }
+                }
+                let (pattern,child)=chosen?;
+                mask|=u64::from(pattern)<<(week*7);state=child;
+            }
+            masks.push(mask);
+        }
+        Some((count,masks))
+    }
+
     /// Enumerate only legal paths when a caller explicitly needs them.
     /// Production E2 retains the original pattern IDs and independent legal().
     pub fn visit(&self,deadline:Instant,visitor:impl FnMut(u64))->Option<()>{
@@ -115,6 +158,21 @@ mod tests{
     }
 
     #[test]
+    fn sampled_domain_is_exact_when_small_and_bounded_when_large(){
+        let until=Instant::now()+Duration::from_secs(5);
+        let small=WeeklyDomain::new(1,0,0,1,1,PersonalRules::default()).unwrap();
+        let (count,mut sample)=small.sample(2048,until).unwrap();
+        let mut exact=Vec::new();small.visit(until,|m|exact.push(m)).unwrap();
+        sample.sort_unstable();exact.sort_unstable();
+        assert_eq!(count,exact.len());assert_eq!(sample,exact);
+        let large=WeeklyDomain::new(6,0,0,1,63,PersonalRules::default()).unwrap();
+        let (count,mut sample)=large.sample(2048,until).unwrap();
+        assert_eq!(count,587620);sample.sort_unstable();sample.dedup();
+        assert_eq!(sample.len(),2048);
+        assert!(sample.iter().all(|&m|crate::model::patterns::legal_profile(m,42,0,0,1,63,PersonalRules::default())));
+        assert!(large.sample(2048,Instant::now()).is_none());
+    }
+    #[test]
     fn configured_rules_match_exhaustive_legal_profiles(){
         use crate::model::patterns::legal_profile;
         let until=Instant::now()+Duration::from_secs(10);
@@ -126,11 +184,11 @@ mod tests{
                 PersonalRules{consecutive:true,..Default::default()},
                 PersonalRules{prefer_consecutive:true,preferred:8,..Default::default()},
             ] {
-                let comparable=if rules.consecutive{0}else{full_mask(days/7)};
+                let comparable=if rules.consecutive{0}else{full_mask(days/7) as u32};
                 let off=(0..days/7).fold(0,|m,w|m|(2<<(w*7)));
-                let domain=WeeklyDomain::new(days/7,0,off as u64,1,comparable,rules).unwrap();
+                let domain=WeeklyDomain::new(days/7,0,off,1,comparable,rules).unwrap();
                 let mut actual=Vec::new();
-                domain.visit(until,|m|actual.push(m as u32)).unwrap();
+                domain.visit(until,|m|actual.push(m)).unwrap();
                 actual.sort_unstable();
                 let expected:Vec<_>=raw.iter().copied().filter(|&m|legal_profile(m,days,0,off,1,comparable,rules)).collect();
                 assert_eq!(actual,expected);
@@ -149,10 +207,10 @@ mod tests{
             for (work,off,cap,comparable) in [(0,0,1,15),(0,0,2,15),(1,2,1,14),
                 (64,1,2,13),(0,64,1,0),(0,7,2,15),(0,384,2,15),(64,128,1,7)]{
                 let work=work&full_mask(days);let off=off&full_mask(days);
-                let comparable=comparable&full_mask(days/7);
-                let domain=WeeklyDomain::new(days/7,work as u64,off as u64,cap,comparable,PersonalRules::default()).unwrap();
+                let comparable=comparable&full_mask(days/7) as u32;
+                let domain=WeeklyDomain::new(days/7,work,off,cap,comparable,PersonalRules::default()).unwrap();
                 let mut actual=Vec::new();
-                domain.visit(until,|mask|actual.push(mask as u32)).unwrap();
+                domain.visit(until,|mask|actual.push(mask)).unwrap();
                 actual.sort_unstable();
                 let expected:Vec<_>=raw.iter().copied().filter(|&mask|legal(mask,days,work,off,cap,comparable)).collect();
                 assert_eq!(actual,expected);

@@ -254,6 +254,12 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
         check(source=="NATIVE" and attempted and t["nativeCost"]==t["finalCost"],"NATIVE_SOURCE")
     if t["seedComplete"]:
         check(t["finalCost"]<=t["initialCost"],"NATIVE_SCORE_REGRESSED")
+    if profile.get("days")==42:
+        check(t.get("domainMode")=="BOUNDED_42" and integer(t.get("fullDomainPatterns"))
+              and t["entities"]<=t["allowedPatterns"]<=t["entities"]*2049
+              and t["fullDomainPatterns"]>=t["allowedPatterns"],"BOUNDED_DOMAIN")
+    elif "domainMode" in t:
+        check(t["domainMode"]=="EXACT" and t.get("fullDomainPatterns")==t["allowedPatterns"],"EXACT_DOMAIN")
 
 
 def pair_detail(pair, a, b, profile, comparable):
@@ -569,6 +575,61 @@ def adaptive_gain(paired,comparisons):
         "productionCertified":False}
 
 
+def verify_scale(rows):
+    names=("ortools","native-12","adaptive")
+    check(len(rows)==18 and all(isinstance(r,dict) for r in rows),"SCALE_COUNT")
+    reports={}
+    for offset,(case,people) in enumerate((("branch-115-six-weeks",115),("stress-250-six-weeks",250))):
+        group=rows[offset*9:(offset+1)*9];first=group[0];profile=first["profile"]
+        check(first["scenario"]==case and profile["includedOnWire"]==people and profile["days"]==42
+              and profile["activePositions"]==people*42 and profile["mode"]=="DAYS_AND_HOURS"
+              and profile["searchBudgetSeconds"]==12 and profile["processBudgetSeconds"]==18
+              and profile["transportBudgetSeconds"]==20,"SCALE_PROFILE")
+        check(sha(first["inputHash"],64) and all(sha(first[k],40) for k in ("revision","evaluatorTree","comparatorBlob")),"SCALE_SOURCE")
+        records={name:[] for name in names};images={}
+        for index,r in enumerate(group):
+            rep,pos=divmod(index,3);name=names[(rep+pos)%3]
+            check(r["kind"]=="scale" and r["repetition"]==rep and r["position"]==pos and r["variant"]==name,"SCALE_ORDER")
+            for key in ("scenario","inputHash","revision","evaluatorTree","comparatorBlob","profile","baselineRevision",
+                        "timefoldRevision","resources","arch","sampleKind","hostCapacityMeasured","liveHttpMeasured"):
+                check(r.get(key)==first.get(key),"SCALE_DRIFT")
+            check(r["baselineRevision"]==BASE and r["timefoldRevision"]==CONTROL and r["resources"]==RESOURCES
+                  and r["arch"]=="arm64" and r["sampleKind"]=="cold-container"
+                  and r["hostCapacityMeasured"] is False and r["liveHttpMeasured"] is False,"SCALE_ISOLATION")
+            engine="ortools" if name=="ortools" else "solverforge";im=r["identity"]
+            check(im.get("architecture")=="arm64" and im.get("revision")== (BASE if name=="ortools" else r["revision"])
+                  and isinstance(im.get("image"),str) and im["image"].startswith("sha256:") and sha(im["image"][7:],64),"SCALE_IMAGE")
+            check(images.setdefault(engine,im)==im,"SCALE_IMAGE_DRIFT")
+            check(name=="ortools" or r.get("rawStatus") not in ("OPTIMAL","INFEASIBLE"),"SCALE_PROOF")
+            ok=valid(r,profile)
+            if ok and name!="ortools":native(r,profile,adaptive=name=="adaptive")
+            if name=="ortools":check(r.get("forge") is None,"SCALE_FORGE_TELEMETRY")
+            records[name].append((r,ok))
+        results={}
+        for name in names:
+            accepted=[r for r,ok in records[name] if ok];comparisons={}
+            for control,field in (("ortools","againstOrtools"),("native-12","againstNative12")):
+                for i,(r,ok) in enumerate(records[name]):
+                    other,other_ok=records[control][i]
+                    pair_detail(r[field],other,r,profile,ok and other_ok)
+                comparisons[control]={"comparable":sum(r[field]["comparable"] is True for r,_ in records[name]),
+                    "regressions":sum(r[field]["regressed"] is True for r,_ in records[name]),
+                    "retained":sum(r[field]["retained"] is True for r,_ in records[name])}
+            results[name]={"samples":3,"validNew":len(accepted),"productP50Seconds":p50([r["productSeconds"] for r in accepted]),
+                "cpuP50Seconds":p50([r["cgroup"]["cpuUsageUsec"]/1e6 for r in accepted]),
+                "peakMemoryBytes":max((r["cgroup"]["memoryPeakBytes"] for r in accepted),default=None),
+                "shortageP50":p50([r["finalAssessment"]["metrics"]["normalizedEstimatedShortage"] for r in accepted]),
+                "comparisons":comparisons}
+        reports[case]=results
+    complete=all(v["validNew"]==3 for case in reports.values() for v in case.values())
+    noninferior=complete and all(c["comparable"]==3 and c["regressions"]==0 and c["retained"]==0
+        for case in reports.values() for name in ("native-12","adaptive") for control,c in case[name]["comparisons"].items()
+        if name=="adaptive" or control!="native-12")
+    return {"decision":"SCALE_VALIDITY_OBSERVED" if complete else "SCALE_VALIDITY_REVIEW_REQUIRED",
+            "noninferiorityObserved":noninferior,"tailSampleSufficient":False,"fullE4Parity":False,
+            "productionCertified":False,"cases":reports}
+
+
 def verify_tail(rows):
     names=("ortools","timefold","native-12","adaptive")
     check(len(rows)==128 and all(isinstance(r,dict) for r in rows),"TAIL_COUNT")
@@ -642,9 +703,9 @@ if __name__ == "__main__":
             sys.exit(0)
         with open(sys.argv[1],encoding="utf-8") as stream:
             rows=[json.loads(line) for line in stream if line.strip()]
-            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify(rows,sys.argv[2])
+            report=verify_curve(rows) if sys.argv[2]=="curve" else verify_tail(rows) if sys.argv[2]=="tail" else verify_personal(rows) if sys.argv[2]=="personal" else verify_scale(rows) if sys.argv[2]=="scale" else verify(rows,sys.argv[2])
         print(json.dumps(report,separators=(",",":")))
-        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED") else 1)
+        sys.exit(0 if report["decision"] in ("EXPLORATORY_VALID_TRIPLE","CANDIDATE_CURVE_DIAGNOSTIC_ONLY","E2_TAIL_NONINFERIORITY_OBSERVED","E3A_FIXED_CLOCK_NONINFERIORITY_OBSERVED","SCALE_VALIDITY_OBSERVED") else 1)
     except (ValueError,KeyError,TypeError,IndexError,AttributeError,OSError,OverflowError):
         print("SolverForge comparison rejected: invalid or inconsistent evidence",file=sys.stderr)
         sys.exit(1)

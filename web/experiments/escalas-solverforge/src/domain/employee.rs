@@ -14,14 +14,16 @@ pub struct Employee {
     pub rest_group: usize,
     pub sunday_cap: usize,
     pub rules: PersonalRules,
-    pub locked_work: u32,
-    pub locked_off: u32,
-    pub saved_known: u32,
-    pub saved_work: u32,
+    pub locked_work: u64,
+    pub locked_off: u64,
+    pub saved_known: u64,
+    pub saved_work: u64,
     pub lock_flags: Vec<Option<bool>>,
     pub comparable_weeks: u32,
     pub facts: Arc<Sector>,
-    pub catalog: Arc<Vec<u32>>,
+    pub catalog: Arc<Vec<u64>>,
+    /// Exact legal count before bounded 42-day search-domain selection.
+    pub full_domain_count: usize,
     pub allowed: Arc<[usize]>,
     #[planning_pin]
     pub pinned: bool,
@@ -30,7 +32,7 @@ pub struct Employee {
 }
 
 impl Employee {
-    pub fn mask(&self) -> Option<u32> {
+    pub fn mask(&self) -> Option<u64> {
         self.pattern.and_then(|index| self.catalog.get(index).copied())
     }
 

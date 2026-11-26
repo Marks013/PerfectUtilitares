@@ -49,10 +49,10 @@ pub struct Member {
     pub id: usize,
     pub cohort: usize,
     pub rules:PersonalRules,
-    pub mask: Option<u32>,
-    pub locked_off: u32,
-    pub saved_known: u32,
-    pub saved_work: u32,
+    pub mask: Option<u64>,
+    pub locked_off: u64,
+    pub saved_known: u64,
+    pub saved_work: u64,
     pub facts: Arc<Sector>,
 }
 
@@ -62,10 +62,10 @@ pub fn group_cost<'a>(rows: impl IntoIterator<Item = &'a Member>) -> Cost {
     let mut rows = rows.into_iter();
     let Some(first) = rows.next() else { return [0; 13]; };
     let facts = &first.facts;
-    let mut attendance = [Presence::EMPTY; 28];
+    let mut attendance = [Presence::EMPTY; 42];
     let mut cost = [0i64; 13];
     // Compare equivalent roles and admissible clocks, as CP-SAT does.
-    let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;4], [i64;4], usize)>::new();
+    let mut cohorts = BTreeMap::<usize, (Vec<i64>, [i64;6], [i64;6], usize)>::new();
     for member in std::iter::once(first).chain(rows) {
         let Some(mask) = member.mask else { continue; };
         for (day, present) in attendance.iter_mut().enumerate().take(facts.days) {

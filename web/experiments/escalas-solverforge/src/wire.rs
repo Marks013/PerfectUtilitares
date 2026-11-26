@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 use crate::domain::{Employee, Plan};
-use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, catalog, full_mask, legal_profile};
+use crate::model::{Band, Sector, Presence, PersonalRules, allowed_indices, bounded_patterns, catalog, full_mask, legal_profile};
 
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
@@ -87,12 +87,16 @@ fn civil_date(value: &str) -> bool {
     day > 0 && day <= lengths[month - 1]
 }
 fn date_index(value: &str, days: usize) -> Result<usize> {
-    check(civil_date(value) && value.starts_with("2026-11-"), "DATE")?;
-    let index = value[8..].parse::<usize>().map_err(|_| "DATE")? - 1;
+    check(civil_date(value) && (value.starts_with("2026-11-")||value.starts_with("2026-12-")), "DATE")?;
+    let index = value[8..].parse::<usize>().map_err(|_| "DATE")? - 1
+        + if value.starts_with("2026-12-"){30}else{0};
     check(index < days, "DATE")?;
     Ok(index)
 }
-pub fn date(index: usize) -> String { format!("2026-11-{:02}", index + 1) }
+pub fn date(index: usize) -> String {
+    assert!(index<42,"date horizon");
+    if index<30{format!("2026-11-{:02}",index+1)}else{format!("2026-12-{:02}",index-29)}
+}
 
 #[derive(Clone, Debug)]
 struct Person {
@@ -136,7 +140,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     let mode=optional_text(input,"generationMode","DAYS_AND_HOURS")?;
     let hours_only=mode=="HOURS_ONLY";
     check(text(input,"startDate")? == "2026-11-01" && input.get("visibleMonth").is_none(), "HORIZON")?;
-    let days = match text(input,"endDate")? { "2026-11-07" => 7, "2026-11-28" => 28, _ => return Err("HORIZON") };
+    let days = match text(input,"endDate")? { "2026-11-07" => 7, "2026-11-28" => 28, "2026-12-12" => 42, _ => return Err("HORIZON") };
     for k in input.as_object().unwrap().keys() {
         check(!k.starts_with('_') || k == "_initialAssignments", "PRIVATE_FIELD_UNSUPPORTED")?;
     }
@@ -176,7 +180,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(clocks.insert(identifier(clock,"id")?.to_string(),[(a,b),(e,f)]).is_none(), "DUPLICATE_CLOCK")?;
     }
     let employees = array(input,"employees")?;
-    check(!employees.is_empty() && employees.len() <= 50, "PEOPLE_LIMIT")?;
+    check(!employees.is_empty() && employees.len() <= if days==42{250}else{50}, "PEOPLE_LIMIT")?;
     let mut sectors = BTreeMap::<String,usize>::new();
     let mut people = Vec::new();
     let mut by_id = HashMap::new();
@@ -278,17 +282,20 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         }
     }
     let facts:Vec<Arc<Sector>>=facts.into_iter().map(Arc::new).collect();
-    let catalogue=Arc::new(catalog(days));
-    let mut cache=HashMap::<(u32,u32,usize,u32,PersonalRules),Arc<[usize]>>::new();
+    let exact_catalogue=Arc::new(if days==42{Vec::new()}else{catalog(days)});
+    type DomainKey=(u64,u64,usize,u32,PersonalRules);
+    type BoundedDomain=(usize,Arc<Vec<u64>>,Arc<[usize]>);
+    let mut cache=HashMap::<DomainKey,Arc<[usize]>>::new();
+    let mut bounded_cache=HashMap::<DomainKey,BoundedDomain>::new();
     let mut entities=Vec::with_capacity(people.len());
     let mut cohorts=BTreeMap::new();
     let mut rest_groups=BTreeMap::new();
     for (i,p) in people.into_iter().enumerate() {
-        let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u32,0u32,0u32,0u32,0u32,0u32);
+        let(mut lock_work,mut lock_off,mut saved_known,mut saved_work,mut seed_known,mut seed_work)=(0u64,0u64,0u64,0u64,0u64,0u64);
         let mut comparable=if hours_only||p.fixed.count_ones()==2||p.rules.consecutive{0}else{(1u32<<(days/7))-1};
         let mut lock_flags=Vec::with_capacity(days);
         for day in 0..days {
-            let bit=1u32<<day;
+            let bit=1u64<<day;
             let old=saved.get(&(i,day));let init=initial.get(&(i,day));
             let locked=old.is_some_and(|r|r.locked==Some(true));
             let saturday=day%7==6;
@@ -309,25 +316,42 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             else if let Some(row)=init {seed_known|=bit;if row.work {seed_work|=bit;}}
         }
         let key=(lock_work,lock_off,p.cap,comparable,p.rules);
-        let allowed:Arc<[usize]>=if hours_only {
-            // Singleton legal personal domain, but keep actual lock masks
-            // untouched for rest-quality and opportunity accounting.
+        let (catalogue,allowed,full_domain_count):(Arc<Vec<u64>>,Arc<[usize]>,usize)=if hours_only {
             check(saved_known==full_mask(days)&&legal_profile(saved_work,days,lock_work,lock_off,p.cap,comparable,p.rules),
                 "HOURS_ONLY_GRID_CONFLICT")?;
-            Arc::from(vec![catalogue.binary_search(&saved_work).map_err(|_|"HOURS_ONLY_GRID_CONFLICT")?])
-        }else{
-            match cache.entry(key) {
-                std::collections::hash_map::Entry::Occupied(entry) => Arc::clone(entry.get()),
-                std::collections::hash_map::Entry::Vacant(entry) => {
-                    let allowed = allowed_indices(&catalogue, days, (lock_work,lock_off), p.cap, comparable, p.rules, deadline)
+            if days==42{(Arc::new(vec![saved_work]),Arc::from(vec![0]),1)}
+            else{(Arc::clone(&exact_catalogue),Arc::from(vec![exact_catalogue.binary_search(&saved_work).map_err(|_|"HOURS_ONLY_GRID_CONFLICT")?]),1)}
+        }else if days==42{
+            let (count,shared,indices)=match bounded_cache.entry(key){
+                std::collections::hash_map::Entry::Occupied(entry)=>entry.get().clone(),
+                std::collections::hash_map::Entry::Vacant(entry)=>{
+                    let (count,patterns)=bounded_patterns((lock_work,lock_off),p.cap,comparable,p.rules,deadline)
                         .ok_or("MAPPING_TIMEOUT")?;
-                    Arc::clone(entry.insert(Arc::from(allowed)))
+                    let indices:Arc<[usize]>=Arc::from((0..patterns.len()).collect::<Vec<_>>());
+                    entry.insert((count,Arc::new(patterns),indices)).clone()
                 }
-            }
+            };
+            // Preserve an admissible supplied seed between sampled ranks.
+            if seed_known==full_mask(days)&&legal_profile(seed_work,days,lock_work,lock_off,p.cap,comparable,p.rules)
+                &&shared.binary_search(&seed_work).is_err(){
+                let mut own=shared.as_ref().clone();own.push(seed_work);own.sort_unstable();
+                let indices=Arc::from((0..own.len()).collect::<Vec<_>>());
+                (Arc::new(own),indices,count)
+            }else{(shared,indices,count)}
+        }else{
+            let allowed=match cache.entry(key){
+                std::collections::hash_map::Entry::Occupied(entry)=>Arc::clone(entry.get()),
+                std::collections::hash_map::Entry::Vacant(entry)=>{
+                    let indices=allowed_indices(&exact_catalogue,days,(lock_work,lock_off),p.cap,comparable,p.rules,deadline)
+                        .ok_or("MAPPING_TIMEOUT")?;
+                    Arc::clone(entry.insert(Arc::from(indices)))
+                }
+            };
+            let count=allowed.len();(Arc::clone(&exact_catalogue),allowed,count)
         };
         check(!allowed.is_empty(),"NO_PERSONAL_PATTERN")?;
         let initial_index=if seed_known==full_mask(days) {catalogue.binary_search(&seed_work).ok().filter(|j|allowed.binary_search(j).is_ok())} else {None};
-        let pinned=allowed.len()==1;
+        let pinned=full_domain_count==1;
         let next=cohorts.len();
         let cohort=*cohorts.entry((p.sector,p.role.clone(),p.segments,p.cap)).or_insert(next);
         let next_group=rest_groups.len();
@@ -335,7 +359,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         let rest_group=*rest_groups.entry((p.sector,p.cap,weekly_minutes)).or_insert(next_group);
         entities.push(Employee{id:i,name_id:p.id,shift:p.shift,sector:p.sector,cohort,rest_group,sunday_cap:p.cap,rules:p.rules,locked_work:lock_work,locked_off:lock_off,
             saved_known,saved_work,lock_flags,comparable_weeks:comparable,facts:Arc::clone(&facts[p.sector]),
-            catalog:Arc::clone(&catalogue),pattern:if pinned {Some(allowed[0])} else {initial_index},allowed,pinned});
+            catalog:catalogue,full_domain_count,pattern:if pinned {Some(allowed[0])} else {initial_index},allowed,pinned});
     }
     Ok(Plan {employees:entities,score:None})
 }

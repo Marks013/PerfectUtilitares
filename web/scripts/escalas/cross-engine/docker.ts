@@ -181,6 +181,7 @@ export type ForgeTelemetry = {
   mapSeconds: number; seedSeconds: number; searchSeconds: number; entities: number;
   positions: number; initialized: number; allowedPatterns: number; initialCost: number[]; finalCost: number[];
   partialModel: true; budgetSeconds: number;
+  domainMode: "EXACT" | "BOUNDED_42"; fullDomainPatterns: number;
 };
 export function solverforgeAdapter(image: string, seedOnly = false, budgetSeconds = 12, adaptive = false) {
   inspectImage(image, "solverforge");
@@ -208,7 +209,11 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
           || (!adaptive && t.nativeSearch !== !seedOnly)
           || (t.nativeSearch ? !vector(t.nativeCost) : t.nativeCost !== null)
           || !duration(t.mapSeconds) || !duration(t.seedSeconds) || !duration(t.searchSeconds)
-          || !integer(t.entities) || t.entities < 1 || t.entities > 50 || !integer(t.positions)
+          || !integer(t.entities) || t.entities < 1 || t.entities > 250 || !integer(t.positions)
+          || !["EXACT","BOUNDED_42"].includes(t.domainMode) || !integer(t.fullDomainPatterns)
+          || t.fullDomainPatterns < t.allowedPatterns
+          || (t.domainMode === "EXACT" ? t.entities > 50 || t.fullDomainPatterns !== t.allowedPatterns
+              : t.positions !== t.entities * 42 || t.allowedPatterns > t.entities * 2049)
           || !integer(t.initialized) || t.initialized > t.entities || !integer(t.allowedPatterns)
           || t.allowedPatterns < t.entities || t.allowedPatterns > t.entities * 50625
           || !vector(t.initialCost) || !vector(t.finalCost) || t.finalCost[0] !== 0

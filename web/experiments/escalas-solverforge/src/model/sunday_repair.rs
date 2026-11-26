@@ -9,10 +9,10 @@ use super::presence::Presence;
 
 const MAX_STATES:usize=20_000;
 const MAX_TRANSITIONS:usize=250_000;
-fn signature(mask:u32,days:usize)->u8 {
+fn signature(mask:u64,days:usize)->u8 {
     (0..days/7).fold(0,|v,w|v | (u8::from(worked(mask,w*7))<<w))
 }
-fn apply(att:&mut [Presence;28],p:&Employee,mask:u32,insert:bool) {
+fn apply(att:&mut [Presence;42],p:&Employee,mask:u64,insert:bool) {
     let bit=Presence::one(p.id);
     for (day,current) in att.iter_mut().enumerate().take(p.facts.days) {
         if worked(mask,day) {
@@ -20,10 +20,10 @@ fn apply(att:&mut [Presence;28],p:&Employee,mask:u32,insert:bool) {
         }
     }
 }
-// State is four Sunday headcounts, not a product of entire monthly masks.
-fn projections(domains:&[Vec<u8>],deadline:Instant)->Option<BTreeMap<[u8;4],Vec<u8>>> {
+// State is at most six Sunday headcounts, not a product of entire monthly masks.
+fn projections(domains:&[Vec<u8>],deadline:Instant)->Option<BTreeMap<[u8;6],Vec<u8>>> {
     if Instant::now()>=deadline{return None;}
-    let mut states=BTreeMap::from([([0u8;4],Vec::new())]);
+    let mut states=BTreeMap::from([([0u8;6],Vec::new())]);
     let mut transitions=0;
     for domain in domains {
         let mut next=BTreeMap::new();
@@ -43,22 +43,22 @@ fn projections(domains:&[Vec<u8>],deadline:Instant)->Option<BTreeMap<[u8;4],Vec<
     }
     Some(states)
 }
-fn sunday_cost(facts:&Sector,att:&[Presence;28])->[i64;2] {
+fn sunday_cost(facts:&Sector,att:&[Presence;42])->[i64;2] {
     let mut result=[0;2];
     for b in facts.bands.iter().filter(|b|b.day%7==0) {
         result[usize::from(b.estimated)]+=b.gap(att[b.day])*b.minutes;
     }
     result
 }
-type SignatureCache=BTreeMap<(u32,u32,usize,u32,PersonalRules,Option<usize>),Vec<Vec<usize>>>;
+type SignatureCache=BTreeMap<(u64,u64,usize,u32,PersonalRules,usize,Option<usize>),Vec<Vec<usize>>>;
 fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<SignatureCache>{
     let mut cache=SignatureCache::new();
     for &i in members{
         let p=&plan.employees[i];
-        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,
+        let key=(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,std::sync::Arc::as_ptr(&p.catalog) as usize,
             if p.allowed.len()==1{Some(p.allowed[0])}else{None});
         if let std::collections::btree_map::Entry::Vacant(entry)=cache.entry(key){
-            let mut buckets=vec![Vec::new();16];
+            let mut buckets=vec![Vec::new();1<<(p.facts.days/7)];
             for (n,&index) in p.allowed.iter().enumerate(){
                 if n%128==0&&Instant::now()>=deadline{return None;}
                 buckets[signature(p.catalog[index],p.facts.days) as usize].push(index);
@@ -69,11 +69,11 @@ fn signature_domains(plan:&Plan,members:&[usize],deadline:Instant)->Option<Signa
     Some(cache)
 }
 fn buckets<'a>(cache:&'a SignatureCache,p:&Employee)->&'a [Vec<usize>]{
-    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,
+    &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,std::sync::Arc::as_ptr(&p.catalog) as usize,
             if p.allowed.len()==1{Some(p.allowed[0])}else{None})]
 }
-fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->Option<usize>{
-    let mut hard=[0i64;28];let mut estimated=[0i64;28];
+fn choose(p:&Employee,att:&[Presence;42],candidates:&[usize],deadline:Instant)->Option<usize>{
+    let mut hard=[0i64;42];let mut estimated=[0i64;42];
     let bit=Presence::one(p.id);
     for b in &p.facts.bands {
         let n=att[b.day];let gain=(b.gap(n)-b.gap(n|bit))*b.minutes;
@@ -82,9 +82,9 @@ fn choose(p:&Employee,att:&[Presence;28],candidates:&[usize],deadline:Instant)->
     let mut best=None;
     // Precompute marginal gains for each 5x2 weekly bitmask. Four
     // table lookups replace scanning 28 days for every candidate.
-    let mut weekly=[[[0i64;5];128];4];
+    let mut weekly=[[[0i64;5];128];6];
     for (w,table) in weekly.iter_mut().enumerate().take(p.facts.days/7){
-        for mask in 0u32..128{
+        for mask in 0u64..128{
             if mask.count_ones()!=5||mask&64==0{continue;}
             let row=&mut table[mask as usize];
             for d in 0..7{
@@ -133,16 +133,16 @@ const MAX_PROJECTED_EVALUATIONS:usize=300_000;
 
 #[derive(Clone)]
 struct Projection {
-    sunday:[Presence;4],
+    sunday:[Presence;6],
     signatures:Vec<u8>,
     rank:[i64;4],
 }
-fn sunday_attendance(facts:&Sector,att:&[Presence;4])->[Presence;28] {
-    let mut result=[Presence::EMPTY;28];
+fn sunday_attendance(facts:&Sector,att:&[Presence;6])->[Presence;42] {
+    let mut result=[Presence::EMPTY;42];
     for week in 0..facts.days/7 {result[week*7]=att[week];}
     result
 }
-fn projected_rank(facts:&Sector,att:&[Presence;4])->[i64;4] {
+fn projected_rank(facts:&Sector,att:&[Presence;6])->[i64;4] {
     let mut rank=[0;4];
     for b in facts.bands.iter().filter(|b|b.day%7==0) {
         let gap=b.gap(att[b.day/7]);
@@ -167,7 +167,7 @@ fn insert_projection(beam:&mut Vec<Projection>,item:Projection) {
 // Search across cohorts, not only within one role. A leader's Sunday choice
 // can make the remaining cohort's headcount infeasible even when each
 // cohort has enough total Sunday work. Intermediate ties are retained.
-fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28],
+fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;42],
                      cache:&SignatureCache,deadline:Instant,stats:&mut RepairStats)->Option<Vec<Projection>> {
     let mut cohorts=BTreeMap::<usize,Vec<usize>>::new();
     for (slot,&i) in members.iter().enumerate(){
@@ -177,7 +177,7 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28
     // Small/restricted groups first. Leave the largest interchangeable
     // group to fill the final residual demand.
     groups.sort_by_key(|g|g.len());
-    let mut initial=[Presence::EMPTY;4];
+    let mut initial=[Presence::EMPTY;6];
     for w in 0..facts.days/7{initial[w]=att[w*7];}
     let signatures=members.iter().map(|&i|signature(plan.employees[i].mask().unwrap(),facts.days)).collect();
     let mut beam=vec![Projection{sunday:initial,signatures,rank:projected_rank(facts,&initial)}];
@@ -229,8 +229,8 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;28
     Some(beam)
 }
 
-fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence;28],
-               reverse:bool,cache:&SignatureCache,deadline:Instant)->Option<(Vec<usize>,[Presence;28])>{
+fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence;42],
+               reverse:bool,cache:&SignatureCache,deadline:Instant)->Option<(Vec<usize>,[Presence;42])>{
     let mut att=*old;
     let mut selected:Vec<usize>=members.iter().map(|&i|plan.employees[i].pattern.unwrap()).collect();
     let mut order:Vec<usize>=(0..members.len()).collect();
@@ -274,7 +274,7 @@ pub fn repair(plan:&mut Plan,deadline:Instant)->RepairStats {
     for members in sectors.values(){
         if Instant::now()>=deadline{break;}
         let facts=plan.employees[members[0]].facts.clone();
-        let mut att=[Presence::EMPTY;28];
+        let mut att=[Presence::EMPTY;42];
         for &i in members{let p=&plan.employees[i];apply(&mut att,p,p.mask().unwrap(),true);}
         let old_sunday=sunday_cost(&facts,&att);
         if old_sunday==[0,0]{continue;}
@@ -319,7 +319,7 @@ pub fn repair(plan:&mut Plan,deadline:Instant)->RepairStats {
 
 // Do not purchase a Sunday gain by increasing the total represented
 // shortage for an individual role. Aggregate each immutable role mask.
-fn role_totals_preserved(facts:&Sector,before:&[Presence;28],after:&[Presence;28])->bool{
+fn role_totals_preserved(facts:&Sector,before:&[Presence;42],after:&[Presence;42])->bool{
     let mut deltas=BTreeMap::<(bool,Presence),i64>::new();
     for band in &facts.bands{
         let a=band.gap_components(before[band.day]);
@@ -339,7 +339,7 @@ mod tests{
     fn coordinated_projection_finds_joint_alternative(){
         let domains=vec![vec![0b0101,0b1001,0b1010],vec![0b0101,0b1001,0b1010]];
         let states=projections(&domains,Instant::now()+Duration::from_secs(1)).unwrap();
-        let sigs=&states[&[1,1,1,1]];
+        let sigs=&states[&[1,1,1,1,0,0]];
         assert_eq!(sigs.len(),2);
         for w in 0..4{assert_eq!(sigs.iter().filter(|&&s|s&(1<<w)!=0).count(),1);}
         assert!(projections(&domains,Instant::now()).is_none());

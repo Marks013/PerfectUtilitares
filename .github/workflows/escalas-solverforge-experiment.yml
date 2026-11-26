@@ -171,6 +171,15 @@ jobs:
               result=json.load(source)
           assert result["adaptiveGain"]["decision"]=="ADAPTIVE_GAIN_OBSERVED","ADAPTIVE_GAIN_NOT_PROVEN"
           PY
+      - name: SF54 six-week 115 and 250 employee diagnostic
+        if: ${{ !cancelled() && steps.controls.outcome == 'success' && steps.security.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          output="$RUNNER_TEMP/forge-evidence/scale.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
       - name: Require zero candidate Clippy warnings
         if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
         shell: bash

@@ -13,20 +13,26 @@ struct DayCost { hard:i64, estimated:i64, peak:i64 }
 #[derive(Default)]
 struct CohortStats {
     rates: BTreeMap<i64,usize>,
-    eligible: [i64;4],
-    sundays: [i64;4],
+    eligible: [i64;6],
+    sundays: [i64;6],
     members: usize,
 }
 
-#[derive(Default)]
 pub struct SectorAccumulator {
     rows: BTreeMap<usize, Member>,
     facts: Option<Arc<Sector>>,
-    bands_by_day: [Vec<usize>; 28],
-    attendance: [Presence; 28],
-    day_costs: [DayCost; 28],
+    bands_by_day: [Vec<usize>; 42],
+    attendance: [Presence; 42],
+    day_costs: [DayCost; 42],
     personal: Cost,
     cohorts: BTreeMap<usize,CohortStats>,
+}
+
+impl Default for SectorAccumulator {
+    fn default()->Self{
+        Self{rows:BTreeMap::new(),facts:None,bands_by_day:std::array::from_fn(|_|Vec::new()),
+            attendance:[Presence::EMPTY;42],day_costs:[DayCost::default();42],personal:[0;13],cohorts:BTreeMap::new()}
+    }
 }
 
 impl SectorAccumulator {

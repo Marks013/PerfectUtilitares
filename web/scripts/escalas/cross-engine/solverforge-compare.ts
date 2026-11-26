@@ -111,11 +111,47 @@ function personalChecks(scenario:Scenario,trial:Trial){
 async function main() {
   if (arch()!=="arm64"||process.env.ESCALAS_CROSS_ENGINE_ISOLATED!=="1") throw Error("FORGE_ISOLATED_ARM64_REQUIRED");
   const [baseline,timefold,forge,mode,...extra]=process.argv.slice(2);
-  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve"&&mode!=="tail"&&mode!=="personal")) throw Error("FORGE_ARGS");
+  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve"&&mode!=="tail"&&mode!=="personal"&&mode!=="scale")) throw Error("FORGE_ARGS");
   const snapshot=source();
   const images={ortools:inspectImage(baseline,"ortools"),timefold:inspectImage(timefold,"timefold"),solverforge:inspectImage(forge,"solverforge")};
   if (images.ortools.revision!==baselineRevision||images.timefold.revision!==CONTROL||images.solverforge.revision!==snapshot.revision
     ||Object.values(images).some(x=>x.architecture!=="arm64")) throw Error("FORGE_IMAGE_IDENTITY");
+  if(mode==="scale"){
+    // Frozen six-week fixtures. Historical Timefold E2 lacks this horizon.
+    const variants=["ortools","native-12","adaptive"] as const;
+    for(const id of ["branch-115-six-weeks","stress-250-six-weeks"] as const){
+      const scenario=makeScenario(id),frozen=await captureEnvelope(scenario);
+      validateBaselineEnvelope(baseline,frozen);
+      const profile=envelopeProfile(frozen);
+      const expected=id==="branch-115-six-weeks"?115:250;
+      if(profile.days!==42||profile.includedOnWire!==expected||profile.activePositions!==expected*42)
+        throw Error("FORGE_SCALE_PROFILE");
+      const shared={...snapshot,scenario:id,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
+        arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
+      for(let repetition=0;repetition<3;repetition++){
+        const round:{variant:typeof variants[number];trial:Trial;record:Record<string,unknown>}[]=[];
+        for(let position=0;position<3;position++){
+          const variant=variants[(repetition+position)%3];
+          const rust=variant==="ortools"?null:solverforgeAdapter(forge,false,12,variant==="adaptive");
+          const trial=await runTrial(scenario,frozen,rust?rust.adapter:dockerAdapter(baseline,"ortools"));
+          if(trial.inputHash!==shared.inputHash)throw Error("FORGE_INPUT_DRIFT");
+          const native=rust?.telemetry()??null;
+          if(rust&&valid(trial)&&(!native||native.domainMode!=="BOUNDED_42"||native.entities!==expected
+            ||native.positions!==profile.activePositions||native.finalCost[3]!==trial.finalAssessment?.metrics?.normalizedEstimatedShortage))
+            throw Error("FORGE_SCALE_SCORE_DRIFT");
+          const {proposal:_proposal,...record}=trial;
+          round.push({variant,trial,record:{kind:"scale",...shared,repetition,position,variant,
+            identity:images[variant==="ortools"?"ortools":"solverforge"],forge:native,...record}});
+        }
+        const cp=round.find(x=>x.variant==="ortools")!.trial;
+        const full=round.find(x=>x.variant==="native-12")!.trial;
+        for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(cp,item.trial),
+          againstNative12:compare(full,item.trial)}));
+      }
+    }
+    if(source().revision!==snapshot.revision)throw Error("FORGE_SOURCE_DRIFT");
+    return;
+  }
   if(mode==="personal"){
     const variants=["ortools","native-12","adaptive"] as const;
     for(const personalMode of PERSONAL_MODES){

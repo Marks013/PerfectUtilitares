@@ -7,7 +7,7 @@ use super::presence::Presence;
 
 struct SectorQuality {
     cost:Cost,
-    present:u32,
+    present:u64,
     gaps:Vec<i64>,
 }
 fn sector_quality(plan:&Plan)->BTreeMap<usize,SectorQuality> {
@@ -17,12 +17,12 @@ fn sector_quality(plan:&Plan)->BTreeMap<usize,SectorQuality> {
     }
     members.into_iter().map(|(sector,rows)|{
         let facts=&rows[0].facts;
-        let mut attendance=[Presence::EMPTY;28];
-        let mut present=0u32;
+        let mut attendance=[Presence::EMPTY;42];
+        let mut present=0u64;
         for row in &rows {
             if let Some(mask)=row.mask {
                 for (day, current) in attendance.iter_mut().enumerate().take(facts.days) {
-                    if worked(mask,day) {*current|=Presence::one(row.id);present|=1u32<<day;}
+                    if worked(mask,day) {*current|=Presence::one(row.id);present|=1u64<<day;}
                 }
             }
         }

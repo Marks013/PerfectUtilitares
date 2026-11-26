@@ -11,10 +11,10 @@ use super::presence::Presence;
 fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
     if plan.employees.iter().all(|p| p.pattern.is_some()) { return true; }
     let mut selected = Vec::with_capacity(plan.employees.len());
-    let mut attendance = BTreeMap::<usize, [Presence; 28]>::new();
+    let mut attendance = BTreeMap::<usize, [Presence; 42]>::new();
     for person in &plan.employees {
         if let Some(mask) = person.mask() {
-            let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 28]);
+            let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 42]);
             for (day, present) in sector.iter_mut().enumerate().take(person.facts.days) {
                 if worked(mask, day) { *present |= Presence::one(person.id); }
             }
@@ -23,10 +23,10 @@ fn greedy(plan: &mut Plan, deadline: Instant) -> bool {
     for person in &plan.employees {
         if Instant::now() >= deadline { return false; }
         if let Some(index) = person.pattern { selected.push(index); continue; }
-        let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 28]);
+        let sector = attendance.entry(person.sector).or_insert([Presence::EMPTY; 42]);
         let bit = Presence::one(person.id);
-        let mut hard = [0i64; 28];
-        let mut gap = [0i64; 28];
+        let mut hard = [0i64; 42];
+        let mut gap = [0i64; 42];
         for band in &person.facts.bands {
             let present = sector[band.day];
             let gain = (band.gap(present) - band.gap(present | bit)) * band.minutes;

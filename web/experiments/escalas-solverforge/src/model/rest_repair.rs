@@ -20,17 +20,17 @@ pub struct RestRepairStats{
 }
 const MAX_ATTEMPTS:usize=200_000;
 
-fn index(p:&Employee,mask:u32)->Option<usize>{
+fn index(p:&Employee,mask:u64)->Option<usize>{
     p.catalog.binary_search(&mask).ok().filter(|j|p.allowed.binary_search(j).is_ok())
 }
-fn quality(p:&Employee,mask:u32)->[i64;4]{
+fn quality(p:&Employee,mask:u64)->[i64;4]{
     p.rules.rest_quality(mask,p.locked_off,p.facts.days)
 }
-fn secondary(p:&Employee,mask:u32)->(i64,i64,i64){
+fn secondary(p:&Employee,mask:u64)->(i64,i64,i64){
     let changes=((p.saved_work^mask)&p.saved_known).count_ones() as i64;
     (i64::from(changes>0),changes,p.rules.preferences(mask,p.facts.days))
 }
-fn no_personal_regression(p:&Employee,old:u32,new:u32)->bool{
+fn no_personal_regression(p:&Employee,old:u64,new:u64)->bool{
     // Do not erase a lower-ranked user's preferred days or saved work
     // in this optional repair. The native optimizer can still explore them.
     let a=secondary(p,old);let b=secondary(p,new);
@@ -39,7 +39,7 @@ fn no_personal_regression(p:&Employee,old:u32,new:u32)->bool{
 fn sum_quality(a:[i64;4],b:[i64;4])->[i64;4]{
     std::array::from_fn(|i|a[i]+b[i])
 }
-fn apply(att:&mut [Presence;28],person:&Employee,mask:u32,insert:bool){
+fn apply(att:&mut [Presence;42],person:&Employee,mask:u64,insert:bool){
     let bit=Presence::one(person.id);
     for (day,current) in att.iter_mut().enumerate().take(person.facts.days){
         if worked(mask,day){
@@ -50,7 +50,7 @@ fn apply(att:&mut [Presence;28],person:&Employee,mask:u32,insert:bool){
 pub(super) fn total_pairs(plan:&Plan)->i64{
     plan.employees.iter().filter_map(|p|p.mask().map(|m|quality(p,m)[1])).sum()
 }
-fn single_preserves(p:&Employee,att:&[Presence;28],from:usize,to:usize)->bool{
+fn single_preserves(p:&Employee,att:&[Presence;42],from:usize,to:usize)->bool{
     let bit=Presence::one(p.id);
     let remaining=att[from]&!bit;
     if remaining.is_empty(){return false;}
@@ -78,7 +78,7 @@ pub fn polish_rests(plan:&mut Plan,deadline:Instant)->RestRepairStats{
     for (i,p) in plan.employees.iter().enumerate(){sectors.entry(p.sector).or_default().push(i);}
     'sectors:for group in sectors.values(){
         if Instant::now()>=deadline{stats.deadline_reached=true;break;}
-        let mut att=[Presence::EMPTY;28];
+        let mut att=[Presence::EMPTY;42];
         for &i in group{let p=&plan.employees[i];apply(&mut att,p,p.mask().unwrap(),true);}
         for _ in 0..3{
             let mut changed=false;
@@ -98,7 +98,7 @@ pub fn polish_rests(plan:&mut Plan,deadline:Instant)->RestRepairStats{
                         for to in week*7+1..week*7+6{
                             if worked(old,to){continue;}
                             if !attempt(&mut stats,deadline){break 'sectors;}
-                            let flip=(1u32<<from)|(1u32<<to);
+                            let flip=(1u64<<from)|(1u64<<to);
                             let new=old^flip;
                             let Some(next)=index(p,new) else{continue;};
                             let after=quality(p,new);

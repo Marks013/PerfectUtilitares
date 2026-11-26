@@ -121,5 +121,10 @@ class EvidenceTests(unittest.TestCase):
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0}},"processSeconds":.2}
         with self.assertRaises(ValueError):native(row,profile,True)
 
+    def test_scale_rejects_missing_or_unbalanced_records(self):
+        from verify_comparison import verify_scale
+        with self.assertRaises(ValueError):verify_scale([])
+        with self.assertRaises(ValueError):verify_scale([{}]*17)
+
 if __name__=="__main__":
     unittest.main()

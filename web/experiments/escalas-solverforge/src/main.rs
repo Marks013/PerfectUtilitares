@@ -47,6 +47,11 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
     let people=plan.employees.len();
     let positions:usize=plan.employees.iter().map(|p|p.facts.days).sum();
     let patterns:usize=plan.employees.iter().map(|p|p.allowed.len()).sum();
+    let full_domain:usize=plan.employees.iter().map(|p|p.full_domain_count).sum();
+    let domain_mode=if plan.employees[0].facts.days==42{
+        debug_assert!(plan.employees.iter().all(|p|p.allowed.len()<=model::SCALE_DOMAIN_LIMIT+1));
+        "BOUNDED_42"
+    }else{"EXACT"};
     let incumbent=adaptive&&model::validate_complete(&plan);
     let search_start=Instant::now();
     let mut attempted=false;
@@ -145,7 +150,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
                     "afterPairs":repair.rest.after_pairs,"deadlineReached":repair.rest.deadline_reached,
                     "limitReached":repair.rest.limit_reached}},
             "resultSource":if seed_only {"CONSTRUCTOR_ONLY"} else if retained {"SEED_RETAINED"} else {"NATIVE"},
-            "initialized":initialized,"allowedPatterns":patterns,"initialCost":initial_cost,"finalCost":cost,
+            "initialized":initialized,"allowedPatterns":patterns,"fullDomainPatterns":full_domain,"domainMode":domain_mode,"initialCost":initial_cost,"finalCost":cost,
             "partialModel":true,"budgetSeconds":budget.as_secs()}})
 }
 
@@ -423,6 +428,30 @@ mod integration {
         assert_eq!(plan.employees[0].shift,"other");
         data["input"]["generationMode"]=json!("DAYS_AND_HOURS");
         assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_OPTIONS")));
+    }
+
+    #[test]
+    fn scaled_42_day_wire_and_constructor_preserve_complete_personal_domains(){
+        for people in [115,250]{
+            let mut data=input();
+            data["input"]["endDate"]=json!("2026-12-12");
+            let template=data["input"]["employees"][1].clone();
+            data["input"]["employees"]=Value::Array((0..people).map(|i|{
+                let mut p=template.clone();
+                p["id"]=json!(format!("person-{i}"));p["name"]=json!(format!("Synthetic person {i}"));
+                p["sector"]=json!(format!("Sector {}",i/12+1));p
+            }).collect());
+            data["input"]["assignments"]=json!([]);
+            data["input"]["demands"]=json!([]);
+            let mut plan=wire::read(&data,Instant::now()+Duration::from_secs(10)).unwrap();
+            assert_eq!(plan.employees.len(),people);
+            assert!(plan.employees.iter().all(|p|p.facts.days==42&&p.allowed.len()==model::SCALE_DOMAIN_LIMIT
+                &&p.full_domain_count==587620));
+            assert!(std::sync::Arc::ptr_eq(&plan.employees[0].catalog,&plan.employees[people-1].catalog));
+            assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(10)).0);
+            assert!(model::validate_complete(&plan));
+            assert_eq!(wire::date(30),"2026-12-01");assert_eq!(wire::date(41),"2026-12-12");
+        }
     }
 
     #[test]

@@ -81,15 +81,15 @@ fn transfer_gain(days:&[DayBands<'_>],from:usize,to:usize,
     (gain>0).then_some(gain)
 }
 
-fn personal_preserved(p:&Employee,old:u32,new:u32)->bool{
+fn personal_preserved(p:&Employee,old:u64,new:u64)->bool{
     let before=p.rules.rest_quality(old,p.locked_off,p.facts.days);
     let after=p.rules.rest_quality(new,p.locked_off,p.facts.days);
     after.iter().zip(before).all(|(a,b)|*a<=b)
         &&((p.saved_work^new)&p.saved_known).count_ones()<=((p.saved_work^old)&p.saved_known).count_ones()
         &&p.rules.preferences(new,p.facts.days)<=p.rules.preferences(old,p.facts.days)
 }
-fn allowed_swap(p:&Employee,old:u32,from:usize,to:usize)->Option<usize>{
-    let mask=old^((1u32<<from)|(1u32<<to));
+fn allowed_swap(p:&Employee,old:u64,from:usize,to:usize)->Option<usize>{
+    let mask=old^((1u64<<from)|(1u64<<to));
     let index=p.catalog.binary_search(&mask).ok()?;
     (p.allowed.binary_search(&index).is_ok()&&personal_preserved(p,old,mask)).then_some(index)
 }
@@ -106,7 +106,7 @@ pub fn polish_peaks(plan:&mut Plan,deadline:Instant)->PeakRepairStats{
     'sectors:for group in sectors.values(){
         let facts=plan.employees[group[0]].facts.clone();
         let bands=day_bands(&facts);
-        let mut att=[Presence::EMPTY;28];
+        let mut att=[Presence::EMPTY;42];
         for &i in group{
             let p=&plan.employees[i];
             let mask=p.mask().unwrap();
@@ -204,7 +204,7 @@ mod tests{
             "start":480,"end":540,"minimum":3,"estimated":true
         })).collect());
         let mut plan=wire::read(&input,Instant::now()+Duration::from_secs(5)).unwrap();
-        for (p,off) in plan.employees.iter_mut().zip([5u32,5,34]){
+        for (p,off) in plan.employees.iter_mut().zip([5u64,5,34]){
             p.pattern=p.catalog.binary_search(&(127^off)).ok();
             assert!(p.allowed.binary_search(&p.pattern.unwrap()).is_ok());
         }
