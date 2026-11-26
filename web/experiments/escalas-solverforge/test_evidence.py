@@ -131,5 +131,12 @@ class EvidenceTests(unittest.TestCase):
         for incomplete in ([],[{}]*16,[{}]*23):
             with self.assertRaises(ValueError):verify_temporal(incomplete)
 
+    def test_rest_audit_must_be_complete_nonnegative_and_consistent(self):
+        from verify_comparison import verify_rest_metrics
+        rest={"adjustablePairs":2,"correctableExcess":1,"concentration":1,"weeklyRepetitions":0}
+        verify_rest_metrics(rest)
+        for invalid in (None,{},dict(rest,correctableExcess=3),dict(rest,concentration=-1)):
+            with self.assertRaises(ValueError):verify_rest_metrics(invalid)
+
 if __name__=="__main__":
     unittest.main()

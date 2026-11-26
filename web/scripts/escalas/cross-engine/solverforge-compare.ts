@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { newInput,newEmployee } from "../../../src/components/escalas/workspace-model";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
 import { generationScenarioBasis } from "../../../src/lib/escalas/hours-reference";
+import { restPairSummary } from "../../../src/lib/escalas/rest-quality";
 import { dateRange, dayOfWeek, visibleDates } from "../../../src/lib/escalas/dates";
 import type { EscalaInput } from "../../../src/lib/escalas/types";
 import { arch } from "node:os";
@@ -128,6 +129,13 @@ function scaleCoverageAudit(trial:Trial){
     }
     return {horizon,month,sundays,monthSundays,closing,peak:quality.peaks.get(sector)??0,presence};
   });
+}
+
+function scaleRestAudit(trial:Trial){
+  if(!valid(trial)||!trial.proposal)return null;
+  const r=restPairSummary(trial.proposal);
+  return {adjustablePairs:r.adjustablePairs,correctableExcess:r.correctableExcess,
+    concentration:r.concentration,weeklyRepetitions:r.weeklyRepetitions};
 }
 
 const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks"] as const;
@@ -308,7 +316,8 @@ async function main() {
           round.push({variant,trial,record:{kind:"temporal",...shared,repetition,position,variant,
             identity:images[variant==="ortools"?"ortools":"solverforge"],temporal:adapter?.telemetry()??null,
             featureChecks:temporalChecks(name,scenario,trial),tieBreakAudit:temporalTieAudit(trial),
-            scaleCoverageAudit:days===42?scaleCoverageAudit(trial):null,...record}});
+            scaleCoverageAudit:days===42?scaleCoverageAudit(trial):null,
+            scaleRestAudit:days===42?scaleRestAudit(trial):null,...record}});
         }
         const control=round.find(x=>x.variant==="ortools")!.trial;
         for(const item of round)console.log(JSON.stringify({...item.record,againstOrtools:compare(control,item.trial)}));
@@ -342,7 +351,7 @@ async function main() {
             throw Error("FORGE_SCALE_SCORE_DRIFT");
           const {proposal:_proposal,...record}=trial;
           round.push({variant,trial,record:{kind:"scale",...shared,repetition,position,variant,
-            identity:images[variant==="ortools"?"ortools":"solverforge"],forge:native,scaleCoverageAudit:scaleCoverageAudit(trial),...record}});
+            identity:images[variant==="ortools"?"ortools":"solverforge"],forge:native,scaleCoverageAudit:scaleCoverageAudit(trial),scaleRestAudit:scaleRestAudit(trial),...record}});
         }
         const cp=round.find(x=>x.variant==="ortools")!.trial;
         const full=round.find(x=>x.variant==="native-12")!.trial;

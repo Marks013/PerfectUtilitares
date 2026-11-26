@@ -121,6 +121,12 @@ ORDERS = list(permutations(ENGINES))
 PAIRS = [("ortools", "timefold"), ("ortools", "solverforge"), ("timefold", "solverforge")]
 
 
+def verify_rest_metrics(rest):
+    check(isinstance(rest, dict) and set(rest) == {"adjustablePairs", "correctableExcess", "concentration", "weeklyRepetitions"}
+          and all(integer(v) for v in rest.values()) and rest["correctableExcess"] <= rest["adjustablePairs"],
+          "REST_METRICS")
+
+
 def valid(row, profile):
     check(numeric(row.get("engineSeconds")) and numeric(row.get("productSeconds"))
           and row["engineSeconds"] <= row["productSeconds"], "TIME")
@@ -138,10 +144,7 @@ def valid(row, profile):
             check(integer(metrics.get("normalizedEstimatedShortage")), "SHORTAGE")
             if profile["days"]!=42:
                 sector_vector(metrics, profile)
-            rest = metrics.get("restAudit")
-            check(isinstance(rest, dict) and set(rest) == {"adjustablePairs", "correctableExcess", "concentration", "weeklyRepetitions"}
-                  and all(integer(v) for v in rest.values()) and rest["correctableExcess"] <= rest["adjustablePairs"],
-                  "REST_METRICS")
+                verify_rest_metrics(metrics.get("restAudit"))
     accepted = (row.get("errorCode") is None and row["timely"] and row.get("outcome") == "NEW_PROPOSAL"
                 and row.get("unchangedReference") is False and assessment_valid(final)
                 and (final.get("comparison") or {}).get("regressed") is not True)
@@ -149,6 +152,12 @@ def valid(row, profile):
     check(row.get("acceptedNew") is accepted and row.get("engineNew") is engine_new, "ATTRIBUTION")
     if engine_new:
         check(row["rawAssessment"]["metrics"] == final["metrics"], "RAW_FINAL_DRIFT")
+        if profile["days"]==42:
+            # Frozen core omits both vectors for six weeks. These supplemental
+            # metrics come from the identical accepted candidate and the
+            # original coverage/rest evaluators, not the native solver.
+            sector_vector({**final["metrics"],"coverageAudit":row.get("scaleCoverageAudit")},profile)
+            verify_rest_metrics(row.get("scaleRestAudit"))
     sample = verify_cgroup(row.get("cgroup"))
     return engine_new and sample is not None
 
@@ -213,7 +222,7 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
     # Cross-check every represented rest-quality term with the independent
     # product evaluator. No candidate-internal metric can certify itself.
     metrics=row["finalAssessment"]["metrics"]
-    rest=metrics.get("restAudit")
+    rest=row.get("scaleRestAudit") if profile.get("days")==42 else metrics.get("restAudit")
     check(isinstance(rest,dict) and all(integer(rest.get(k)) for k in
           ("correctableExcess","adjustablePairs","concentration","weeklyRepetitions"))
           and t["finalCost"][5:9]==[rest[k] for k in
