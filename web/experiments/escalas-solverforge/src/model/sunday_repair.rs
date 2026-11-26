@@ -72,24 +72,38 @@ fn buckets<'a>(cache:&'a SignatureCache,p:&Employee)->&'a [Vec<usize>]{
     &cache[&(p.locked_work,p.locked_off,p.sunday_cap,p.comparable_weeks,p.rules,std::sync::Arc::as_ptr(&p.catalog) as usize,
             if p.allowed.len()==1{Some(p.allowed[0])}else{None})]
 }
-fn choose(p:&Employee,att:&[Presence;42],candidates:&[usize],deadline:Instant)->Option<usize>{
+fn choose(p:&Employee,att:&[Presence;42],candidates:&[usize],peak_aware:bool,deadline:Instant)->Option<usize>{
     let mut hard=[0i64;42];let mut estimated=[0i64;42];
+    let mut peaks=[[0i64;2];42];let mut quadratic=[[0i64;2];42];
     let bit=Presence::one(p.id);
     for b in &p.facts.bands {
-        let n=att[b.day];let gain=(b.gap(n)-b.gap(n|bit))*b.minutes;
-        if b.estimated {estimated[b.day]+=gain;}else{hard[b.day]+=gain;}
+        let n=att[b.day];let old=b.gap(n);let new=b.gap(n|bit);let gain=(old-new)*b.minutes;
+        if b.estimated {
+            estimated[b.day]+=gain;
+            if peak_aware{
+                for (w,gap) in [old,new].into_iter().enumerate(){
+                    peaks[b.day][w]=peaks[b.day][w].max(gap);
+                    quadratic[b.day][w]+=gap*gap*b.minutes;
+                }
+            }
+        }else{hard[b.day]+=gain;}
     }
     let mut best=None;
     // Precompute marginal gains for each 5x2 weekly bitmask. Four
     // table lookups replace scanning 28 days for every candidate.
-    let mut weekly=[[[0i64;5];128];6];
+    let mut weekly=[[[0i64;7];128];6];
     for (w,table) in weekly.iter_mut().enumerate().take(p.facts.days/7){
         for mask in 0u64..128{
             if mask.count_ones()!=5||mask&64==0{continue;}
             let row=&mut table[mask as usize];
             for d in 0..7{
-                if !worked(mask,d){continue;}
                 let day=w*7+d;
+                if peak_aware{
+                    let active=usize::from(worked(mask,d));
+                    row[5]=row[5].max(peaks[day][active]);
+                    row[6]+=quadratic[day][active];
+                }
+                if !worked(mask,d){continue;}
                 row[0]+=hard[day];
                 if d==0{row[1]+=estimated[day];}
                 row[2]+=i64::from(att[day].is_empty());
@@ -101,15 +115,15 @@ fn choose(p:&Employee,att:&[Presence;42],candidates:&[usize],deadline:Instant)->
     for (n,&i) in candidates.iter().enumerate(){
         if n%128==0&&Instant::now()>=deadline{return None;}
         let mask=p.catalog[i];
-        let mut rank=[0i64;8];
-        for w in 0..p.facts.days/7{
-            let row=weekly[w][((mask>>(w*7))&127) as usize];
-            for i in 0..4{rank[i]+=row[i];}
-            rank[5]+=row[4];
+        let mut rank=[0i64;10];
+        for (w,table) in weekly.iter().enumerate().take(p.facts.days/7){
+            let row=table[((mask>>(w*7))&127) as usize];
+            for (a,b) in rank[..4].iter_mut().zip(&row[..4]){*a+=b;}
+            rank[4]=rank[4].min(-row[5]);rank[5]-=row[6];rank[7]+=row[4];
         }
-        rank[4] = -p.rules.spacing(mask,p.locked_off,p.facts.days).1;
-        rank[6] = -(((p.saved_work^mask)&p.saved_known).count_ones() as i64);
-        rank[7] = -p.rules.preferences(mask,p.facts.days);
+        rank[6] = -p.rules.spacing(mask,p.locked_off,p.facts.days).1;
+        rank[8] = -(((p.saved_work^mask)&p.saved_known).count_ones() as i64);
+        rank[9] = -p.rules.preferences(mask,p.facts.days);
         if best.is_none_or(|(prior,_)|rank>prior){best=Some((rank,i));}
     }
     best.map(|(_,i)|i)
@@ -288,7 +302,8 @@ fn joint_projections(plan:&Plan,members:&[usize],facts:&Sector,att:&[Presence;42
 }
 
 fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence;42],
-               reverse:bool,cache:&SignatureCache,deadline:Instant)->Option<(Vec<usize>,[Presence;42])>{
+               order_policy:(bool,bool),cache:&SignatureCache,deadline:Instant)->Option<(Vec<usize>,[Presence;42])>{
+    let (reverse,peak_aware)=order_policy;
     let mut att=*old;
     let mut selected:Vec<usize>=members.iter().map(|&i|plan.employees[i].pattern.unwrap()).collect();
     let mut order:Vec<usize>=(0..members.len()).collect();
@@ -306,7 +321,7 @@ fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence
         let p=&plan.employees[members[slot]];
         let current=p.catalog[selected[slot]];
         if signature(current,p.facts.days)==projection.signatures[slot]{continue;}
-        let next=choose(p,&att,&buckets(cache,p)[projection.signatures[slot] as usize],deadline)?;
+        let next=choose(p,&att,&buckets(cache,p)[projection.signatures[slot] as usize],peak_aware,deadline)?;
         selected[slot]=next;apply(&mut att,p,p.catalog[next],true);
     }
     // Coordinate descent within each legal Sunday signature. Try both
@@ -316,7 +331,7 @@ fn reconstruct(plan:&Plan,members:&[usize],projection:&Projection,old:&[Presence
             let p=&plan.employees[members[slot]];
             let current=p.catalog[selected[slot]];
             apply(&mut att,p,current,false);
-            let next=choose(p,&att,&buckets(cache,p)[projection.signatures[slot] as usize],deadline)?;
+            let next=choose(p,&att,&buckets(cache,p)[projection.signatures[slot] as usize],peak_aware,deadline)?;
             selected[slot]=next;apply(&mut att,p,p.catalog[next],true);
         }
         order.reverse();
@@ -419,10 +434,14 @@ pub fn repair(plan:&mut Plan,deadline:Instant)->RepairStats {
                 b.gap_components(projected[b.day]).iter().zip(b.gap_components(att[b.day]))
                     .any(|(a,b)|*a>b)
             }){continue;}
-            for reverse in [false,true]{
+            // The original two orders remain first. For six weeks only,
+            // try additional witnesses ranked by the resulting weekday peak
+            // and squared deficit; acceptance below is unchanged.
+            let policies=[(false,false),(true,false),(false,true),(true,true)];
+            for &policy in &policies[..if facts.days==42{4}else{2}]{
                 if Instant::now()>=deadline{break;}
                 stats.reconstructed+=1;
-                let Some((selected,trial))=reconstruct(plan,members,projection,&att,reverse,&cache,deadline) else{break;};
+                let Some((selected,trial))=reconstruct(plan,members,projection,&att,policy,&cache,deadline) else{break;};
                 let rows:Vec<Member>=members.iter().zip(&selected).map(|(&i,&index)|{
                     let p=&plan.employees[i];let mut m=p.member();m.mask=Some(p.catalog[index]);m
                 }).collect();
