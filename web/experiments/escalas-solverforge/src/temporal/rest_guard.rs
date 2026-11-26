@@ -3,7 +3,6 @@
 //! that intentionally omit role/clock. Keep padding separate from the month.
 use std::collections::{BTreeMap,BTreeSet};
 use crate::temporal_domain::TemporalPlan;
-use super::work;
 
 #[derive(Default)]
 pub(super) struct Snapshot{
@@ -34,8 +33,8 @@ impl Snapshot{
                 }
             }
             let mut sunday_total=0;
-            for (d,&s) in pat.states.iter().enumerate().take(p.facts.days){
-                if p.facts.weekday(d)==0&&work(s){out.sector_sunday.insert((p.sector,d));
+            for d in 0..p.facts.days{
+                if p.facts.weekday(d)==0&&pat.civil_work&(1u64<<d)!=0{out.sector_sunday.insert((p.sector,d));
                     if pat.sunday_opportunities&(1u64<<d)!=0{sunday_total+=1;}}
             }
             *out.sunday_totals.entry(p.cohort).or_default()+=sunday_total;

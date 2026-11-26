@@ -21,7 +21,7 @@ impl Snapshot{
         for (sector,people) in groups{
             let facts=&people[0].facts;
             let mut edges=BTreeSet::from([facts.closing-60,facts.closing]);
-            for c in facts.clocks.iter(){for &(a,b) in &c.segments{edges.insert(a);edges.insert(b);}}
+            for c in facts.clocks.iter(){for (_,a,b) in c.civil_parts(){edges.insert(a);edges.insert(b);}}
             for b in &facts.bands{edges.insert(b.start);edges.insert(b.end);}
             let edges:Vec<_>=edges.into_iter().collect();
             let mut counts=BTreeMap::<(usize,usize,usize),i64>::new();
@@ -29,13 +29,17 @@ impl Snapshot{
                 let Some(index)=p.pattern else{continue;};
                 for (day,&state) in p.catalog[index].states.iter().enumerate().take(facts.days){
                     let Some(c)=clock(&facts.clocks,state) else{continue;};
-                    result.days.insert((sector,day));
-                    for (part,bounds) in edges.windows(2).enumerate(){
-                        if c.covers(bounds[0],bounds[1]){
-                            *counts.entry((day,p.role,part)).or_default()+=1;
-                            for scope in 0..4u8{
-                                if scope&1!=0&&!facts.visible[day]||scope&2!=0&&facts.weekday(day)!=0{continue;}
-                                *result.service.entry((sector,p.role,scope,bounds[0],bounds[1])).or_default()+=1;
+                    for (offset,a,b) in c.civil_parts(){
+                        let civil=day+offset;
+                        if civil>=facts.days{continue;}
+                        result.days.insert((sector,civil));
+                        for (part,bounds) in edges.windows(2).enumerate(){
+                            if a<=bounds[0]&&b>=bounds[1]{
+                                *counts.entry((civil,p.role,part)).or_default()+=1;
+                                for scope in 0..4u8{
+                                    if scope&1!=0&&!facts.visible[civil]||scope&2!=0&&facts.weekday(civil)!=0{continue;}
+                                    *result.service.entry((sector,p.role,scope,bounds[0],bounds[1])).or_default()+=1;
+                                }
                             }
                         }
                     }

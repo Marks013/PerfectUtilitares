@@ -55,9 +55,15 @@ impl Rules{
         for start in -max..len{
             if (start..=start+max).all(|d|state(d).is_some_and(work)){return false;}
         }
+        let occupied=|d:i32|state(d).is_some_and(work)
+            ||state(d-1).and_then(|s|clock(clocks,s)).is_some_and(Clock::overnight);
+        for d in 0..len{
+            if state(d).and_then(|s|clock(clocks,s)).is_some_and(Clock::overnight)
+                &&(d+1<len||full)&&!state(d+1).is_some_and(work){return false;}
+        }
         let sunday=-(self.offset as i32);
         for start in (sunday-self.cap*7..len).step_by(7){
-            if (start..=start+self.cap*7).step_by(7).all(|d|state(d).is_some_and(work)){return false;}
+            if (start..=start+self.cap*7).step_by(7).all(occupied){return false;}
         }
         if self.personal.variable{
             for start in -2..len{
@@ -103,7 +109,7 @@ impl Rules{
         if !self.personal.adjustable(){return 0;}
         (0..self.days).filter(|&d|self.visible[d]&&(self.mutable(d)||d>0&&self.mutable(d-1))).count() as i64
     }
-    fn pattern(&self,states:[u8;MAX_DAYS])->Pattern{
+    fn pattern(&self,states:[u8;MAX_DAYS],clocks:&[Clock])->Pattern{
         let active=&states[..self.days];let mut cost=[0;17];
         let changes=active.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;
@@ -131,6 +137,11 @@ impl Rules{
             }
             rest[0]=(rest[1]+imposed-2).max(0)-(imposed-2).max(0);
         }
+        let civil_work=active.iter().enumerate().fold(0u64,|mask,(day,&s)|{
+            if !work(s){return mask;}
+            let mask=mask|1u64<<day;
+            if clock(clocks,s).is_some_and(Clock::overnight)&&day+1<self.days{mask|1u64<<(day+1)}else{mask}
+        });
         let mut rates=[None;2];let mut sunday_opportunities=0u64;
         for weekday in 0..7{
             let prior:Vec<_>=self.context.iter().filter(|(d,s)|(-21..0).contains(*d)&&self.weekday(**d)==weekday&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
@@ -144,13 +155,13 @@ impl Rules{
                 let eligible:Vec<_>=actual.filter(|&d|!self.closed[d]&&active[d]!=ABS&&self.fixed&(1<<weekday)==0
                     &&!self.old[d].is_some_and(|r|r.locked==Some(true)&&r.state==OFF)).collect();
                 if !eligible.is_empty(){
-                    let used=prior.iter().filter(|&&s|work(s)).count()+eligible.iter().filter(|&&d|work(active[d])).count();
+                    let used=prior.iter().filter(|&&s|work(s)).count()+eligible.iter().filter(|&&d|civil_work&(1u64<<d)!=0).count();
                     rates[usize::from(weekday==6)]=Some(used as i64*10_000/(prior.len()+eligible.len()) as i64);
                     if weekday==0{for d in eligible{sunday_opportunities|=1u64<<d;}}
                 }
             }
         }
-        Pattern{states,personal:cost,rates,sunday_opportunities,rest}
+        Pattern{states,personal:cost,rates,sunday_opportunities,civil_work,rest}
     }
 }
 
@@ -213,5 +224,5 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
         }
     }
     check(!paths.is_empty(),"NO_PERSONAL_PATTERN")?;
-    Ok(paths.into_iter().map(|p|rules.pattern(p)).collect())
+    Ok(paths.into_iter().map(|p|rules.pattern(p,clocks)).collect())
 }

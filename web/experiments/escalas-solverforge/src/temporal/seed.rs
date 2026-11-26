@@ -40,8 +40,10 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             for (b,count) in sector.facts.bands.iter().zip(&sector.counts){
                 let gain=count.gain(b,p.role)*i64::from(b.end-b.start);
                 if gain==0{continue;}
-                for (state,benefit) in benefits[b.day].iter_mut().enumerate(){
-                    if b.clock_mask&(1u16<<state)==0{continue;}
+                for (assignment_day,mask) in [(Some(b.day),b.clock_mask),(b.day.checked_sub(1),b.previous_mask)]{
+                    let Some(assignment_day)=assignment_day else{continue;};
+                    for (state,benefit) in benefits[assignment_day].iter_mut().enumerate(){
+                    if mask&(1u16<<state)==0{continue;}
                     if b.estimated{
                         benefit[1]+=gain;
                         if sector.facts.weekday(b.day)==0{benefit[2]+=gain;}
@@ -49,6 +51,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                         let close=(b.end.min(sector.facts.closing)-b.start.max(sector.facts.closing-60)).max(0);
                         benefit[5]+=count.gain(b,p.role)*i64::from(close);
                     }else{benefit[0]+=gain;}
+                    }
                 }
             }
             let mut best=None;
@@ -86,7 +89,8 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             if clock(&sector.facts.clocks,state).is_some(){sector.timed[day]+=1;}
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
-            if work(pattern.states[band.day])&&band.clock_mask&(1u16<<pattern.states[band.day])!=0{count.insert(band,p.role);}
+            let serves=|d:usize,mask:u16|work(pattern.states[d])&&mask&(1u16<<pattern.states[d])!=0;
+            if serves(band.day,band.clock_mask)||band.day>0&&serves(band.day-1,band.previous_mask){count.insert(band,p.role);}
         }
         plan.employees[i].pattern=Some(choice);
     }

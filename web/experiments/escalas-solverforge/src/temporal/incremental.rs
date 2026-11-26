@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use solverforge::stream::collector::Accumulator;
 use crate::model::Presence;
-use super::{Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,service_bounds,work};
+use super::{Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,civil_presence,clock,service_bounds,work};
 
 #[derive(Clone,Copy,Default)]
 struct Daily{
@@ -33,13 +33,7 @@ impl TemporalAccumulator{
         let mut daily=Daily::default();
         for &index in &self.bands_by_day[day]{
             let b=&f.bands[index];
-            let mut clocks=b.clock_mask;
-            let mut present=Presence::EMPTY;
-            while clocks!=0{
-                let state=clocks.trailing_zeros() as usize;
-                clocks&=clocks-1;
-                present|=self.attendance[day][state];
-            }
+            let present=civil_presence(&self.attendance,day,b.clock_mask,b.previous_mask);
             let roles:i64=b.roles.iter().map(|(role,n)|{
                 let members=self.role_members.get(role).copied().unwrap_or_default();
                 (*n-i64::from((present&members).count_ones())).max(0)
@@ -71,6 +65,7 @@ impl TemporalAccumulator{
             let cell=&mut self.attendance[day][usize::from(state)];
             if insert{*cell|=bit;}else{*cell&=!bit;}
             self.refresh(day);
+            if day+1<row.facts.days&&clock(&row.facts.clocks,state).is_some_and(|c|c.overnight()){self.refresh(day+1);}
         }
         for (total,value) in self.personal.iter_mut().zip(p.personal){*total+=sign*value;}
     }
