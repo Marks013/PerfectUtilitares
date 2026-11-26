@@ -266,6 +266,39 @@ mod integration {
     }
 
     #[test]
+    fn shared_custom_profile_corpus_uses_native_search() {
+        let corpus:Value=serde_json::from_str(include_str!("e3a-fixed-clock-contract.json")).unwrap();
+        assert_eq!(corpus["version"],"E3A-FIXED-CLOCK-1");
+        let input=&corpus["base"];
+        let mut plan=wire::read(input,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert!(model::seed(&mut plan,Instant::now()+Duration::from_secs(5)).0);
+        assert!(model::validate_complete(&plan));
+        let config=SolverConfig::from_toml_str("environment_mode = \"fast_assert\"\nrandom_seed = 37\nmove_thread_count = \"none\"\n[termination]\nseconds_spent_limit = 1\n").unwrap();
+        let result=plan.solve_with_config(config).unwrap();
+        assert!(model::validate_complete(&result));
+        assert_eq!(result.employees.len(),3);
+        for (i,p) in result.employees.iter().enumerate(){
+            assert_eq!(p.shift,format!("clock-{}",40+2*i));
+            let mask=p.mask().unwrap();
+            assert_eq!(mask.count_ones(),5);
+            assert!(model::worked(mask,6));
+            if i==0 {
+                assert!(!model::worked(mask,1));
+                assert!(!model::worked(mask,0)||!model::worked(mask,2));
+            }
+            if i==1 {assert!(!model::worked(mask,2)&&!model::worked(mask,5));}
+        }
+        let costs=model::evaluate(&result);
+        assert_eq!(result.score,Some(score::EscalasScore::of([-costs[0]],std::array::from_fn(|i|-costs[i+1]))));
+        for mutation in corpus["mutations"].as_array().unwrap(){
+            let mut value=input.clone();
+            let (parent,key)=mutation["pointer"].as_str().unwrap().rsplit_once('/').unwrap();
+            value.pointer_mut(parent).unwrap().as_object_mut().unwrap().insert(key.to_owned(),mutation["value"].clone());
+            assert!(wire::read(&value,Instant::now()+Duration::from_secs(5)).is_err(),"{}",mutation["name"]);
+        }
+    }
+
+    #[test]
     fn custom_fixed_clock_profiles_preserve_individual_rules() {
         for (hours,end) in [(40,1020),(42,1044),(44,1068)] {
             let mut data=input();

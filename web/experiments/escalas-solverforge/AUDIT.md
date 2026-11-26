@@ -83,3 +83,5 @@ Presença agora usa bitmap de quatro palavras (256 posições), com testes de 25
 ## SF37–SF40 — E3a parâmetros pessoais
 
 Portar fixed_rest_projection e o recorte sem histórico de _streaks/_rest/CONSECUTIVE do OR-Tools f78c691. Validar 40/42/44h, duração exata do relógio selecionado, limites, modalidade e projeção de slots. Preferências e estabilidade recebem níveis distintos (vetor 11), sem tornar preferência hard. Regras de folga variável e rodízio consideram isenções FIXED/CONSECUTIVE, e espaçamento só VARIABLE/ANY. Domínios cacheados por configuração. Testes nativos de perfis e diferencial dos estados. Preservar recusa de semântica ausente; não alegar E3/E4 completo. Nova compilação e ensaios externos necessários.
+
+Corpus E3A-FIXED-CLOCK-1 compartilhado por blob 2972584ac91979b65bb7782aa8374fcbb86f7b90, com três jornadas simultâneas, folga mista/fixa/variável, preferência e referência importada selecionada. Seis mutações negativas. Não é evidência de paridade de todos os casos do OR-Tools; comparar via cliente congelado e avançar o modelo temporal para as famílias ausentes.

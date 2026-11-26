@@ -1,7 +1,7 @@
 //! Adapter for SolverForge 0.31.2, whose BendableScore implements Score
 //! but not ParseableScore (required by the native solve factory).
-//! Delegate all numeric operations and ordering to the original eleven-level
-//! score. No reweighting, collapsing objectives or dependency changes.
+//! Delegate numeric operations and ordering to BendableScore<1,10>.
+//! E3a separates people changed, days changed and personal preferences.
 use solverforge::{BendableScore, ParseableScore, Score, ScoreLevel, ScoreParseError};
 use std::fmt;
 use std::ops::{Add, Neg, Sub};

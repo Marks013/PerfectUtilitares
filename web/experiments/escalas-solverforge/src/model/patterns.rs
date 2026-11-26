@@ -122,6 +122,22 @@ mod domain_tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    fn individual_preferences_and_spacing_are_independent(){
+        let rules=PersonalRules{prefer_consecutive:true,preferred:1<<2,..Default::default()};
+        // Sun and Mon OFF (Tue preferred OFF is not satisfied).
+        let paired=127^3;
+        // Mon and Tue OFF: pair and preferred weekday satisfied.
+        let preferred=127^6;
+        assert_eq!(rules.preferences(paired,7),1);
+        assert_eq!(rules.preferences(preferred,7),0);
+        assert_eq!(rules.spacing(preferred,0,7),(0,0));
+        assert_eq!(PersonalRules::default().spacing(preferred,0,7),(0,1));
+        let required=PersonalRules{consecutive:true,..Default::default()};
+        assert!(legal_profile(preferred,7,0,0,1,1,required));
+        assert!(!legal_profile(127^5,7,0,0,1,1,required));
+    }
+
+    #[test]
     fn pruned_domains_are_exactly_the_original_exhaustive_domains() {
         for days in [7, 28] {
             let all = catalog(days);
