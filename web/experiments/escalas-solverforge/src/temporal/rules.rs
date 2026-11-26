@@ -107,9 +107,9 @@ impl Rules{
     }
     pub fn pair_terms(&self)->i64{
         if !self.personal.adjustable(){return 0;}
-        (0..self.days).filter(|&d|self.visible[d]&&(self.mutable(d)||d>0&&self.mutable(d-1))).count() as i64
+        (0..self.days).filter(|&d|self.employed(d as i32)&&self.visible[d]&&(self.mutable(d)||d>0&&self.mutable(d-1))).count() as i64
     }
-    fn pattern(&self,states:[u8;MAX_DAYS],clocks:&[Clock])->Pattern{
+    pub(super) fn pattern(&self,states:[u8;MAX_DAYS],clocks:&[Clock])->Pattern{
         let active=&states[..self.days];let mut cost=[0;17];
         let changes=active.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;

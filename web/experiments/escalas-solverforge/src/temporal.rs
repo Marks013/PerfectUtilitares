@@ -384,7 +384,7 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
     let days=calendar.labels.len();
     let labels=Arc::new(calendar.labels.clone());
     let relative=|date:&str|calendar.relative(date);
-    for k in input.as_object().unwrap().keys(){check(!k.starts_with('_')||k=="_coverageServiceProtection","PRIVATE_FIELD_UNSUPPORTED")?;}
+    for k in input.as_object().unwrap().keys(){check(!k.starts_with('_')||["_coverageServiceProtection","_initialAssignments","_coverageComparison","_coverageProtection"].contains(&k.as_str()),"PRIVATE_FIELD_UNSUPPORTED")?;}
     check(input.get("planningCalendarSource").is_none(),"TEMPORAL_METADATA")?;
     for k in ["calendarProvenance","collectiveAgreement","operationalCertificate","mealIntervalAgreement"]{
         check(policy.get(k).is_none(),"POLICY_METADATA_UNSUPPORTED")?;
@@ -419,6 +419,16 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         clocks.push(c);
     }
     let clocks=Arc::new(clocks);
+    let mut hints=BTreeMap::<(&str,i32),Record>::new();
+    if input.get("_initialAssignments").is_some(){
+        for row in array(input,"_initialAssignments")?{
+            let pid=text(row,"employeeId")?;
+            let day=relative(text(row,"date")?)?;
+            check((0..days as i32).contains(&day),"HINT_DATE")?;
+            check(hints.insert((pid,day),code(row,&ids,pid,false)?).is_none(),"DUPLICATE_HINT")?;
+        }
+    }
+    let mut witnesses=Vec::new();
     let people=array(input,"employees")?;
     check(!people.is_empty()&&people.len()<=if days==7{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
     let mut sectors=BTreeMap::<String,usize>::new();let mut roles=BTreeMap::<String,usize>::new();
@@ -638,6 +648,18 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,active_start,active_end,
             untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,visible:calendar.visible};
         rest_weight+=rules.pair_terms();
+        let hint=if hints.is_empty(){None}else{
+            let mut states=[OFF;MAX_DAYS];
+            let mut complete=true;
+            for (d,options) in daily_options.iter().enumerate(){
+                let state=if employed(d as i32){
+                    hints.get(&(pid,d as i32)).map(|r|r.state)
+                }else{Some(INACTIVE)};
+                if let Some(state)=state.filter(|s|options.contains(s)){states[d]=state;}else{complete=false;break;}
+            }
+            if complete&&rules.legal_prefix(&states[..days],&clocks){Some(rules.pattern(states,&clocks))}else{None}
+        };
+        witnesses.push(hint);
         let key=(rules,daily_options);
         let (catalog,allowed)=match domains.entry(key){
             std::collections::btree_map::Entry::Occupied(entry)=>entry.get().clone(),
@@ -663,7 +685,34 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
     for p in &mut employees{p.rest_weight=rest_weight;}
-    Ok(TemporalPlan{employees,score:None})
+    // Optional client hint is all-or-nothing. It is not an assignment lock.
+    // Keep the shared sampled catalogue untouched and add a legal individual
+    // witness only if all active positions were supplied and validated.
+    let required:usize=witnesses.iter().flatten().map(|p|p.states[..days].iter().filter(|&&s|s!=INACTIVE).count()).sum();
+    let complete=!hints.is_empty()&&witnesses.iter().all(Option::is_some)&&hints.len()==required
+        &&hints.keys().all(|(pid,_)|seen.contains(pid));
+    if complete{
+        for (person,hint) in employees.iter_mut().zip(witnesses){
+            let hint=hint.unwrap();
+            if let Some(index)=person.catalog.iter().position(|p|p.states==hint.states){person.pattern=Some(index);continue;}
+            // A complete seven-day catalogue cannot miss a legal witness.
+            check(days!=7,"HINT_EXACT_DOMAIN_DRIFT")?;
+            let mut catalog=person.catalog.as_ref().clone();
+            if catalog.len()==PATH_LIMIT{catalog.pop();}
+            let index=catalog.len();catalog.push(hint);
+            person.allowed=Arc::from((0..catalog.len()).collect::<Vec<_>>());
+            let ranks:[u16;MAX_DAYS]=std::array::from_fn(|d|if d<days{tie_rank::rank(&person.name_id,&labels[d]) as u16}else{0});
+            person.tie_costs=Arc::from(catalog.iter().map(|p|p.states.iter().zip(ranks)
+                .filter(|(s,_)|**s==OFF).map(|(_,r)|r).sum::<u16>()).collect::<Vec<_>>());
+            person.catalog=Arc::new(catalog);person.pinned=person.allowed.len()==1;person.pattern=Some(index);
+        }
+    }
+    let mut plan=TemporalPlan{employees,score:None};
+    if complete&&evaluate(&plan)[0]!=0{
+        // A complete but globally infeasible hint cannot replace construction.
+        for p in &mut plan.employees{if !p.pinned{p.pattern=None;}}
+    }
+    Ok(plan)
 }
 fn unknown(start:Instant)->V{
     json!({"httpStatus":200,"body":{"status":"UNKNOWN","message":"No validated temporal candidate","assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null})
@@ -1072,6 +1121,25 @@ mod tests{
         assert_eq!(evaluate(&plan)[0],0);
         data["input"]["shifts"][0]["segments"][4]["end"]=json!(1500);
         assert!(matches!(read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_GEOMETRY")));
+    }
+
+    #[test]
+    fn private_initial_roster_is_a_legal_hint_not_a_lock(){
+        let mut data=fixture();
+        let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let p=&plan.employees[0];let pat=&p.catalog[1];
+        data["input"]["_initialAssignments"]=V::Array(pat.states[..7].iter().enumerate().map(|(d,&s)|{
+            let mut row=json!({"employeeId":"person-0","date":p.facts.dates[d],"kind":if s==OFF{"OFF"}else{"WORK"}});
+            if let Some(c)=clock(&p.facts.clocks,s){row["shiftId"]=json!(c.id);}
+            row
+        }).collect());
+        let hinted=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_eq!(hinted.employees[0].pattern,Some(1));
+        assert!(!hinted.employees[0].pinned&&hinted.employees[0].allowed.len()>1);
+        assert!(hinted.employees[0].lock_flags.iter().all(Option::is_none));
+        data["input"]["_initialAssignments"].as_array_mut().unwrap().pop();
+        let incomplete=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_eq!(incomplete.employees[0].pattern,None);
     }
 
     #[test]
