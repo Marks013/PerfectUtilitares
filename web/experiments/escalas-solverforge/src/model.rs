@@ -5,7 +5,7 @@ use crate::domain::Plan;
 
 // Only November E2, 7 or 28 days, <=50 synthetic people, fixed clock.
 // Each legal value is an index into the common enumerated pattern catalogue.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Band {
     pub day: usize,
     pub minutes: i64,
@@ -26,7 +26,7 @@ impl Band {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Sector {
     pub days: usize,
     pub members: usize,

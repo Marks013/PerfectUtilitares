@@ -3,13 +3,14 @@ use solverforge::stream::collector::{Accumulator, Collector};
 use std::collections::BTreeMap;
 use super::Employee;
 use crate::model::{Member, group_cost};
+use crate::score::EscalasScore;
 
 #[planning_solution(constraints = "define_constraints")]
 pub struct Plan {
     #[planning_entity_collection]
     pub employees: Vec<Employee>,
     #[planning_score]
-    pub score: Option<BendableScore<1, 8>>,
+    pub score: Option<EscalasScore>,
 }
 
 // One retained row per employee, no growing tombstone vector. SolverForge
@@ -43,18 +44,18 @@ impl Accumulator<Member, BTreeMap<usize, Member>> for MemberAccumulator {
 }
 
 #[solverforge_constraints]
-fn define_constraints() -> impl ConstraintSet<Plan, BendableScore<1, 8>> {
-    let g = ConstraintFactory::<Plan, BendableScore<1, 8>>::new();
+fn define_constraints() -> impl ConstraintSet<Plan, EscalasScore> {
+    let g = ConstraintFactory::<Plan, EscalasScore>::new();
     (
-        g.for_each(Plan::employees())
+        g.clone().for_each(Plan::employees())
             .filter(|person: &Employee| person.pattern.is_none())
-            .penalize(BendableScore::<1, 8>::one_hard(0))
+            .penalize(EscalasScore::of([1], [0; 8]))
             .named("Required personal pattern"),
         g.for_each(Plan::employees())
             .group_by(|person: &Employee| person.sector, Members)
             .penalize(|_sector: &usize, members: &BTreeMap<usize, Member>| {
                 let cost = group_cost(members.values());
-                BendableScore::<1, 8>::of([cost[0]], std::array::from_fn(|i| cost[i + 1]))
+                EscalasScore::of([cost[0]], std::array::from_fn(|i| cost[i + 1]))
             })
             .named("Sector coverage, presence and rest quality"),
     )

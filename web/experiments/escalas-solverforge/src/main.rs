@@ -1,5 +1,6 @@
 mod domain;
 mod model;
+mod score;
 mod wire;
 
 use serde_json::{json, Value};
@@ -60,7 +61,7 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool) -> Value {
     let search_seconds=if seed_only {0.0} else {seconds(search_start)};
     let cost=model::evaluate(&plan);
     if !seed_only {
-        let expected=solverforge::BendableScore::<1,8>::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]));
+        let expected=score::EscalasScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]));
         if plan.score!=Some(expected) {return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
     }
     let valid=model::validate_complete(&plan) && start.elapsed()<=BUDGET;
@@ -143,7 +144,7 @@ mod integration {
         assert!(!model::worked(solved.employees[0].mask().unwrap(),0));
         let after=model::evaluate(&solved);
         assert!(after<=before);
-        let expected=solverforge::BendableScore::<1,8>::of([-after[0]],std::array::from_fn(|i|-after[i+1]));
+        let expected=score::EscalasScore::of([-after[0]],std::array::from_fn(|i|-after[i+1]));
         assert_eq!(solved.score,Some(expected));
     }
 
