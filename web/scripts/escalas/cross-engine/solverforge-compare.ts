@@ -142,12 +142,13 @@ function scaleRestAudit(trial:Trial){
 }
 
 const TEMPORAL_CASES=["mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks",
-  "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership"] as const;
+  "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership","paid-break-same-day"] as const;
 type TemporalCase=typeof TEMPORAL_CASES[number];
 function combinedSize(name:TemporalCase){return name==="combined-115-six-weeks"?115:name==="combined-250-six-weeks"?250:0;}
 function temporalScenario(name:TemporalCase):Scenario{
   const size=combinedSize(name);
   if(size)return combinedTemporalScenario(size);
+  if(name==="paid-break-same-day")return paidBreakScenario();
   if(name==="night-same-day"||name==="weekly-transition-42"||name==="weekly-transition-40"||name==="monthly-cutover-december"||name==="cross-sector-leadership")return extendedTemporalScenario(name);
   const input=newInput("SYNTH","Synthetic temporal settings","2026-11",42);
   Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
@@ -182,6 +183,29 @@ function temporalScenario(name:TemporalCase):Scenario{
       work.forEach((a,i)=>{a.shiftId=i<2?"nine":"eight";});
     }
   }
+  const parsed=escalaInputSchema.parse(input);
+  return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
+}
+
+// The paid 15-minute pause is credited to the 40h contract but cannot
+// satisfy an estimated service band. The adjacent WORK must satisfy
+// a mandatory role/time reference, independently of the engine.
+function paidBreakScenario():Scenario{
+  const input=newInput("SYNTH","Synthetic paid pause service separation","2026-11",40);
+  Object.assign(input,{startDate:"2026-11-01",endDate:"2026-11-07",visibleMonth:undefined,
+    simulation:true,restRulesVersion:3,storeClosingMinutes:1200,generationMode:"DAYS_AND_HOURS"});
+  Object.assign(input.policy,{calendarMode:"MANUAL",validFrom:input.startDate,validUntil:input.endDate});
+  input.shifts=[{id:"pause",name:"Paid pause",segments:[
+    {kind:"WORK",start:420,end:540},{kind:"PAID_BREAK",start:540,end:555},
+    {kind:"WORK",start:555,end:660},{kind:"BREAK",start:660,end:720},
+    {kind:"WORK",start:720,end:960}
+  ]}];
+  input.employees=Array.from({length:3},(_,i)=>({...newEmployee(40,["pause"]),
+    id:"person-"+i,name:"Synthetic person "+i,registration:String(i),sector:"S",role:"Repositor",scheduleMode:"TIMED" as const}));
+  input.demands=[
+    {id:"pause-demand",date:"2026-11-04",sector:"S",start:540,end:555,minimum:1,estimated:true},
+    {id:"service-demand",date:"2026-11-04",sector:"S",role:"Repositor",start:555,end:600,minimum:1,estimated:false}
+  ];
   const parsed=escalaInputSchema.parse(input);
   return {id:"team-10-week",prepared:{...parsed,needsRegeneration:false,generationBasis:generationScenarioBasis(parsed)}};
 }
@@ -363,6 +387,18 @@ function temporalTieAudit(trial:Trial){
 }
 function temporalChecks(name:TemporalCase,scenario:Scenario,trial:Trial){
   if(combinedSize(name))return combinedChecks(scenario,trial);
+  if(name==="paid-break-same-day"){
+    if(!valid(trial)||!trial.proposal)return false;
+    const input=trial.proposal,rows=input.assignments;
+    const shift=input.shifts.find(s=>s.id==="pause");
+    if(!shift||shift.segments.filter(s=>s.kind!=="BREAK").reduce((n,s)=>n+s.end-s.start,0)!==480
+      ||shift.segments.filter(s=>s.kind==="WORK").reduce((n,s)=>n+s.end-s.start,0)!==465)return false;
+    return input.employees.every(p=>{
+      const own=rows.filter(a=>a.employeeId===p.id);
+      return own.length===7&&own.filter(a=>a.kind==="WORK"&&a.shiftId==="pause").length===5;
+    })&&rows.some(a=>a.date==="2026-11-04"&&a.kind==="WORK"&&a.shiftId==="pause")
+      &&trial.finalAssessment?.metrics?.normalizedEstimatedShortage===15;
+  }
   if(name==="night-same-day"||name==="weekly-transition-42"||name==="weekly-transition-40"||name==="monthly-cutover-december"||name==="cross-sector-leadership"){
     if(!valid(trial)||!trial.proposal)return false;
     const rows=trial.proposal.assignments,input=scenario.prepared;

@@ -128,7 +128,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_temporal_requires_combined_cases_not_only_weekly_results(self):
         from verify_comparison import verify_temporal
-        for incomplete in ([],[{}]*16,[{}]*23,[{}]*24,[{}]*43):
+        for incomplete in ([],[{}]*16,[{}]*23,[{}]*24,[{}]*43,[{}]*44,[{}]*47):
             with self.assertRaises(ValueError):verify_temporal(incomplete)
 
     def test_rest_audit_must_be_complete_nonnegative_and_consistent(self):

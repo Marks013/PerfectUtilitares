@@ -233,3 +233,49 @@ automatic performance gain for this workload. Do not add unsafe/custom
 allocators or PGO without representative profile data and a separate
 reproducible comparison; dependency resolution remains locked/offline.
 The new canonical benchmark must measure quality and latency on 1.100.0.
+
+## SF63–SF65 — work on measured bottlenecks and paid-break coverage
+
+Verified earlier SF58 run 45836488424: all 12 temporal candidates valid
+across six fixtures, but only HOURS_ONLY and REST_ONLY had 2/2 paired
+noninferiority. Mixed/holiday/115/250 had role-time service vetoes;
+115/250 fixed-scale retained Sunday shortages 1512/3024 person-minutes.
+All 18 fixed-scale proposals valid, adaptive medians 2.698/3.345s,
+no noninferiority. E2 tail still passed: adaptive p95 2.402s vs 11.445s
+native, 79.01% observed reduction. These results used the prior compiler
+and implementation, not Rust 1.100.0 or the new optimizations.
+
+SF62 run 45844949210 on 86c4e6e passed 58 Rust and 19 Python tests,
+strict Clippy, static ARM64 build, lock checks and OSV (52 reachable and
+87 registry crates, no advisory matches). The sole Rust 1.100.0 pin is
+qualified for that exact revision; the new combined benchmark is pending.
+
+- SF63: reversible temporal coverage accumulator retains role bitmaps,
+  attendance, per-day band costs and the personal objective sum. Refresh
+  days affected by a row insertion/retraction; iterate only set clock
+  bits. The original full sector recomputation remains the coverage oracle
+  and global/sector fairness still recompute (not a claim of fully
+  incremental scoring). Differential test inserts/retracts/replaces legal
+  rows with 115/250 people, multiple roles, confirmed/estimated bands,
+  Sunday peak, movement, protected service, missing patterns and reset.
+- SF64: six-week fixed-clock reconstruction tries the original two
+  orders plus peak/quadratic-deficit-aware variants, within the existing
+  deadline; final strict hard/Sunday/total/peak/daily/role checks unchanged.
+  No guarantee of eliminating the residual Sunday deficit; 7/28 keeps
+  original ordering, and the new cost may consume more preparation time.
+- SF65: optional paid pauses within a same-day shift, one uninterrupted
+  unpaid meal, conservative paid-block limits, same closing/weekly/daily
+  bounds, exact original long 9h shape. Paid pauses count in contractual
+  minutes, never in WORK coverage or service floors. Cache exact
+  person/date SHA-256 tie sums in compact u16 per admitted path (bounded
+  by 42*96), preserving the original tie oracle; removes a per-move
+  scan of all days. Add positive/negative paid-pause tests and a new
+  original-client fixture whose 15-minute paid pause must retain 15
+  estimated shortage, with independent confirmed adjacent service.
+  The expanded temporal gate now requires all 12 cases / 48 trials.
+- Scope remains synthetic/opt-in. Overnight, reduced night credit,
+  partial employment, private comparison/initial-assignment recovery
+  and complete exact 16-phase parity are not yet implemented or proven.
+  No lock/upstream/production changes. Performance improvements are
+  hypotheses pending actual 1.100.0 benchmarks, with no quota or gate
+  relaxation and no borrowed control roster.

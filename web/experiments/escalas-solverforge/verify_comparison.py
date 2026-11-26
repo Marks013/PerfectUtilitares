@@ -603,7 +603,7 @@ def adaptive_gain(paired,comparisons):
 
 
 TEMPORAL_CASES=("mixed-variable","holiday-absence-history","hours-only","rest-only","combined-115-six-weeks","combined-250-six-weeks",
-    "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership")
+    "night-same-day","weekly-transition-42","weekly-transition-40","monthly-cutover-december","cross-sector-leadership","paid-break-same-day")
 TEMPORAL_OBJECTIVES=("COVERAGE","SUNDAY_COVERAGE","SUNDAY_PEAK","MOVEMENT_COVERAGE","CLOSING_COVERAGE",
     "UNTIMED_ROTATION","SUNDAY_BALANCE","REST_SPACING","LEADERSHIP","SATURDAY_BALANCE","REST_DISTRIBUTION",
     "REST_ROTATION","PEOPLE_CHANGED","STABILITY","PREFERENCES","TIE_BREAK")
@@ -638,6 +638,7 @@ def verify_temporal(rows):
               and integer(profile.get("visibleDays")) and 1<=profile["visibleDays"]<=days
               and (days!=42 or profile["untimedPositions"]>0 and profile["paidHolidayCount"]==1)
               and (case!="cross-sector-leadership" or profile["untimedPositions"]==7)
+              and (case!="paid-break-same-day" or profile["confirmedDemands"]==1 and profile["estimatedDemands"]==1)
               and profile["paidHolidayCount"]==(1 if case=="holiday-absence-history" or days==42 or cutover else 0)
               and profile["searchBudgetSeconds"]==12
               and profile["processBudgetSeconds"]==18 and profile["transportBudgetSeconds"]==20,"TEMPORAL_PROFILE")
@@ -661,6 +662,8 @@ def verify_temporal(rows):
                 check(integer(r.get("tieBreakAudit")),"TEMPORAL_TIE_AUDIT")
                 metrics=r["finalAssessment"]["metrics"]
                 sector_vector({**metrics,"coverageAudit":r.get("scaleCoverageAudit")},profile)
+                if case=="paid-break-same-day":
+                    check(metrics["normalizedEstimatedShortage"]==15,"PAID_BREAK_SERVICE_DRIFT")
             t=r.get("temporal")
             if name=="ortools":
                 check(t is None,"TEMPORAL_CONTROL")
