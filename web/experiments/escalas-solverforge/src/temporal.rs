@@ -8,14 +8,17 @@ use serde_json::{json,Value as V};
 use solverforge::{MoveThreadCount,SolverConfig};
 use solverforge::stream::collector::Accumulator;
 mod rules;
+mod tie_rank;
+mod seed;
 use rules::{Rules,enumerate,PATH_LIMIT};
+use crate::model::Presence;
 use crate::temporal_domain::{TemporalEmployee,TemporalPlan};
 use crate::temporal_score::TemporalScore;
 use crate::wire::{array,boolean,check,civil_date,empty,empty_array,identifier,number,optional_text,personal_rules,range,text};
 
 type Result<T>=std::result::Result<T,&'static str>;
 pub type Cost=[i64;17];
-const OFF:u8=0;
+pub(crate) const OFF:u8=0;
 const ABS:u8=1;
 const HOL:u8=2;
 pub const MAX_DAYS:usize=42;
@@ -27,7 +30,7 @@ const OBJECTIVES:[(&str,&str);16]=[
     ("REST_SPACING","PARTIAL_PAIR_SCORE"),("LEADERSHIP","PARTIAL_LOCAL_RESPONSIBILITY"),
     ("SATURDAY_BALANCE","PARTIAL_COHORT"),("REST_DISTRIBUTION","PARTIAL_SECTOR_ROLE"),
     ("REST_ROTATION","SCOPED"),("PEOPLE_CHANGED","SCOPED"),("STABILITY","SCOPED"),
-    ("PREFERENCES","SCOPED"),("TIE_BREAK","PENDING"),
+    ("PREFERENCES","SCOPED"),("TIE_BREAK","SCOPED_ORIGINAL_SHA256"),
 ];
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Clock {id:String,segments:[(i32,i32);2],paid:i32}
@@ -43,7 +46,7 @@ pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rate
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord)]
 struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
-struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>}
+struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16}
 #[derive(Debug,PartialEq,Eq,Hash)]
 pub struct TemporalFacts{pub(crate) days:usize,clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
     priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64}
@@ -69,19 +72,26 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let Some(first)=rows.first() else{return result;};
     let facts=&first.facts;
     let mut sunday=[0i64;6];let mut sunday_ref=[false;6];
+    let mut attendance=[[Presence::EMPTY;16];MAX_DAYS];
+    let mut role_members=BTreeMap::<usize,Presence>::new();
     for row in &rows{
-        if let Some(p)=row.pattern{add(&mut result,p.personal);}
-    }
-    for band in &facts.bands{
-        let mut present=0i64;let mut role_counts=BTreeMap::<usize,i64>::new();
-        for row in &rows{
-            if row.pattern.and_then(|p|clock(&facts.clocks,p.states[band.day]))
-                .is_some_and(|c|c.covers(band.start,band.end)){
-                present+=1;*role_counts.entry(row.role).or_default()+=1;
+        if let Some(p)=row.pattern{
+            add(&mut result,p.personal);
+            let bit=Presence::one(row.id);
+            *role_members.entry(row.role).or_default()|=bit;
+            for (d,&state) in p.states.iter().enumerate().take(facts.days){
+                if work(state){attendance[d][usize::from(state)]|=bit;}
             }
         }
-        let role_gap:i64=band.roles.iter().map(|(r,n)|(*n-role_counts.get(r).copied().unwrap_or(0)).max(0)).sum();
-        let gap=(band.general-present).max(0).max(role_gap);
+    }
+    for band in &facts.bands{
+        let present=attendance[band.day].iter().enumerate().filter(|(state,_)|band.clock_mask&(1u16<<state)!=0)
+            .fold(Presence::EMPTY,|mask,(_,p)|mask|*p);
+        let role_gap:i64=band.roles.iter().map(|(r,n)|{
+            let members=role_members.get(r).copied().unwrap_or_default();
+            (*n-i64::from((present&members).count_ones())).max(0)
+        }).sum();
+        let gap=(band.general-i64::from(present.count_ones())).max(0).max(role_gap);
         if band.estimated{
             let cost=gap*i64::from(band.end-band.start);
             result[1]+=cost;
@@ -150,6 +160,16 @@ fn evaluate(plan:&TemporalPlan)->Cost{
     }
     for rows in groups.values(){add(&mut total,sector_cost(rows.iter()));}
     total
+}
+fn sector_prefix(plan:&TemporalPlan)->BTreeMap<usize,[i64;5]>{
+    let mut sectors=BTreeMap::<usize,Vec<Member>>::new();
+    for p in &plan.employees{sectors.entry(p.sector).or_default().push(p.member());}
+    sectors.into_iter().map(|(id,rows)|{
+        let c=sector_cost(rows.iter());(id,[c[1],c[2],c[3],c[4],c[5]])
+    }).collect()
+}
+fn prefix_preserved(before:&BTreeMap<usize,[i64;5]>,after:&BTreeMap<usize,[i64;5]>)->bool{
+    before.iter().all(|(s,c)|after.get(s).is_some_and(|next|next.iter().zip(c).all(|(a,b)|a<=b)))
 }
 fn expected(cost:Cost)->TemporalScore{TemporalScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]))}
 fn relative(date:&str)->Result<i32>{
@@ -317,7 +337,11 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
                 if let Some(r)=r{let v=floors.entry(r).or_default();*v=(*v).max(n);}else{general=general.max(n);}
             }
             general=general.max(floors.values().sum());
-            if general>0{check(facts[sector].bands.len()<12000,"BAND_LIMIT")?;facts[sector].bands.push(Band{day,start:a,end:b,estimated,general,roles:floors.into_iter().collect()});}
+            if general>0{
+                check(facts[sector].bands.len()<12000,"BAND_LIMIT")?;
+                let clock_mask=clocks.iter().enumerate().filter(|(_,c)|c.covers(a,b)).fold(0u16,|mask,(i,_)|mask|1u16<<(i+3));
+                facts[sector].bands.push(Band{day,start:a,end:b,estimated,general,roles:floors.into_iter().collect(),clock_mask});
+            }
         }
     }
     configure_peak(&mut facts)?;
@@ -448,7 +472,7 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         let pinned=allowed.len()==1;
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{0}else{hours},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,untimed,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader,untimed,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&crate::wire::date(d))}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
@@ -465,10 +489,9 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     };
     let mapped=start.elapsed().as_secs_f64();
     let patterns:usize=plan.employees.iter().map(|p|p.catalog.len()).sum();
-    // Complete a legal personal seed without claiming mandatory coverage.
-    for person in &mut plan.employees{
-        if person.pattern.is_none(){person.pattern=Some(person.catalog.iter().enumerate().min_by_key(|(_,p)|p.personal).unwrap().0);}
-    }
+    let seed_start=Instant::now();
+    seed::construct(&mut plan,(seed_start+Duration::from_millis(1500)).min(start+budget-Duration::from_millis(700)));
+    let seed_seconds=seed_start.elapsed().as_secs_f64();
     let initial=evaluate(&plan);
     // Preserve observed high-priority local leadership, independent of
     // the ordinal position of LEADERSHIP in the soft score.
@@ -484,7 +507,8 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         }
         out
     };
-    let protected=critical(&plan);
+    let protected=if initial[0]==0{critical(&plan)}else{BTreeSet::new()};
+    let sector_guard=if initial[0]==0{Some(sector_prefix(&plan))}else{None};
     let saved:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
     let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(Instant::now()).as_secs();
     let attempted=remaining>0&&plan.employees.iter().any(|p|!p.pinned);
@@ -498,7 +522,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         plan=match plan.solve_with_config(config){Ok(v)=>v,Err(_)=>return super::failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
         let cost=evaluate(&plan);
         if plan.score!=Some(expected(cost)){return super::failure(500,"SPIKE_FAILED","RESULT","TEMPORAL_SCORE_DRIFT");}
-        if cost>initial||!protected.is_subset(&critical(&plan)){for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
+        if cost>initial||!protected.is_subset(&critical(&plan))||sector_guard.as_ref().is_some_and(|before|!prefix_preserved(before,&sector_prefix(&plan))){for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
     }
     let cost=evaluate(&plan);
     if cost[0]!=0||start.elapsed()>budget||!plan.employees.iter().all(|p|p.pattern.is_some_and(|i|p.allowed.binary_search(&i).is_ok())){
@@ -532,7 +556,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":"Synthetic bounded temporal candidate; independent validation required",
         "assignments":assignments,"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null,
         "temporal":{"version":2,"scope":"SYNTHETIC_TEMPORAL","days":days,"untimed":untimed,
-            "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,
+            "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,"seedSeconds":seed_seconds,
             "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
             "entities":plan.employees.len(),"patterns":patterns,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
 }
@@ -610,6 +634,50 @@ mod tests{
         let mut data=fixture();data["input"]["generationMode"]=json!("REST_ONLY");
         let plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
         assert!(plan.employees[0].catalog.iter().all(|p|!p.states.contains(&5)));
+    }
+    #[test]
+    fn multiweek_temporal_catalogues_are_bounded_and_shared_at_scale(){
+        for people in [115,250]{
+            let mut data=fixture();
+            data["input"]["endDate"]=json!("2026-12-12");
+            let template=data["input"]["employees"][0].clone();
+            data["input"]["mixed42Sectors"]=json!(["S"]);
+            data["input"]["employees"]=V::Array((0..people).map(|i|{
+                let mut p=template.clone();p["id"]=json!(format!("person-{i}"));p["name"]=json!(format!("Synthetic person {i}"));
+                p["history"]=json!([{"employeeId":format!("person-{i}"),"date":"2026-10-25","kind":"WORK","shiftId":"eight"}]);
+                p
+            }).collect());
+            let mut plan=read(&data,Instant::now()+Duration::from_secs(10)).unwrap();
+            assert_eq!(plan.employees.len(),people);
+            assert!(Arc::ptr_eq(&plan.employees[0].catalog,&plan.employees[people-1].catalog));
+            let domain=&plan.employees[0].catalog;
+            assert!(!domain.is_empty()&&domain.len()<=PATH_LIMIT);
+            for p in domain.iter(){
+                assert_eq!(p.states[0],OFF);
+                for w in p.states.chunks_exact(7){
+                    assert_eq!(w.iter().filter(|&&s|work(s)).count(),5);
+                    assert_eq!(w.iter().filter(|&&s|s==4).count(),2);
+                }
+                assert!((0..5).all(|w|!work(p.states[w*7])||!work(p.states[(w+1)*7])));
+                assert!(p.states.windows(6).all(|w|!w.iter().copied().all(work)));
+            }
+            seed::construct(&mut plan,Instant::now()+Duration::from_secs(5));
+            assert_eq!(evaluate(&plan)[0],0);
+        }
+    }
+    #[test]
+    fn untimed_duty_never_covers_hourly_demand_and_keeps_history(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["scheduleMode"]=json!("UNTIMED");
+        data["input"]["employees"][0]["shiftIds"]=json!([]);
+        data["input"]["employees"][0]["history"][0]["kind"]=json!("DUTY");
+        data["input"]["employees"][0]["history"][0].as_object_mut().unwrap().remove("shiftId");
+        data["input"]["demands"]=json!([{"id":"required","date":"2026-11-04","sector":"S","start":480,"end":540,"minimum":1,"estimated":false}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert!(plan.employees[0].catalog.iter().all(|p|p.states[0]==OFF&&p.states.iter().filter(|&&s|s==DUTY).count()==5));
+        plan.employees[0].pattern=Some(0);
+        assert_eq!(evaluate(&plan)[0],60);
+        assert_eq!(plan.employees[0].member().pattern.unwrap().personal[16],plan.employees[0].pattern_cost(0)[16]);
     }
     #[test]
     fn native_variable_shift_covers_confirmed_demand(){
