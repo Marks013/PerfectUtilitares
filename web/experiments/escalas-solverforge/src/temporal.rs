@@ -12,6 +12,7 @@ mod rules;
 mod tie_rank;
 mod seed;
 mod service_guard;
+mod rest_guard;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
 use crate::model::Presence;
@@ -30,8 +31,8 @@ const OBJECTIVES:[(&str,&str);16]=[
     ("COVERAGE","SCOPED"),("SUNDAY_COVERAGE","SCOPED"),("SUNDAY_PEAK","PARTIAL_GLOBAL_BOUND"),
     ("MOVEMENT_COVERAGE","SCOPED"),("CLOSING_COVERAGE","SCOPED"),
     ("UNTIMED_ROTATION","SCOPED_WEEKDAY_AND_SUNDAY"),("SUNDAY_BALANCE","SCOPED_COHORT_AND_DATES"),
-    ("REST_SPACING","PARTIAL_PAIR_SCORE"),("LEADERSHIP","PARTIAL_LOCAL_RESPONSIBILITY"),
-    ("SATURDAY_BALANCE","PARTIAL_COHORT"),("REST_DISTRIBUTION","PARTIAL_SECTOR_ROLE"),
+    ("REST_SPACING","SCOPED_MONTHLY_EXCESS_AND_PAIRS"),("LEADERSHIP","PARTIAL_LOCAL_RESPONSIBILITY"),
+    ("SATURDAY_BALANCE","SCOPED_COHORT"),("REST_DISTRIBUTION","PARTIAL_SECTOR_ROLE"),
     ("REST_ROTATION","SCOPED"),("PEOPLE_CHANGED","SCOPED"),("STABILITY","SCOPED"),
     ("PREFERENCES","SCOPED"),("TIE_BREAK","SCOPED_ORIGINAL_SHA256"),
 ];
@@ -45,7 +46,7 @@ impl Clock {
 fn clock(clocks:&[Clock],state:u8)->Option<&Clock>{state.checked_sub(3).and_then(|i|clocks.get(i as usize))}
 fn work(state:u8)->bool{state>=3}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
-pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rates:[Option<i64>;2],sunday_opportunities:u64}
+pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rates:[Option<i64>;2],sunday_opportunities:u64,pub(crate) rest:[i64;5]}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord)]
 struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
@@ -360,12 +361,13 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
     type CohortKey=(usize,usize,bool,Vec<[(i32,i32);2]>,[i32;6],i32);
     let mut cohorts=BTreeMap::<CohortKey,usize>::new();
+    let mut rest_groups=BTreeMap::<(usize,bool,[i32;6],i32),usize>::new();
     let assignment_rows=array(input,"assignments")?;
     let mut assignments_by_person=BTreeMap::<&str,Vec<&V>>::new();
     for row in assignment_rows{assignments_by_person.entry(text(row,"employeeId")?).or_default().push(row);}
     type CachedDomain=(Arc<Vec<Pattern>>,Arc<[usize]>);
     let mut domains=BTreeMap::<(Rules,Vec<Vec<u8>>),CachedDomain>::new();
-    let rest_weight=1+(people.len()*days) as i64;
+    let mut rest_weight=1i64;
     for p in people{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
         let pid=identifier(p,"id")?;
@@ -483,7 +485,8 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         }
         let profile:Vec<_>=daily_options.iter().flatten().filter_map(|&s|clock(&clocks,s).map(|c|c.segments)).collect::<BTreeSet<_>>().into_iter().collect();
         let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,
-            untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,rest_weight};
+            untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,visible:calendar.visible};
+        rest_weight+=rules.pair_terms();
         let key=(rules,daily_options);
         let (catalog,allowed)=match domains.entry(key){
             std::collections::btree_map::Entry::Occupied(entry)=>entry.get().clone(),
@@ -496,11 +499,13 @@ fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{
         };
         let pinned=allowed.len()==1;
         let next=cohorts.len();let cohort=*cohorts.entry((sector,role,untimed,profile,if untimed{[0;6]}else{targets},cap)).or_insert(next);
+        let next=rest_groups.len();let rest_group=*rest_groups.entry((sector,untimed,if untimed{[0;6]}else{targets},cap)).or_insert(next);
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader,untimed,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader,untimed,rest_group,rest_weight:0,preferred_clock,tie_ranks:std::array::from_fn(|d|if d<days{tie_rank::rank(pid,&labels[d])}else{0}),lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
+    for p in &mut employees{p.rest_weight=rest_weight;}
     Ok(TemporalPlan{employees,score:None})
 }
 fn unknown(start:Instant)->V{
@@ -535,6 +540,7 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
     let protected=if initial[0]==0{critical(&plan)}else{BTreeSet::new()};
     let sector_guard=if initial[0]==0{Some(sector_prefix(&plan))}else{None};
     let service_guard=if initial[0]==0{Some(service_guard::Snapshot::capture(&plan))}else{None};
+    let rest_guard=if initial[0]==0{Some(rest_guard::Snapshot::capture(&plan))}else{None};
     let saved:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
     let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(Instant::now()).as_secs();
     let attempted=remaining>0&&plan.employees.iter().any(|p|!p.pinned);
@@ -552,7 +558,8 @@ pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{
         native_candidate=Some(cost);
         let preserves=protected.is_subset(&critical(&plan))
             &&sector_guard.as_ref().is_none_or(|before|prefix_preserved(before,&sector_prefix(&plan)))
-            &&service_guard.as_ref().is_none_or(|before|before.preserves(&plan));
+            &&service_guard.as_ref().is_none_or(|before|before.preserves(&plan))
+            &&rest_guard.as_ref().is_none_or(|before|before.preserves(&plan));
         guard_preserved=Some(preserves);
         native_accepted=preserves&&cost<initial;
         if !native_accepted{for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
@@ -797,6 +804,23 @@ mod tests{
             assert_eq!(p.states[5..12].iter().filter_map(|&s|clock(&plan.employees[0].facts.clocks,s)).map(|c|c.paid).sum::<i32>(),2640);
             assert_eq!(p.states[12..19].iter().filter_map(|&s|clock(&plan.employees[0].facts.clocks,s)).map(|c|c.paid).sum::<i32>(),2520);
         }
+    }
+    #[test]
+    fn rest_spacing_uses_original_pair_count_weight_and_protects_padding(){
+        let mut data=fixture();
+        data["input"]["employees"][0]["history"]=json!([{"date":"2026-10-31","kind":"OFF"}]);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_eq!(plan.employees[0].rest_weight,8);
+        let p=&mut plan.employees[0];
+        let low=p.catalog.iter().position(|pat|pat.rest[1]==0).unwrap();
+        let high=p.catalog.iter().position(|pat|pat.rest[1]>0).unwrap();
+        p.pattern=Some(low);
+        let guard=rest_guard::Snapshot::capture(&plan);
+        assert!(guard.preserves(&plan));
+        plan.employees[0].pattern=Some(high);
+        assert!(!guard.preserves(&plan));
+        let p=&plan.employees[0];
+        assert_eq!(p.pattern_cost(high)[8],p.rest_weight*p.catalog[high].rest[0]+p.catalog[high].rest[1]);
     }
     #[test]
     fn same_day_night_simulation_does_not_bypass_closing(){

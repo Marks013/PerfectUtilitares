@@ -16,7 +16,7 @@ pub(super) struct Rules{
     pub weeks:Vec<(usize,usize)>,pub targets:[i32;6],pub mixed:[bool;6],pub offset:usize,pub cutover:bool,
     pub weekly_limit:i32,pub inter:i32,pub weekly_rest:i32,pub untimed:bool,
     pub hours_only:bool,pub closed:[bool;MAX_DAYS],pub holiday:[bool;MAX_DAYS],
-    pub old:[Option<Record>;MAX_DAYS],pub context:BTreeMap<i32,u8>,pub rest_weight:i64,
+    pub old:[Option<Record>;MAX_DAYS],pub context:BTreeMap<i32,u8>,pub visible:[bool;MAX_DAYS],
 }
 impl Rules{
     fn weekday(&self,d:i32)->usize{(d+self.offset as i32).rem_euclid(7) as usize}
@@ -97,21 +97,34 @@ impl Rules{
         }
         true
     }
+    pub fn pair_terms(&self)->i64{
+        if !self.personal.adjustable(){return 0;}
+        (0..self.days).filter(|&d|self.visible[d]&&(self.mutable(d)||d>0&&self.mutable(d-1))).count() as i64
+    }
     fn pattern(&self,states:[u8;MAX_DAYS])->Pattern{
         let active=&states[..self.days];let mut cost=[0;17];
         let changes=active.iter().enumerate().filter(|(d,s)|self.old[*d].is_some_and(|r|r.state!=ABS&&r.state!=**s)).count() as i64;
         cost[13]=i64::from(changes>0);cost[14]=changes;
         cost[15]=active.iter().enumerate().filter(|(d,s)|work(**s)&&self.personal.preferred&(1<<self.weekday(*d as i32))!=0).count() as i64;
         if self.personal.prefer_consecutive{cost[15]+=(self.days-1) as i64-active.windows(2).filter(|w|*w==[OFF,OFF]).count() as i64;}
+        // Rest quality follows the original second-OFF month ownership.
+        // [monthly excess, monthly adjustable, horizon adjustable,
+        //  padding before visible month, padding after visible month].
+        let mut rest=[0i64;5];
         if self.personal.adjustable(){
-            let mut pairs=0i64;let mut imposed=0i64;
-            for (d,&current) in active.iter().enumerate(){
-                let prev=if d==0{self.context.get(&-1).copied()}else{Some(active[d-1])};
-                if prev==Some(OFF)&&current==OFF{
-                    if self.mutable(d)||d>0&&self.mutable(d-1){pairs+=1;}else{imposed+=1;}
-                }
+            let mut imposed=0;
+            let first_visible=self.visible.iter().position(|&v|v).unwrap_or(0);
+            let state=|d:i32|if (0..self.days as i32).contains(&d){Some(active[d as usize])}else{self.context.get(&d).copied()};
+            for d in 0..=self.days{
+                if state(d as i32-1)!=Some(OFF)||state(d as i32)!=Some(OFF){continue;}
+                let mutable=d<self.days&&self.mutable(d)||d>0&&self.mutable(d-1);
+                let visible=d<self.days&&self.visible[d];
+                if mutable{
+                    rest[2]+=1;
+                    if visible{rest[1]+=1;}else{rest[if d<first_visible{3}else{4}]+=1;}
+                }else if visible{imposed+=1;}
             }
-            cost[8]=pairs+self.rest_weight*((pairs+imposed-2).max(0)-(imposed-2).max(0));
+            rest[0]=(rest[1]+imposed-2).max(0)-(imposed-2).max(0);
         }
         let mut rates=[None;2];let mut sunday_opportunities=0u64;
         for weekday in 0..7{
@@ -132,7 +145,7 @@ impl Rules{
                 }
             }
         }
-        Pattern{states,personal:cost,rates,sunday_opportunities}
+        Pattern{states,personal:cost,rates,sunday_opportunities,rest}
     }
 }
 
