@@ -30,13 +30,14 @@ public final class SpikeMain {
 
     public static void main(String[] args) throws Exception {
         long start = System.nanoTime();
-        boolean pattern = false, warm = false, seedOnly = false, stagnation = false;
+        boolean pattern = false, warm = false, seedOnly = false, stagnation = false, weeklySwap = false;
         Integer budgetSeconds = null;
         for (String arg : args) {
             if (arg.equals("--pattern-seed") && !pattern) pattern = true;
             else if (arg.equals("--warm-batch") && !warm) warm = true;
             else if (arg.equals("--seed-only") && !seedOnly) seedOnly = true;
             else if (arg.equals("--stagnation-1s") && !stagnation) stagnation = true;
+            else if (arg.equals("--weekly-swap") && !weeklySwap) weeklySwap = true;
             else if (budgetSeconds == null && arg.matches("--budget-seconds=(2|4|8|12)"))
                 budgetSeconds = Integer.parseInt(arg.substring("--budget-seconds=".length()));
             else {
@@ -44,7 +45,7 @@ public final class SpikeMain {
                 return;
             }
         }
-        if (seedOnly && (!pattern || warm) || (budgetSeconds != null || stagnation) && (!pattern || warm || seedOnly)) {
+        if (seedOnly && (!pattern || warm) || (budgetSeconds != null || stagnation || weeklySwap) && (!pattern || warm || seedOnly)) {
             System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
             return;
         }
@@ -54,11 +55,11 @@ public final class SpikeMain {
         int repeats = warm ? 3 : 1;
         long budgetNs = budgetSeconds == null ? BUDGET_NS : Duration.ofSeconds(budgetSeconds).toNanos();
         for (int i = 0; i < repeats; i++) {
-            System.out.println(solveOne(bytes, pattern, seedOnly, stagnation, budgetNs, i == 0 ? start : System.nanoTime()));
+            System.out.println(solveOne(bytes, pattern, seedOnly, stagnation, weeklySwap, budgetNs, i == 0 ? start : System.nanoTime()));
         }
     }
 
-    private static String solveOne(byte[] bytes, boolean patternSeed, boolean seedOnly, boolean stagnation, long budgetNs, long start) throws Exception {
+    private static String solveOne(byte[] bytes, boolean patternSeed, boolean seedOnly, boolean stagnation, boolean weeklySwap, long budgetNs, long start) throws Exception {
         ObjectNode reply = JSON.createObjectNode();
         ObjectNode body = reply.putObject("body");
         reply.putNull("maxRssKiB"); // JVM heap is not RSS; cgroup counters are reported separately.
@@ -92,6 +93,19 @@ public final class SpikeMain {
                 var firstFeasible = new AtomicLong(-1L);
                 long calculations = 0, moves = 0;
                 double solvingSeconds = 0;
+                boolean weeklySwapApplied = false;
+                BendableScore seedScore = null;
+                // Specialized local search requires a fully initialized legal seed.
+                // Use a fresh score director before selecting a local-search-only phase.
+                if (weeklySwap && guarded && residual >= 1_000_000L) {
+                    stage = "FACTORY";
+                    var checker=SolutionManager.<Roster,BendableScore>create(
+                            SolverFactory.<Roster>create(config(Duration.ofMillis(residual/1_000_000L))));
+                    seedScore=checker.update(input);
+                    weeklySwapApplied=seedScore!=null && seedScore.isFeasible() && seedScore.softScore(0)==0L
+                            && input.days().stream().allMatch(day -> day.state()!=null);
+                    residual=budgetNs-(System.nanoTime()-start)-Duration.ofMillis(500).toNanos();
+                }
 
                 if (seedOnly) {
                     // Diagnostic control only. Validate the identical seed with
@@ -113,6 +127,7 @@ public final class SpikeMain {
                     // Diagnostic only: do not stop an unguarded construction on a
                     // stagnation criterion, and do not change the normal 12s path.
                     if (stagnation && guarded) searchConfig.withTerminationUnimprovedSpentLimit(Duration.ofSeconds(1));
+                    if (weeklySwapApplied) WeeklySwapSearch.configure(searchConfig);
                     try (var manager = SolverManager.<Roster>create(searchConfig,
                             new SolverManagerConfig().withParallelSolverCount("1"))) {
                         stage = "SEARCH";
@@ -202,6 +217,10 @@ public final class SpikeMain {
                 telemetry.put("budgetSeconds", budgetNs / 1_000_000_000L);
                 telemetry.put("stagnationRequested", stagnation);
                 telemetry.put("stagnationApplied", stagnation && guarded && !seedOnly && residual >= 1_000_000L);
+                telemetry.put("weeklySwapRequested", weeklySwap);
+                telemetry.put("weeklySwapApplied", weeklySwapApplied);
+                telemetry.put("weeklySwapScoreImproved", weeklySwapApplied && result != null && result.score() != null
+                        && seedScore != null && result.score().compareTo(seedScore) > 0);
             }
         } catch (WireModel.Unsupported | java.time.DateTimeException | ArithmeticException error) {
             code = 400;

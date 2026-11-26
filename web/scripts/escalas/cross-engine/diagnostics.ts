@@ -136,13 +136,14 @@ async function main() {
     { name: "CONSTRUCTOR", budget: 12, seed: true, stagnation: false },
     ...[2,4,8,12].map(budget => ({ name: "NATIVE_" + budget, budget, seed: false, stagnation: false })),
     { name: "STAGNATION_1S", budget: 12, seed: false, stagnation: true },
+    { name: "WEEKLY_SWAP", budget: 12, seed: false, stagnation: false },
   ];
   const curveRows = new Map<string, Trial[]>();
   for (let repetition=0;repetition<curve.length;repetition++) {
     const round = new Map<string, Trial>();
     for (let position=0;position<curve.length;position++) {
       const v=curve[(repetition+position)%curve.length];
-      const adapter=dockerAdapter(candidate,"timefold",true,false,v.seed,v.seed ? undefined : v.budget,v.stagnation);
+      const adapter=dockerAdapter(candidate,"timefold",true,false,v.seed,v.seed ? undefined : v.budget,v.stagnation,v.name==="WEEKLY_SWAP");
       const trial=await runTrial(scenario,frozen,adapter);
       if(trial.inputHash!==metadata.inputHash) throw new Error("DIAGNOSTIC_INPUT_DRIFT");
       if(valid(trial) && (!trial.cgroup || trial.processSeconds! > v.budget+.1 || trial.spike?.seedOnly!==v.seed))
@@ -151,7 +152,7 @@ async function main() {
       const rows=curveRows.get(v.name)??[];rows.push(trial);curveRows.set(v.name,rows);
       const {proposal:_proposal,...record}=trial;
       console.log(JSON.stringify({kind:"curve-measurement",...metadata,variant:v.name,repetition,position,
-        requestedBudgetSeconds:v.budget,stagnation:v.stagnation,identity:inspectImage(candidate,"timefold"),...record}));
+        requestedBudgetSeconds:v.budget,stagnation:v.stagnation,weeklySwap:v.name==="WEEKLY_SWAP",identity:inspectImage(candidate,"timefold"),...record}));
     }
     const seed=round.get("CONSTRUCTOR")!;
     for (const v of curve.filter(x=>!x.seed)) {

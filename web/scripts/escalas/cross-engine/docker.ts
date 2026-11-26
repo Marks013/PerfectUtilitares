@@ -91,8 +91,8 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false, seedOnly = false, budgetSeconds?: number, stagnation = false) {
-  if ((budgetSeconds !== undefined || stagnation) && (engine !== "timefold" || validateOnly || warm || seedOnly || !patternSeed
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false, seedOnly = false, budgetSeconds?: number, stagnation = false, weeklySwap = false) {
+  if ((budgetSeconds !== undefined || stagnation || weeklySwap) && (engine !== "timefold" || validateOnly || warm || seedOnly || !patternSeed
     || budgetSeconds !== undefined && ![2,4,8,12].includes(budgetSeconds))) throw new Error("CROSS_ENGINE_BUDGET_MODE");
   if (seedOnly && (engine !== "timefold" || validateOnly || warm || !patternSeed)) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (warm && (engine !== "timefold" || validateOnly || !patternSeed)) throw new Error("CROSS_ENGINE_WARM_MODE");
@@ -120,6 +120,7 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
     if (seedOnly) args.push("--seed-only");
     if (budgetSeconds !== undefined) args.push("--budget-seconds=" + budgetSeconds);
     if (stagnation) args.push("--stagnation-1s");
+    if (weeklySwap) args.push("--weekly-swap");
   }
   try {
     return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: (warm ? 27 : 9) * 1024 * 1024 });
@@ -141,8 +142,8 @@ export function validateBaselineEnvelope(image: string, body: string) {
 }
 
 export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false, seedOnly = false,
-  budgetSeconds?: number, stagnation = false): Adapter {
-  if (historical && (budgetSeconds !== undefined || stagnation)) throw new Error("CROSS_ENGINE_BUDGET_MODE");
+  budgetSeconds?: number, stagnation = false, weeklySwap = false): Adapter {
+  if (historical && (budgetSeconds !== undefined || stagnation || weeklySwap)) throw new Error("CROSS_ENGINE_BUDGET_MODE");
   if (seedOnly && (historical || !patternSeed || engine !== "timefold")) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (patternSeed && engine !== "timefold") throw new Error("CROSS_ENGINE_SEED_MODE");
   const identity = inspectImage(image, engine);
@@ -150,7 +151,7 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
       || (patternSeed && identity.revision !== "335efcc09f1410266f70c6e5fb5be03a1294e33f")))
     throw new Error("CROSS_ENGINE_HISTORICAL_REVISION");
   return body => {
-    const child = runIsolated(image, engine, body, false, patternSeed, false, seedOnly, budgetSeconds, stagnation);
+    const child = runIsolated(image, engine, body, false, patternSeed, false, seedOnly, budgetSeconds, stagnation, weeklySwap);
     let reply: WireReply;
     // GNU timeout 124 is a known Timefold supervisor deadline. 137 is ambiguous
     // (OOM or forced termination); do not misreport it as a normal timeout.
@@ -166,9 +167,11 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
         // the current validator. Only pinned controls can omit their old spike.
         if (historical && value && typeof value === "object") delete value.spike;
         reply = verifyReply(value);
-        if ((budgetSeconds !== undefined || stagnation) && reply.httpStatus === 200
+        if ((budgetSeconds !== undefined || stagnation || weeklySwap) && reply.httpStatus === 200
           && (value.spike?.budgetSeconds !== (budgetSeconds ?? 12)
             || value.spike?.stagnationRequested !== stagnation
+            || value.spike?.weeklySwapRequested !== weeklySwap
+            || weeklySwap && (reply.body as {status?: string}).status === "FEASIBLE" && value.spike?.weeklySwapApplied !== true
             || stagnation && (reply.body as {status?: string}).status === "FEASIBLE" && value.spike?.stagnationApplied !== true
             || (reply.body as {status?: string;wallTimeSeconds?: number}).status === "FEASIBLE"
               && !((reply.body as {wallTimeSeconds: number}).wallTimeSeconds <= (budgetSeconds ?? 12) + .1)))
