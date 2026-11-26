@@ -1,0 +1,71 @@
+name: Escalas Timefold model and warm JVM diagnostics
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-timefold/**'
+      - 'web/scripts/escalas/cross-engine/**'
+      - '.github/workflows/escalas-timefold-diagnostics.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-timefold-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  historical:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: 'true'
+      ESCALAS_CROSS_ENGINE_ISOLATED: '1'
+      BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
+      V72: 'a6216755306335f0aae2c86bacaee0a70bd46007'
+      V73: '217427e0032b9d187c9e740a8708ffd551424f85'
+      V74: '335efcc09f1410266f70c6e5fb5be03a1294e33f'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.19.0
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Build pinned control and candidate images
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=$(mktemp -d)
+          trap 'rm -rf "$build"' EXIT
+          git -C .. archive "$BASE" web/ops/escalas | tar -x -C "$build"
+          docker build --target runtime --build-arg SOURCE_REVISION="$BASE" -t e2-diag-ortools:ci "$build/web/ops/escalas"
+          for revision in "$V72" "$V73" "$V74"; do
+            mkdir "$build/$revision"
+            git -C .. archive "$revision" web/experiments/escalas-timefold | tar -x -C "$build/$revision"
+            docker build --build-arg SOURCE_REVISION="$revision" -t "e2-diag-$revision:ci" "$build/$revision/web/experiments/escalas-timefold"
+          done
+          docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t e2-diag-candidate:ci experiments/escalas-timefold
+      - name: Compare versions and repeat in one JVM
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/diagnostics.ts \
+            "$(image e2-diag-ortools:ci)" "$(image "e2-diag-$V72:ci")" "$(image "e2-diag-$V73:ci")" \
+            "$(image "e2-diag-$V74:ci")" "$(image e2-diag-candidate:ci)" | tee "$RUNNER_TEMP/timefold-diagnostics.jsonl"
+      - name: Retain aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: timefold-model-jvm-diagnostics
+          path: ${{ runner.temp }}/timefold-diagnostics.jsonl
+          if-no-files-found: ignore
+          retention-days: 7

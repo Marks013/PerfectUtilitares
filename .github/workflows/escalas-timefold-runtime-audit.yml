@@ -1,0 +1,66 @@
+name: Escalas Timefold runtime and build image audit
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-timefold/**'
+      - '.github/workflows/escalas-timefold-runtime-audit.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-timefold-runtime-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image-audit:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Validate scanner evidence parser
+        run: python3 -m unittest discover -s experiments/escalas-timefold -p 'test_audit_runtime.py'
+      - name: Build exact build and runtime targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --target build -t e2-audit-build:ci experiments/escalas-timefold
+          docker build --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" -t e2-audit-runtime:ci experiments/escalas-timefold
+      - name: Install verified ARM64 Trivy and scan locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          audit="$RUNNER_TEMP/timefold-runtime-audit"
+          mkdir -p "$audit" "$RUNNER_TEMP/trivy-bin"
+          archive="$RUNNER_TEMP/trivy_0.76.2_Linux-ARM64.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 --max-time 180 \
+            https://github.com/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_Linux-ARM64.tar.gz -o "$archive"
+          printf '%s  %s\n' 'ab9d51f86e6a5fb936f605faff6b593ac51bc378fff4d3e8b9d58358b9c367c3' "$archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP/trivy-bin" trivy
+          scanner="$RUNNER_TEMP/trivy-bin/trivy"
+          "$scanner" --version > "$audit/scanner-version.txt"
+          for target in runtime build; do
+            image=$(docker image inspect "e2-audit-$target:ci" --format '{{.Id}}')
+            printf '%s\n' "$image" > "$audit/$target-image.txt"
+            docker run --rm --pull=never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 1001:1001 \
+              --entrypoint java "$image" -version > "$audit/$target-java-version.txt" 2>&1
+            "$scanner" image --scanners vuln --pkg-types os,library --list-all-pkgs --format json --exit-code 0 \
+              --timeout 8m --output "$audit/$target-trivy.json" "$image"
+          done
+          git rev-parse HEAD > "$audit/revision.txt"
+      - name: Verify scope and vulnerability findings
+        run: python3 experiments/escalas-timefold/audit_runtime.py "$RUNNER_TEMP/timefold-runtime-audit"
+      - name: Retain inventory and scan evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: timefold-runtime-and-build-audit
+          path: ${{ runner.temp }}/timefold-runtime-audit/
+          if-no-files-found: ignore
+          retention-days: 7

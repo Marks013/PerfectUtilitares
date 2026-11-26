@@ -99,6 +99,22 @@ jobs:
           python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2-pattern.jsonl" --pattern
           python3 experiments/escalas-timefold/compare_pattern_ablation.py "$RUNNER_TEMP/timefold-e2.jsonl" "$RUNNER_TEMP/timefold-e2-pattern.jsonl" | tee "$RUNNER_TEMP/timefold-e2-ablation.json"
           test "$failed" = 0
+      - name: Gate candidate quality separately from feasibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUNNER_TEMP/timefold-e2-ablation.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              data = json.load(stream)
+          ok = (data["pattern"]["timefold"]["new"] == 5
+                and data["pattern"]["timefold"]["guardedSeeds"] == 5
+                and data["regressedPairs"]["pattern"] == 0
+                and data["productRetainedPairs"]["pattern"] == 0
+                and data["qualityDecision"]["pattern"] == "NO_REGRESSION_OBSERVED_EXPLORATORY")
+          print("E2_PATTERN_QUALITY_NO_REGRESSION_OBSERVED" if ok else "E2_PATTERN_QUALITY_NOT_APPROVED")
+          sys.exit(0 if ok else 1)
+          PY
       - name: Keep aggregate evidence only
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, node24

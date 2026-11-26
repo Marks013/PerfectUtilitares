@@ -1,6 +1,7 @@
 package br.perfectutilitares.escalas.spike;
 
-import ai.timefold.solver.core.api.solver.SolverFactory;
+import ai.timefold.solver.core.api.solver.SolverManager;
+import ai.timefold.solver.core.config.solver.SolverManagerConfig;
 import ai.timefold.solver.core.config.solver.SolverConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -26,16 +27,31 @@ public final class SpikeMain {
 
     public static void main(String[] args) throws Exception {
         long start = System.nanoTime();
+        boolean pattern = false, warm = false;
+        for (String arg : args) {
+            if (arg.equals("--pattern-seed") && !pattern) pattern = true;
+            else if (arg.equals("--warm-batch") && !warm) warm = true;
+            else {
+                System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
+                return;
+            }
+        }
+        // Warm mode repeats exactly the same bounded synthetic envelope in
+        // one JVM, with fresh domain and solver manager on every invocation.
+        byte[] bytes = System.in.readNBytes(LIMIT + 1);
+        int repeats = warm ? 3 : 1;
+        for (int i = 0; i < repeats; i++) {
+            System.out.println(solveOne(bytes, pattern, i == 0 ? start : System.nanoTime()));
+        }
+    }
+
+    private static String solveOne(byte[] bytes, boolean patternSeed, long start) throws Exception {
         ObjectNode reply = JSON.createObjectNode();
         ObjectNode body = reply.putObject("body");
         reply.putNull("maxRssKiB"); // JVM heap is not RSS; cgroup counters are reported separately.
         int code = 200;
         String stage = "MAPPING";
         try {
-            if (args.length > 1 || args.length == 1 && !args[0].equals("--pattern-seed"))
-                throw new WireModel.Unsupported("SEED_ARGUMENT");
-            boolean patternSeed = args.length == 1;
-            byte[] bytes = System.in.readNBytes(LIMIT + 1);
             if (bytes.length > LIMIT) {
                 code = 413;
                 body.put("error", "SPIKE_INPUT_LIMIT");
@@ -54,43 +70,70 @@ public final class SpikeMain {
                     seedOutcome = PatternSeeder.seed(input, seedDeadline).name();
                     seedSeconds = elapsed(seedStart);
                 }
+                boolean guarded = seedOutcome.equals("APPLIED") && SeedGuard.install(input);
                 long initialized = input.days().stream().filter(day -> day.state() != null).count();
                 long residual = BUDGET_NS - (System.nanoTime() - start);
                 // No extra 12 seconds after mapping. Reserve a conservative setup/return margin.
                 residual -= Duration.ofMillis(500).toNanos();
                 Roster result = null;
                 var firstFeasible = new AtomicLong(-1L);
+                long calculations = 0, moves = 0;
+                double solvingSeconds = 0;
+
                 if (residual >= 1_000_000L) {
                     stage = "FACTORY";
-                    var solver = SolverFactory.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L))).buildSolver();
-                    stage = "SEARCH";
-                    solver.addEventListener(event -> {
-                        if (event.getNewBestSolution().score() != null && event.getNewBestSolution().score().isFeasible()
-                                && event.getNewBestSolution().days().stream().allMatch(day -> day.state() != null))
-                            firstFeasible.compareAndSet(-1L, System.nanoTime() - start);
-                    });
-                    // Cooperative watchdog includes SolverFactory construction in the 12s deadline.
-                    // Retry termination in case the first call preceded native solve startup.
-                    var finished = new AtomicBoolean(false);
-                    Thread watchdog = Thread.ofPlatform().daemon().name("e2-deadline").unstarted(() -> {
-                        long stop = start + BUDGET_NS - Duration.ofMillis(250).toNanos();
-                        while (!finished.get()) {
-                            long remaining = stop - System.nanoTime();
-                            if (remaining <= 0) {
-                                solver.terminateEarly();
-                                LockSupport.parkNanos(Duration.ofMillis(10).toNanos());
-                            } else LockSupport.parkNanos(Math.min(remaining, Duration.ofMillis(50).toNanos()));
+                    try (var manager = SolverManager.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L)),
+                            new SolverManagerConfig().withParallelSolverCount("1"))) {
+                        stage = "SEARCH";
+                        if (System.nanoTime() - start < BUDGET_NS - Duration.ofMillis(250).toNanos()) {
+                            var job = manager.solveBuilder().withProblemId("synthetic-e2").withProblem(input)
+                                    .withBestSolutionEventConsumer(event -> {
+                                        var solution = event.solution();
+                                        if (solution.score() != null && solution.score().isFeasible()
+                                                && solution.days().stream().allMatch(day -> day.state() != null))
+                                            firstFeasible.compareAndSet(-1L, System.nanoTime() - start);
+                                    }).withExceptionHandler((id, error) -> {
+                                        // getFinalBestSolution propagates failure; never log a payload.
+                                    }).run();
+                            var finished = new AtomicBoolean(false);
+                            Thread watchdog = Thread.ofPlatform().daemon().name("e2-deadline").unstarted(() -> {
+                                long stop = start + BUDGET_NS - Duration.ofMillis(250).toNanos();
+                                while (!finished.get()) {
+                                    long remaining = stop - System.nanoTime();
+                                    if (remaining <= 0) {
+                                        job.terminateEarly();
+                                        return;
+                                    }
+                                    LockSupport.parkNanos(Math.min(remaining, Duration.ofMillis(50).toNanos()));
+                                }
+                            });
+                            watchdog.start();
+                            try {
+                                result = job.getFinalBestSolution();
+                                calculations = job.getScoreCalculationCount();
+                                moves = job.getMoveEvaluationCount();
+                                solvingSeconds = job.getSolvingDuration().toMillis() / 1000.0;
+                            } finally {
+                                finished.set(true);
+                                watchdog.interrupt();
+                            }
                         }
-                    });
-                    if (System.nanoTime() - start < BUDGET_NS - Duration.ofMillis(250).toNanos()) {
-                        watchdog.start();
-                        try { result = solver.solve(input); }
-                        finally { finished.set(true); watchdog.interrupt(); }
                     }
                 }
                 stage = "RESULT";
-                boolean valid = result != null && result.score() != null && result.score().isFeasible()
-                        && result.days().size() == cells && result.days().stream().allMatch(day -> day.state() != null)
+                // Snapshot once after manager closure. An asynchronous consumer
+                // may omit intermediate events, so distinguish the final fallback.
+                long firstTime = firstFeasible.get();
+                String firstSource = firstTime >= 0 ? "DELIVERED_EVENT" : "NONE";
+                boolean completeFeasible = result != null && result.score() != null && result.score().isFeasible()
+                        && result.days().size() == cells && result.days().stream().allMatch(day -> day.state() != null);
+                if (completeFeasible && firstTime < 0) {
+                    firstTime = System.nanoTime() - start;
+                    firstSource = "FINAL_FALLBACK";
+                }
+                Long guardViolation = guarded && result != null && result.score() != null
+                        ? Math.max(0L, -result.score().softScore(0)) : null;
+                boolean valid = completeFeasible && (!guarded || guardViolation != null && guardViolation == 0L)
                         && System.nanoTime() - start <= BUDGET_NS;
                 body.put("status", valid ? "FEASIBLE" : "UNKNOWN");
                 body.put("message", valid ? "Synthetic E2 partial candidate" : "Synthetic E2 no feasible candidate within budget");
@@ -111,9 +154,16 @@ public final class SpikeMain {
                 telemetry.put("seedMode", patternSeed ? "PATTERN" : "DEFAULT");
                 telemetry.put("seedOutcome", seedOutcome);
                 telemetry.put("seedSeconds", seedSeconds);
+                telemetry.put("guardedSeed", guarded);
+                if (guardViolation == null) telemetry.putNull("seedGuardViolation");
+                else telemetry.put("seedGuardViolation", guardViolation);
+                telemetry.put("scoreCalculations", calculations);
+                telemetry.put("moveEvaluations", moves);
+                telemetry.put("solvingSeconds", solvingSeconds);
+                telemetry.put("firstFeasibleSource", firstSource);
                 telemetry.put("bands", input.bands().size());
                 telemetry.put("windows", input.windows().size());
-                if (firstFeasible.get() >= 0) telemetry.put("firstFeasibleSeconds", firstFeasible.get() / 1e9);
+                if (firstTime >= 0) telemetry.put("firstFeasibleSeconds", firstTime / 1e9);
                 else telemetry.putNull("firstFeasibleSeconds");
                 telemetry.put("partialModel", true);
             }
@@ -143,7 +193,8 @@ public final class SpikeMain {
             output = JSON.writeValueAsBytes(reply);
         }
         if (output.length > LIMIT) {
-            System.out.println("{\"httpStatus\":500,\"body\":{\"error\":\"SPIKE_OUTPUT_LIMIT\"},\"maxRssKiB\":null}");
-        } else System.out.println(new String(output, java.nio.charset.StandardCharsets.UTF_8));
+            return "{\"httpStatus\":500,\"body\":{\"error\":\"SPIKE_OUTPUT_LIMIT\"},\"maxRssKiB\":null}";
+        }
+        return new String(output, java.nio.charset.StandardCharsets.UTF_8);
     }
 }

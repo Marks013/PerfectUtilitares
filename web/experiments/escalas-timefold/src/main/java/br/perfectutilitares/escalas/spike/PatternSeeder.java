@@ -32,9 +32,11 @@ final class PatternSeeder {
         @Override public int compareTo(Rank other) {
             int c = Long.compare(hard, other.hard);
             if (c != 0) return c;
-            c = Long.compare(total, other.total);
-            if (c != 0) return c;
+            // An experimentally prioritized Sunday construction. Hard confirmed
+            // coverage still wins; no estimate is converted into a hard rule.
             c = Long.compare(sunday, other.sunday);
+            if (c != 0) return c;
+            c = Long.compare(total, other.total);
             if (c != 0) return c;
             c = Long.compare(service, other.service);
             if (c != 0) return c;
@@ -108,9 +110,74 @@ final class PatternSeeder {
             int total = present + (addedRole == null ? 0 : 1);
             return (long) (band.end() - band.start()) * Math.max(Math.max(0, band.minimum() - total), roleGap);
         }
-        void add(String role) {
-            present++;
-            if (band.roleMinima().containsKey(role)) roles.merge(role, 1, Integer::sum);
+        void change(String role, int delta) {
+            present += delta;
+            if (present < 0) throw new IllegalStateException("NEGATIVE_PRESENCE");
+            if (band.roleMinima().containsKey(role)) {
+                int next = roles.getOrDefault(role, 0) + delta;
+                if (next < 0) throw new IllegalStateException("NEGATIVE_ROLE_PRESENCE");
+                if (next == 0) roles.remove(role);
+                else roles.put(role, next);
+            }
+        }
+    }
+
+    private record Choice(int mask, Rank rank) {}
+    private record Cohort(List<Day> days, List<Integer> masks, List<BandState> bands, int[] staffed) {}
+
+    private static Rank rank(int mask, List<Day> days, int[] staffed, long[] hard, long[] total) {
+        long h = 0, t = 0, s = 0, service = 0, balance = 0, stability = 0;
+        for (int bits = mask; bits != 0; bits &= bits - 1) {
+            int day = Integer.numberOfTrailingZeros(bits);
+            h += hard[day]; t += total[day];
+            if (day % 7 == 0) s += total[day];
+            if (staffed[day] == 0) service++;
+            balance -= staffed[day];
+            Day.State prior = days.get(day).state();
+            if (prior != null) stability += prior == Day.State.WORK ? 1 : -1;
+        }
+        return new Rank(h, t, s, service, balance, stability);
+    }
+
+    private static Choice choose(Cohort cohort, Integer incumbent, long deadline) {
+        var days = cohort.days();
+        String role = days.getFirst().role();
+        long[] hard = new long[days.size()], total = new long[days.size()];
+        for (BandState state : cohort.bands()) {
+            int day = state.band.day();
+            if (!days.get(day).covers(state.band.start(), state.band.end())) continue;
+            long gain = state.gap(null) - state.gap(role);
+            if (state.band.estimated()) total[day] += gain;
+            else hard[day] += gain;
+        }
+        Rank prior = incumbent == null ? null : rank(incumbent, days, cohort.staffed(), hard, total);
+        Choice best = prior == null ? null : new Choice(incumbent, prior);
+        int protectedDays = 0;
+        if (incumbent != null) for (int bits = incumbent; bits != 0; bits &= bits - 1) {
+            int day = Integer.numberOfTrailingZeros(bits);
+            if (cohort.staffed()[day] == 0) protectedDays |= 1 << day;
+        }
+        int trials = 0;
+        for (int mask : cohort.masks()) {
+            if ((trials++ & 127) == 0 && System.nanoTime() >= deadline) return null;
+            Rank candidate = rank(mask, days, cohort.staffed(), hard, total);
+            // Whole-person compound move: other people are unchanged and this
+            // person stays within the same sector. Never purchase an improvement
+            // with a new confirmed, total, Sunday or daily-presence deficit.
+            if (prior != null && ((mask & protectedDays) != protectedDays || candidate.hard() < prior.hard()
+                    || candidate.total() < prior.total() || candidate.sunday() < prior.sunday())) continue;
+            if (best == null || candidate.compareTo(best.rank()) > 0) best = new Choice(mask, candidate);
+        }
+        return best;
+    }
+
+    private static void apply(Cohort cohort, int mask, int delta) {
+        for (int bits = mask; bits != 0; bits &= bits - 1)
+            cohort.staffed()[Integer.numberOfTrailingZeros(bits)] += delta;
+        for (BandState state : cohort.bands()) {
+            int day = state.band.day();
+            if ((mask & (1 << day)) != 0 && cohort.days().get(day).covers(state.band.start(), state.band.end()))
+                state.change(cohort.days().getFirst().role(), delta);
         }
     }
 
@@ -127,6 +194,7 @@ final class PatternSeeder {
         var attendance = new HashMap<String, int[]>();
         var cached = new HashMap<Shape, List<Integer>>();
         var selected = new LinkedHashMap<String, Integer>();
+        var cohorts = new LinkedHashMap<String, Cohort>();
         for (var entry : people.entrySet()) {
             if (System.nanoTime() >= deadline) return Outcome.TIME_LIMIT;
             var days = entry.getValue();
@@ -146,40 +214,37 @@ final class PatternSeeder {
             var sectorBands = bands.getOrDefault(representative.sector(), List.of());
             int[] staffed = attendance.computeIfAbsent(representative.sector(), k -> new int[shape.days()]);
             if (staffed.length != shape.days()) return Outcome.UNSUPPORTED;
-            long[] hard = new long[shape.days()], total = new long[shape.days()];
-            for (BandState band : sectorBands) {
-                int day = band.band.day();
-                if (day < 0 || day >= shape.days()) return Outcome.UNSUPPORTED;
-                if (!days.get(day).covers(band.band.start(), band.band.end())) continue;
-                long gain = band.gap(null) - band.gap(representative.role());
-                if (band.band.estimated()) total[day] += gain;
-                else hard[day] += gain;
-            }
-            Rank bestRank = null;
-            int best = 0, trials = 0;
-            for (int mask : masks) {
-                if ((trials++ & 255) == 0 && System.nanoTime() >= deadline) return Outcome.TIME_LIMIT;
-                long h = 0, t = 0, s = 0, service = 0, balance = 0, stability = 0;
-                for (int bits = mask; bits != 0; bits &= bits - 1) {
-                    int day = Integer.numberOfTrailingZeros(bits);
-                    h += hard[day]; t += total[day];
-                    if (day % 7 == 0) s += total[day];
-                    if (staffed[day] == 0) service++;
-                    balance -= staffed[day];
-                    Day.State prior = days.get(day).state();
-                    if (prior != null) stability += prior == Day.State.WORK ? 1 : -1;
-                }
-                Rank rank = new Rank(h, t, s, service, balance, stability);
-                if (bestRank == null || rank.compareTo(bestRank) > 0) { best = mask; bestRank = rank; }
-            }
-            if (bestRank == null) return Outcome.NO_PATTERN;
-            selected.put(entry.getKey(), best);
-            for (int bits = best; bits != 0; bits &= bits - 1) staffed[Integer.numberOfTrailingZeros(bits)]++;
-            for (BandState band : sectorBands) if ((best & (1 << band.band.day())) != 0
-                    && days.get(band.band.day()).covers(band.band.start(), band.band.end())) band.add(representative.role());
+            for (BandState band : sectorBands)
+                if (band.band.day() < 0 || band.band.day() >= shape.days()) return Outcome.UNSUPPORTED;
+            Cohort cohort = new Cohort(days, masks, sectorBands, staffed);
+            Choice choice = choose(cohort, null, deadline);
+            if (choice == null) return System.nanoTime() >= deadline ? Outcome.TIME_LIMIT : Outcome.NO_PATTERN;
+            cohorts.put(entry.getKey(), cohort);
+            selected.put(entry.getKey(), choice.mask());
+            apply(cohort, choice.mask(), 1);
         }
-        // Commit only after the whole bounded construction succeeded.
+        // Once the complete greedy grid exists, explore up to two bounded
+        // sweeps of whole-person pattern replacements. A partial sweep keeps
+        // the last complete selection; the caller never sees intermediate cells.
         if (System.nanoTime() >= deadline) return Outcome.TIME_LIMIT;
+        for (int pass = 0; pass < 2; pass++) {
+            boolean changed = false;
+            for (var entry : cohorts.entrySet()) {
+                if (System.nanoTime() >= deadline) break;
+                Cohort cohort = entry.getValue();
+                int prior = selected.get(entry.getKey());
+                apply(cohort, prior, -1);
+                Choice choice = choose(cohort, prior, deadline);
+                int next = choice == null ? prior : choice.mask();
+                selected.put(entry.getKey(), next);
+                apply(cohort, next, 1);
+                changed |= prior != next;
+                if (choice == null) break;
+            }
+            if (!changed || System.nanoTime() >= deadline) break;
+        }
+        // A complete selection existed before the bounded polishing phase.
+        // Commit it even if that optional phase reached its own deadline.
         for (var entry : people.entrySet()) {
             int mask = selected.get(entry.getKey());
             for (Day day : entry.getValue()) {

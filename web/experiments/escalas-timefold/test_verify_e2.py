@@ -28,10 +28,13 @@ def rows():
         if engine == "timefold":
             row["spike"] = dict(partialModel=True, entities=70, initialized=10, bands=28, windows=10,
                                 mappingSeconds=.1, firstFeasibleSeconds=.8, beforeSeed=10,
-                                seedMode="DEFAULT", seedOutcome="NOT_REQUESTED", seedSeconds=0)
+                                seedMode="DEFAULT", seedOutcome="NOT_REQUESTED", seedSeconds=0,
+                                guardedSeed=False, seedGuardViolation=None, scoreCalculations=1000, moveEvaluations=900,
+                                solvingSeconds=9, firstFeasibleSource="DELIVERED_EVENT")
         out.append(row)
     out.append(dict(shared, kind="paired-coverage", repetition=0, comparable=True,
-                    improved=False, regressed=False, reason="ACCEPTED"))
+                    improved=False, regressed=False, reason="ACCEPTED",
+                    productGuard=dict(retainedReference=False, reason="ACCEPTED")))
     for engine in ENGINES:
         out.append(dict(shared, kind="summary", engine=engine, samples=1, validTimely=1, acceptedNew=1,
                         engineNew=1, notEngineNew=0, rejectedRawFeasible=0, decision="EXPLORATORY_NOT_CERTIFIED",
@@ -85,6 +88,7 @@ class EvidenceTests(unittest.TestCase):
         for assessment in ("rawAssessment", "finalAssessment"):
             data[1][assessment]["metrics"]["coverageAudit"][0].update(sundays=60, monthSundays=60)
         data[2].update(regressed=True, improved=False, reason="SECTOR_COVERAGE",
+                       productGuard=dict(retainedReference=True, reason="SECTOR_COVERAGE"),
                        regression=dict(metric="DEFICIT_PERSON_MINUTES", scope="SUNDAYS",
                                        before=0, after=60, delta=60))
         report = self.validate(data)[0]
@@ -109,6 +113,7 @@ class EvidenceTests(unittest.TestCase):
                 for assessment in ("rawAssessment", "finalAssessment"):
                     data[1][assessment]["metrics"]["coverageAudit"][0].update(sundays=60, monthSundays=60)
                 data[2].update(regressed=True, improved=False, reason="SECTOR_COVERAGE",
+                       productGuard=dict(retainedReference=True, reason="SECTOR_COVERAGE"),
                                regression=dict(metric="DEFICIT_PERSON_MINUTES", scope="SUNDAYS",
                                                before=0, after=60, delta=60))
                 data[2]["regression"][key] = value
@@ -132,6 +137,24 @@ class EvidenceTests(unittest.TestCase):
         data = rows()
         data[1]["spike"].update(seedOutcome="APPLIED", initialized=70)
         with self.assertRaisesRegex(ValueError, "SEED_DEFAULT"):
+            self.validate(data)
+
+    def test_product_guard_can_reject_when_coverage_ties(self):
+        data = rows()
+        data[2]["productGuard"] = dict(retainedReference=True, reason="REST_WINDOW")
+        report = self.validate(data)[0]
+        self.assertEqual(report["regressedPairs"], 0)
+        self.assertEqual(report["productRetainedPairs"], 1)
+        self.assertEqual(report["qualityDecision"], "PRODUCT_REGRESSION_OBSERVED")
+
+    def test_rejects_impossible_product_guard_and_search_counters(self):
+        data = rows()
+        data[2]["productGuard"] = dict(retainedReference=False, reason="REST_WINDOW")
+        with self.assertRaises(ValueError):
+            self.validate(data)
+        data = rows()
+        data[1]["spike"]["moveEvaluations"] = -1
+        with self.assertRaises(ValueError):
             self.validate(data)
 
     def test_incomplete_result(self):

@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { arch } from "node:os";
 import { isHoursReferenceOnly } from "../../../src/lib/escalas/hours-reference";
-import { compareRosterCoverage } from "../../../src/lib/escalas/roster-quality";
+import { compareRosterCoverage, selectVerifiedRoster, type RosterSelectionReason } from "../../../src/lib/escalas/roster-quality";
 import { makeScenario, scenarioIds, type ScenarioId } from "./fixtures";
 import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial } from "./core";
 import { baselineRevision, dockerAdapter, inspectImage, resources, validateBaselineEnvelope } from "./docker";
@@ -69,8 +69,12 @@ async function main() {
     // Same original demand ruler. Only actual complete valid proposals are comparable.
     if (pair.ortools?.proposal && pair.timefold?.proposal && pair.ortools.engineNew && pair.timefold.engineNew) {
       const comparison = compareRosterCoverage(pair.ortools.proposal, pair.timefold.proposal, pair.ortools.proposal);
+      let selectionReason: RosterSelectionReason | undefined;
+      const selection = selectVerifiedRoster(pair.ortools.proposal, pair.timefold.proposal, reason => { selectionReason = reason; });
+      if (!selectionReason) throw new Error("CROSS_ENGINE_SELECTION_MISSING");
       console.log(JSON.stringify({ kind: "paired-coverage", ...metadata, repetition,
         comparable: comparison.comparable, regressed: comparison.regressed, improved: comparison.improved, reason: comparison.reason,
+        productGuard: { retainedReference: selection.retainedReference, reason: selectionReason },
         // Numeric comparison only. Never record sector, date or role labels.
         ...(comparison.regression ? { regression: {
           metric: comparison.regression.metric, scope: comparison.regression.scope,

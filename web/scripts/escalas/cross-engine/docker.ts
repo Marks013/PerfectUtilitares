@@ -67,6 +67,11 @@ else:
 `;
 
 type Engine = "ortools" | "timefold";
+const historicalTimefold = new Set([
+  "a6216755306335f0aae2c86bacaee0a70bd46007",
+  "217427e0032b9d187c9e740a8708ffd551424f85",
+  "335efcc09f1410266f70c6e5fb5be03a1294e33f",
+]);
 export function inspectImage(image: string, engine: Engine) {
   if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new Error("CROSS_ENGINE_IMMUTABLE_IMAGE_REQUIRED");
   const output = spawnSync("docker", ["image", "inspect", image, "--format", "{{json .}}"], { encoding: "utf8", timeout: 5000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 });
@@ -86,11 +91,12 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false) {
+  if (warm && (engine !== "timefold" || validateOnly || !patternSeed)) throw new Error("CROSS_ENGINE_WARM_MODE");
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
   const name = "escalas-cross-engine-" + randomUUID();
   const special = JSON.parse(body).input._restPairTarget === 20;
-  const timeout = validateOnly ? 10_000 : special ? 32_000 : 20_000;
+  const timeout = warm ? 56_000 : validateOnly ? 10_000 : special ? 32_000 : 20_000;
   const args = ["run", "--rm", "--pull=never", "--name", name, "--label", "perfectutilitares.cross-engine=synthetic",
     "--network", "none", "--cgroupns=private", "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
     "--cpus", "1", "--memory", "1536m", "--memory-swap", "1536m", "--pids-limit", "64",
@@ -98,12 +104,19 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
     "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", "ESCALAS_SOLVER_WORKERS=1",
     "--env", "ESCALAS_SOLVER_LINEARIZATION=0", "--env", "ESCALAS_SOLVER_SYMMETRY=0", "-i"];
   if (engine === "ortools") args.push("--entrypoint", "python", image, "-B", "-c", validateOnly ? validationPython : python);
-  else {
+  else if (warm) {
+    // Same image and JVM settings. Only batch-level supervisor differs; each
+    // solve retains its own 12s deadline and there are exactly 3 invocations.
+    args.push("--entrypoint", "/usr/bin/timeout", image, "--signal=TERM", "--kill-after=1s", "53s",
+      "java", "-XX:ActiveProcessorCount=1", "-XX:MaxRAMPercentage=55", "-XX:+ExitOnOutOfMemoryError",
+      "-Djava.io.tmpdir=/tmp", "-cp", "/app/spike.jar:/app/lib/*",
+      "br.perfectutilitares.escalas.spike.SpikeMain", "--pattern-seed", "--warm-batch");
+  } else {
     args.push(image);
     if (patternSeed) args.push("--pattern-seed");
   }
   try {
-    return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 9 * 1024 * 1024 });
+    return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: (warm ? 27 : 9) * 1024 * 1024 });
   } finally { cleanup(name); }
 }
 
@@ -121,9 +134,12 @@ export function validateBaselineEnvelope(image: string, body: string) {
   }
 }
 
-export function dockerAdapter(image: string, engine: Engine, patternSeed = false): Adapter {
+export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false): Adapter {
   if (patternSeed && engine !== "timefold") throw new Error("CROSS_ENGINE_SEED_MODE");
-  inspectImage(image, engine);
+  const identity = inspectImage(image, engine);
+  if (historical && (engine !== "timefold" || !historicalTimefold.has(identity.revision)
+      || (patternSeed && identity.revision !== "335efcc09f1410266f70c6e5fb5be03a1294e33f")))
+    throw new Error("CROSS_ENGINE_HISTORICAL_REVISION");
   return body => {
     const child = runIsolated(image, engine, body, false, patternSeed);
     let reply: WireReply;
@@ -136,7 +152,11 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
       reply = { httpStatus: 500, body: { error: "BENCHMARK_CONTAINER_FAILED" }, maxRssKiB: null };
     else {
       try {
-        reply = verifyReply(JSON.parse(child.stdout));
+        const value = JSON.parse(child.stdout);
+        // Historical schema lacks newer counters. Do not invent them or weaken
+        // the current validator. Only pinned controls can omit their old spike.
+        if (historical && value && typeof value === "object") delete value.spike;
+        reply = verifyReply(value);
         if (engine === "timefold" && reply.httpStatus === 200 && ["OPTIMAL", "INFEASIBLE"].includes((reply.body as { status: string }).status))
           throw new Error("CROSS_ENGINE_UNSUPPORTED_PROOF");
       }
@@ -144,4 +164,16 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
     }
     return reply;
   };
+}
+
+export function warmTimefoldBatch(image: string, body: string) {
+  const identity = inspectImage(image, "timefold");
+  if (historicalTimefold.has(identity.revision)) throw new Error("CROSS_ENGINE_HISTORICAL_REVISION");
+  const start = performance.now();
+  const child = runIsolated(image, "timefold", body, false, true, true);
+  const batchWallSeconds = (performance.now() - start) / 1000;
+  if (child.error || child.status !== 0) throw new Error("CROSS_ENGINE_WARM_BATCH_FAILED");
+  const lines = child.stdout.trim().split("\n");
+  if (lines.length !== 3) throw new Error("CROSS_ENGINE_WARM_BATCH_COUNT");
+  return { batchWallSeconds, replies: lines.map(line => verifyReply(JSON.parse(line))) };
 }

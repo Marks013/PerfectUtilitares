@@ -62,6 +62,10 @@ public class Roster {
         }
     }
 
+    /** Soft ceilings from the candidate's own complete seed, never CP-SAT output. */
+    public record SectorLimit(String sector, long total, long sundays, long peak) {}
+    public record ServiceLimit(String sector, int day) {}
+
     @ValueRangeProvider(id = "states")
     @ProblemFactCollectionProperty
     private List<Day.State> states = List.of(Day.State.WORK, Day.State.OFF);
@@ -69,6 +73,10 @@ public class Roster {
     private List<Window> windows;
     @ProblemFactCollectionProperty
     private List<Band> bands;
+    @ProblemFactCollectionProperty
+    private List<SectorLimit> sectorLimits = List.of();
+    @ProblemFactCollectionProperty
+    private List<ServiceLimit> serviceLimits = List.of();
     @PlanningEntityCollectionProperty
     private List<Day> days;
     @PlanningScore(bendableHardLevelsSize = 1, bendableSoftLevelsSize = RosterConstraints.SOFT_LEVELS)
@@ -89,6 +97,10 @@ public class Roster {
     public void setWindows(List<Window> windows) { this.windows = List.copyOf(windows); }
     public List<Band> getBands() { return bands; }
     public void setBands(List<Band> bands) { this.bands = List.copyOf(bands); }
+    public List<SectorLimit> getSectorLimits() { return sectorLimits; }
+    public void setSectorLimits(List<SectorLimit> limits) { sectorLimits = List.copyOf(limits); }
+    public List<ServiceLimit> getServiceLimits() { return serviceLimits; }
+    public void setServiceLimits(List<ServiceLimit> limits) { serviceLimits = List.copyOf(limits); }
     public List<Day> getDays() { return days; }
     public void setDays(List<Day> days) { this.days = days; }
     public BendableScore getScore() { return score; }

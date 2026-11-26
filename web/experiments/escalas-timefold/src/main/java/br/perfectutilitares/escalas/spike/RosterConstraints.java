@@ -16,10 +16,12 @@ import static ai.timefold.solver.core.api.score.stream.Joiners.filtering;
 
 /** E2 only: incremental fixed-clock model; NOT the full PerfectUtilitares priority policy. */
 public class RosterConstraints implements ConstraintProvider {
-    public static final int SOFT_LEVELS = 6;
+    public static final int SOFT_LEVELS = 8;
     private static final BendableScore HARD = BendableScore.ofHard(1, SOFT_LEVELS, 0, 1L);
+    private static final BendableScore GUARD = BendableScore.ofSoft(1, SOFT_LEVELS, 0, 1L);
+    private static final BendableScore SUNDAY_RECOVERY = BendableScore.ofSoft(1, SOFT_LEVELS, 1, 1L);
     private static BendableScore level(int index) {
-        return BendableScore.ofSoft(1, SOFT_LEVELS, index, 1L);
+        return BendableScore.ofSoft(1, SOFT_LEVELS, index + 2, 1L);
     }
     record SectorDay(String sector, int day) {}
     record SundayGroup(String sector, int cap) {}
@@ -30,7 +32,8 @@ public class RosterConstraints implements ConstraintProvider {
         var estimated = deficits(factory, true);
         return new Constraint[] {
             windowCounts(factory), emptyWindow(factory), variableRestPattern(factory),
-            confirmedCoverage(factory), totalEstimatedCoverage(estimated),
+            confirmedCoverage(factory), guardTotal(estimated), guardSunday(estimated),
+            guardPeak(estimated), guardPresence(factory), recoverSeedSunday(estimated), totalEstimatedCoverage(estimated),
             sundayCoverage(estimated), sectorPeak(estimated), dailyService(factory),
             sundaySpread(factory), sundayDateSpread(factory), changes(factory)
         };
@@ -79,6 +82,43 @@ public class RosterConstraints implements ConstraintProvider {
                 .concat(bands.ifNotExists(Day.class, equal(Roster.Band::day, Day::index),
                         equal(Roster.Band::sector, Day::sector), filtering(Roster.Band::matches)),
                         band -> band.missing(0, Map.of()));
+    }
+
+    Constraint guardTotal(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.groupBy((band, gap) -> band.sector(), ConstraintCollectors.<Roster.Band, Long>sum((band, gap) -> gap))
+                .join(Roster.SectorLimit.class, equal((String sector, Long gap) -> sector, Roster.SectorLimit::sector))
+                .filter((sector, gap, limit) -> gap > limit.total())
+                .penalize(GUARD, (sector, gap, limit) -> gap - limit.total())
+                .asConstraint("Seed sector total ceiling");
+    }
+    Constraint guardSunday(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.filter((band, gap) -> band.day() % 7 == 0)
+                .groupBy((band, gap) -> band.sector(), ConstraintCollectors.<Roster.Band, Long>sum((band, gap) -> gap))
+                .join(Roster.SectorLimit.class, equal((String sector, Long gap) -> sector, Roster.SectorLimit::sector))
+                .filter((sector, gap, limit) -> gap > limit.sundays())
+                .penalize(GUARD, (sector, gap, limit) -> gap - limit.sundays())
+                .asConstraint("Seed sector Sunday ceiling");
+    }
+    Constraint recoverSeedSunday(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.filter((band, gap) -> band.day() % 7 == 0 && gap > 0)
+                .join(Roster.SectorLimit.class, equal((Roster.Band band, Long gap) -> band.sector(), Roster.SectorLimit::sector))
+                .penalize(SUNDAY_RECOVERY, (band, gap, limit) -> gap)
+                .asConstraint("Recover Sunday coverage while preserving seed ceilings");
+    }
+    Constraint guardPeak(BiConstraintStream<Roster.Band, Long> estimated) {
+        return estimated.groupBy((band, gap) -> band.sector(),
+                        ConstraintCollectors.<Roster.Band, Long, Long>max(
+                                (band, gap) -> gap / (band.end() - band.start())))
+                .join(Roster.SectorLimit.class, equal((String sector, Long peak) -> sector, Roster.SectorLimit::sector))
+                .filter((sector, peak, limit) -> peak > limit.peak())
+                .penalize(GUARD, (sector, peak, limit) -> peak - limit.peak())
+                .asConstraint("Seed sector peak ceiling");
+    }
+    Constraint guardPresence(ConstraintFactory f) {
+        return f.forEach(Roster.ServiceLimit.class)
+                .ifNotExists(Day.class, equal(Roster.ServiceLimit::sector, Day::sector),
+                        equal(Roster.ServiceLimit::day, Day::index), filtering((limit, day) -> day.working()))
+                .penalize(GUARD).asConstraint("Seed daily service");
     }
 
     Constraint confirmedCoverage(ConstraintFactory f) {

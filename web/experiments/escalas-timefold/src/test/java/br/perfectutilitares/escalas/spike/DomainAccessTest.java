@@ -21,7 +21,7 @@ class DomainAccessTest {
     @Test void everyAnnotatedPrivateFieldHasPublicBeanAccess() throws Exception {
         // The exact properties currently annotated; the loop checks all declared
         // fields, including new annotations added in later increments.
-        assertEquals(Set.of("states", "windows", "bands", "days", "score"), annotated(Roster.class));
+        assertEquals(Set.of("states", "windows", "bands", "sectorLimits", "serviceLimits", "days", "score"), annotated(Roster.class));
         assertEquals(Set.of("id", "pinned", "state"), annotated(Day.class));
         for (Class<?> type : List.of(Roster.class, Day.class)) {
             assertTrue(Modifier.isPublic(type.getConstructor().getModifiers()));

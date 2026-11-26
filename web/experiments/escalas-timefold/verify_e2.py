@@ -229,6 +229,21 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
                         check(t.get("seedOutcome") == "APPLIED" and t["beforeSeed"] < t["entities"]
                               and t["initialized"] == t["entities"] and t["seedSeconds"] <= 1.35,
                               "SEED_NOT_APPLIED")
+                    check(type(t.get("guardedSeed")) is bool and (not t["guardedSeed"] or t["seedOutcome"] == "APPLIED")
+                          and integer(t.get("scoreCalculations")) and integer(t.get("moveEvaluations"))
+                          and numeric(t.get("solvingSeconds")) and t["solvingSeconds"] <= row["processSeconds"],
+                          "SEARCH_COUNTERS")
+                    check(t.get("firstFeasibleSource") in ("NONE", "DELIVERED_EVENT", "FINAL_FALLBACK")
+                          and (t.get("firstFeasibleSeconds") is None) == (t["firstFeasibleSource"] == "NONE"),
+                          "FIRST_FEASIBLE_SOURCE")
+                    if feasible:
+                        check(t["scoreCalculations"] > 0 and t["solvingSeconds"] > 0, "SEARCH_COUNTERS")
+                    check((t.get("seedGuardViolation") is None or integer(t["seedGuardViolation"]))
+                          and (t["guardedSeed"] or t.get("seedGuardViolation") is None), "SEED_GUARD_COUNTER")
+                    if seed_mode == "PATTERN":
+                        check(t["guardedSeed"] is True, "SEED_GUARD_NOT_INSTALLED")
+                    if t["guardedSeed"] and feasible:
+                        check(t.get("seedGuardViolation") == 0, "SEED_GUARD_REGRESSION")
                     value = t.get("firstFeasibleSeconds")
                     check(value is None or numeric(value) and t["mappingSeconds"] <= value <= row["processSeconds"], "FIRST_FEASIBLE")
                     check(not feasible or value is not None, "FIRST_FEASIBLE_MISSING")
@@ -260,8 +275,9 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
             check(valid == repetitions, "VALID_TRIALS:" + case + ":" + engine)
             if case != "team-10-week-repair":
                 check(len(successes) == repetitions, "NEW_TRIALS:" + case + ":" + engine)
-        comparable = regressed = improved = 0
+        comparable = regressed = improved = product_retained = 0
         reasons = {}
+        product_reasons = {}
         for pair in pairs:
             actual = [r for r in measured if r["repetition"] == pair["repetition"]]
             both_new = all(r["engineNew"] for r in actual)
@@ -274,12 +290,26 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
                 improved += int(pair["improved"])
                 reasons[pair["reason"]] = reasons.get(pair["reason"], 0) + 1
                 verify_pair_detail(pair, actual, profile)
+                guard = pair.get("productGuard")
+                check(isinstance(guard, dict) and set(guard) == {"retainedReference", "reason"}
+                      and type(guard["retainedReference"]) is bool, "PRODUCT_GUARD")
+                retained_reasons = {*COVERAGE_METRICS, "PRIORITY_LEADERSHIP", "REST_WINDOW",
+                                    "REST_DISTRIBUTION", "SATURDAY_BALANCE", "SUNDAY_BALANCE", "PROTECTED_ASSIGNMENT"}
+                check(guard["reason"] in (retained_reasons if guard["retainedReference"]
+                      else {"ACCEPTED", "OPERATIONAL_IMPROVEMENT"}), "PRODUCT_GUARD_REASON")
+                check(not pair["regressed"] or (guard["retainedReference"] and guard["reason"] == pair["reason"]),
+                      "PRODUCT_GUARD_COVERAGE_DRIFT")
+                product_retained += int(guard["retainedReference"])
+                product_reasons[guard["reason"]] = product_reasons.get(guard["reason"], 0) + 1
         report["comparablePairs"] = comparable
         report["nonComparablePairs"] = repetitions - comparable
         report["regressedPairs"] = regressed
         report["improvedPairs"] = improved
         report["pairReasons"] = reasons
+        report["productRetainedPairs"] = product_retained
+        report["productGuardReasons"] = product_reasons
         report["qualityDecision"] = ("REGRESSION_OBSERVED" if regressed
+                                    else "PRODUCT_REGRESSION_OBSERVED" if product_retained
                                     else "INSUFFICIENT_COMPARABLE_PAIRS" if comparable < repetitions
                                     else "NO_REGRESSION_OBSERVED_EXPLORATORY")
         reports.append(report)

@@ -22,7 +22,7 @@ class RosterConstraintsTest {
     }
 
     private static BendableScore score(long hard, long total, long sundays, long peak, long empty, long spread, long changes) {
-        return BendableScore.of(new long[]{hard}, new long[]{total, sundays, peak, empty, spread, changes});
+        return BendableScore.of(new long[]{hard}, new long[]{0, 0, total, sundays, peak, empty, spread, changes});
     }
 
     @Test void countsAnEntirelyEmptyWeek() {
@@ -140,6 +140,17 @@ class RosterConstraintsTest {
                 .scores(score(0, -120, 0, -1, 0, 0, 0));
         verifier.verifyThat().given(general, role, day(1, Day.State.OFF, null))
                 .scores(score(0, -240, 0, -2, -1, 0, 0));
+    }
+
+    @Test void seedGuardPreventsTradingSundayServiceForWeekdaySavings() {
+        var sun = new Roster.Band(0, "Sector 1", null, 480, 540, 1, true);
+        var mon = new Roster.Band(1, "Sector 1", null, 480, 540, 2, true);
+        var limit = new Roster.SectorLimit("Sector 1", 180, 0, 2);
+        var presence = new Roster.ServiceLimit("Sector 1", 0);
+        // Sunday loss 60 plus one lost day of presence; total improves by 60.
+        verifier.verifyThat().given(sun, mon, limit, presence, day(0, Day.State.OFF, null),
+                day(1, Day.State.WORK, null)).scores(
+                BendableScore.of(new long[]{0}, new long[]{-61, -60, -120, -60, -1, -1, 0, 0}));
     }
 
     @Test void residualBudgetIsRoundedDownToMilliseconds() {

@@ -35,12 +35,16 @@ def compare(default_rows, pattern_rows):
         if engine == "timefold":
             result["firstInternalFeasibleP50Seconds"] = quantile([r["spike"]["firstFeasibleSeconds"] for r in trials], .5)
             result["seedP50Seconds"] = quantile([r["spike"]["seedSeconds"] for r in trials], .5)
+            result["moveEvaluationsP50"] = quantile([r["spike"]["moveEvaluations"] for r in trials], .5)
+            result["scoreCalculationsP50"] = quantile([r["spike"]["scoreCalculations"] for r in trials], .5)
+            result["guardedSeeds"] = sum(r["spike"]["guardedSeed"] for r in trials)
         return result
     return {"decision": "PATTERN_ABLATION_EXPLORATORY_ONLY",
             "blockOrder": ["DEFAULT", "PATTERN"],
             "default": {e: metrics(default, e) for e in ("ortools", "timefold")},
             "pattern": {e: metrics(pattern, e) for e in ("ortools", "timefold")},
             "regressedPairs": {"default": default_report["regressedPairs"], "pattern": pattern_report["regressedPairs"]},
+            "productRetainedPairs": {"default": default_report["productRetainedPairs"], "pattern": pattern_report["productRetainedPairs"]},
             "qualityDecision": {"default": default_report["qualityDecision"], "pattern": pattern_report["qualityDecision"]}}
 
 
