@@ -116,7 +116,7 @@ fn add_fairness(rows:&[&Member],facts:&TemporalFacts,result:&mut Cost){
     let mut cohorts=BTreeMap::<(usize,usize),(i64,i64)>::new();
     let mut sunday_cohorts=BTreeMap::<usize,Vec<&Member>>::new();
     for row in rows{sunday_cohorts.entry(row.cohort).or_default().push(row);}
-    for row in &rows{
+    for row in rows{
         if let Some(p)=row.pattern{
             for (i,value) in p.rates.iter().enumerate(){
                 if let Some(rate)=value{
@@ -142,7 +142,7 @@ fn add_fairness(rows:&[&Member],facts:&TemporalFacts,result:&mut Cost){
     }
     // Unique sector + role groups; don't double-count a sector with one role.
     let mut groups=BTreeMap::<usize,Vec<&Member>>::new();
-    for row in &rows{groups.entry(row.rest_role).or_default().push(row);}
+    for row in rows{groups.entry(row.rest_role).or_default().push(row);}
     let mut all_groups=vec![rows.to_vec()];
     if groups.len()>1{all_groups.extend(groups.into_values());}
     for group in all_groups{result[11]+=rest_group_cost(&group,facts);}
