@@ -18,7 +18,7 @@ jobs:
   solverforge:
     name: Pinned Rust build and three-engine comparison (ARM64)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: web
@@ -129,18 +129,29 @@ jobs:
           node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" curve | tee "$RUNNER_TEMP/forge-evidence/curve-summary.json"
       - name: E2 candidate noninferiority gate (not production parity)
+        id: quality
         if: ${{ !cancelled() && steps.controls.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
           python3 experiments/escalas-solverforge/verify_comparison.py "$RUNNER_TEMP/forge-evidence/paired-summary.json" quality | tee "$RUNNER_TEMP/forge-evidence/quality-summary.json"
       - name: Audit resolved and full locked public Rust dependencies
+        id: security
         if: always()
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/forge-evidence"
           python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
+      - name: Qualified 32-repeat tail latency and quality comparison
+        if: ${{ !cancelled() && steps.quality.outcome == 'success' && steps.security.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image() { docker image inspect "$1" --format '{{.Id}}'; }
+          output="$RUNNER_TEMP/forge-evidence/tail.jsonl"
+          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" tail | tee "$output"
+          python3 experiments/escalas-solverforge/verify_comparison.py "$output" tail | tee "$RUNNER_TEMP/forge-evidence/tail-summary.json"
       - name: Retain only aggregate evidence and public inventory
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

@@ -2,7 +2,7 @@ import copy
 import unittest
 from audit_dependencies import inventory, lock_inventory
 from prepare_workspace import ANYHOW_OLD, ANYHOW_PATCHED, ENTRY, verify_lock
-from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS
+from verify_comparison import native, pair_detail, sector_vector, p50, paired_stats, verify_curve, e2_noninferiority, SCENARIOS, verify_tail, tail_percentile
 
 class EvidenceTests(unittest.TestCase):
     def test_resolved_lock_checksum_required(self):
@@ -30,6 +30,11 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in lock_inventory(records)],["anyhow"])
         records["package"][0]["checksum"]="bad"
         with self.assertRaises(ValueError):lock_inventory(records)
+
+    def test_tail_requires_complete_balanced_samples(self):
+        self.assertIsNone(tail_percentile(list(range(29))))
+        self.assertEqual(tail_percentile(list(range(1,33))),31)
+        with self.assertRaises(ValueError):verify_tail([])
 
     def test_curve_requires_full_balanced_evidence(self):
         with self.assertRaises(ValueError):verify_curve([])

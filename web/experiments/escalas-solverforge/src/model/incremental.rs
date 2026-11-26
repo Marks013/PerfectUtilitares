@@ -147,6 +147,30 @@ mod tests {
         assert_eq!(acc.finish(),group_cost(rows.values()));
     }
     #[test]
+    fn large_presence_component_agrees_with_full_score() {
+        for members in [115,250]{
+            let eligible=(0..members).fold(Presence::EMPTY,|a,id|a|Presence::one(id));
+            let role=(0..members).step_by(2).fold(Presence::EMPTY,|a,id|a|Presence::one(id));
+            let facts=Arc::new(Sector{days:7,members,bands:(0..7).map(|day|
+                Band{day,minutes:60,estimated:true,minimum:members as i64/2,eligible,
+                    role_floors:vec![(role,members as i64/4)]}).collect()});
+            let patterns=catalog(7);
+            let mut acc=SectorAccumulator::default();
+            let mut rows=BTreeMap::new();
+            for id in 0..members{
+                let member=Member{id,cohort:id%2,mask:Some(patterns[id%patterns.len()]),
+                    locked_off:0,saved_known:0,saved_work:0,facts:Arc::clone(&facts)};
+                acc.accumulate(member.clone());rows.insert(id,member);check(&acc,&rows);
+            }
+            for id in [0,63,64,members-1]{
+                acc.retract(id);let mut m=rows.remove(&id).unwrap();check(&acc,&rows);
+                m.mask=Some(patterns[(id+3)%patterns.len()]);
+                acc.accumulate(m.clone());rows.insert(id,m);check(&acc,&rows);
+            }
+            acc.reset();rows.clear();check(&acc,&rows);
+        }
+    }
+    #[test]
     fn every_incremental_state_matches_independent_full_score() {
         for days in [7,28] {
             let facts=Arc::new(Sector{days,members:5,bands:(0..days).flat_map(|day| [

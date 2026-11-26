@@ -7,6 +7,7 @@ mod patterns;
 mod presence;
 mod seed;
 mod sunday_repair;
+mod weekly_domain;
 
 pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
 pub use incremental::SectorAccumulator;
@@ -42,6 +43,15 @@ mod tests {
         assert_eq!(band.gap(everyone&!role),2);
         assert_eq!(band.gap_components(everyone&!Presence::one(249)),vec![1,1]);
     }
+    #[test]
+    fn aggregate_gap_does_not_hide_role_regression() {
+        let band=Band{day:0,minutes:60,estimated:true,minimum:3,eligible:Presence::from_low(7),
+            role_floors:vec![(Presence::one(0),1)]};
+        assert_eq!(band.gap(Presence::one(0)),band.gap(Presence::one(1)));
+        assert_eq!(band.gap_components(Presence::one(0)),vec![2,0]);
+        assert_eq!(band.gap_components(Presence::one(1)),vec![2,1]);
+    }
+
     #[test]
     fn role_and_general_floors_are_not_additive() {
         let b = Band { day: 0, minutes: 60, estimated: true, minimum: 2, eligible: Presence::from_low(3),

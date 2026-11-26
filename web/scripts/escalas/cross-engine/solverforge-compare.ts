@@ -53,11 +53,42 @@ function compare(before:Trial,after:Trial) {
 async function main() {
   if (arch()!=="arm64"||process.env.ESCALAS_CROSS_ENGINE_ISOLATED!=="1") throw Error("FORGE_ISOLATED_ARM64_REQUIRED");
   const [baseline,timefold,forge,mode,...extra]=process.argv.slice(2);
-  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve")) throw Error("FORGE_ARGS");
+  if (!baseline||!timefold||!forge||extra.length||(mode!=="smoke"&&mode!=="paired"&&mode!=="curve"&&mode!=="tail")) throw Error("FORGE_ARGS");
   const snapshot=source();
   const images={ortools:inspectImage(baseline,"ortools"),timefold:inspectImage(timefold,"timefold"),solverforge:inspectImage(forge,"solverforge")};
   if (images.ortools.revision!==baselineRevision||images.timefold.revision!==CONTROL||images.solverforge.revision!==snapshot.revision
     ||Object.values(images).some(x=>x.architecture!=="arm64")) throw Error("FORGE_IMAGE_IDENTITY");
+  if (mode === "tail") {
+    const scenario=makeScenario("branch-50-four-weeks");
+    const frozen=await captureEnvelope(scenario);
+    validateBaselineEnvelope(baseline,frozen);
+    const profile=envelopeProfile(frozen);
+    const shared={...snapshot,scenario:scenario.id,inputHash:digest(frozen),baselineRevision,timefoldRevision:CONTROL,
+      arch:arch(),resources,profile,sampleKind:"cold-container",hostCapacityMeasured:false,liveHttpMeasured:false};
+    const variants=["ortools","timefold","native-12","adaptive"] as const;
+    for(let repetition=0;repetition<32;repetition++){
+      const round:{variant:typeof variants[number];trial:Trial;record:Record<string,unknown>}[]=[];
+      for(let position=0;position<variants.length;position++){
+        const variant=variants[(repetition+position)%variants.length];
+        const rust=variant==="native-12"||variant==="adaptive";
+        const adapter=rust?solverforgeAdapter(forge,false,12,variant==="adaptive"):null;
+        const engine=variant==="ortools"?"ortools":variant==="timefold"?"timefold":"solverforge";
+        const trial=await runTrial(scenario,frozen,adapter?adapter.adapter:dockerAdapter(engine==="ortools"?baseline:timefold,engine,engine==="timefold"));
+        if(trial.inputHash!==shared.inputHash) throw Error("FORGE_INPUT_DRIFT");
+        const native=adapter?.telemetry()??null;
+        if(rust&&valid(trial)&&(!native||native.finalCost[3]!==trial.finalAssessment?.metrics?.normalizedEstimatedShortage))
+          throw Error("FORGE_INDEPENDENT_SCORE_DRIFT");
+        const {proposal:_proposal,...record}=trial;
+        round.push({variant,trial,record:{kind:"tail",...shared,repetition,position,variant,
+          identity:images[engine],forge:native,...record}});
+      }
+      const cp=round.find(x=>x.variant==="ortools")!.trial;
+      const java=round.find(x=>x.variant==="timefold")!.trial;
+      for(const item of round) console.log(JSON.stringify({...item.record,againstOrtools:compare(cp,item.trial),againstTimefold:compare(java,item.trial)}));
+    }
+    if(source().revision!==snapshot.revision) throw Error("FORGE_SOURCE_DRIFT");
+    return;
+  }
   if (mode === "curve") {
     const scenario = makeScenario("branch-50-four-weeks");
     const frozen = await captureEnvelope(scenario);
