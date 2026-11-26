@@ -86,6 +86,15 @@ def verify_db(metadata, now=None):
     return metadata["UpdatedAt"]
 
 
+def debian_version(package, version_key, release_key):
+    """Rejoin Trivy's Debian upstream version and package revision losslessly."""
+    version = package.get(version_key)
+    release = package.get(release_key, "")
+    if not isinstance(version, str) or not version or not isinstance(release, str):
+        return None
+    return f"{version}-{release}" if release else version
+
+
 def summarize(report, build=False, binary_inventory=None):
     require(isinstance(report, dict) and isinstance(report.get("Results"), list), "SCAN_SCHEMA")
     results = report["Results"]
@@ -138,9 +147,9 @@ def summarize(report, build=False, binary_inventory=None):
         jdk_bound = True
         for name, expected in binary_inventory["packages"].items():
             package = jdk_packages[name]
-            if (package.get("Version") != expected["version"]
+            if (debian_version(package, "Version", "Release") != expected["version"]
                     or package.get("SrcName") != expected["source"]
-                    or package.get("SrcVersion") != expected["version"]
+                    or debian_version(package, "SrcVersion", "SrcRelease") != expected["version"]
                     or package.get("Arch") != expected["arch"]
                     or package.get("AnalyzedBy") != "dpkg"
                     or (package.get("Repository") or {}).get("Class") != "official"):

@@ -22,10 +22,12 @@ class ImageAuditTests(unittest.TestCase):
 
     def report(self, build=True):
         inventory = self.inventory(build)
+        version, release = JAVA_PACKAGE_VERSION.rsplit("-", 1)
         return {"Results": [
             {"Class": "os-pkgs", "Type": "ubuntu", "Packages": [
-                {"Name": p, "Version": v["version"], "Arch": v["arch"], "SrcName": v["source"],
-                 "SrcVersion": v["version"], "AnalyzedBy": "dpkg", "Repository": {"Class": "official"},
+                {"Name": p, "Version": version, "Release": release, "Arch": v["arch"],
+                 "SrcName": v["source"], "SrcVersion": version, "SrcRelease": release,
+                 "AnalyzedBy": "dpkg", "Repository": {"Class": "official"},
                  "InstalledFiles": [f["path"] for f in inventory["files"].values() if f["package"] == p]}
                 for p, v in inventory["packages"].items()]},
             {"Class": "lang-pkgs", "Type": "jar",
@@ -49,11 +51,27 @@ class ImageAuditTests(unittest.TestCase):
 
     def test_rejects_wrong_scanned_package_version_source_or_architecture(self):
         for key, value in (("Version", "21.0.12"), ("SrcVersion", "21.0.12"), ("SrcName", "other"),
+                           ("Release", "0~24.04.1"), ("SrcRelease", "0~24.04.1"),
+                           ("Release", None), ("SrcRelease", 123),
                            ("Arch", "amd64"), ("AnalyzedBy", "jar"), ("Repository", {"Class": "third-party"})):
             with self.subTest(key=key):
                 report = self.report()
                 report["Results"][0]["Packages"][0][key] = value
                 self.assertFalse(summarize(report, True, self.inventory())["jdkBinaryBoundToScanner"])
+
+    def test_rejects_missing_debian_revision_in_split_version(self):
+        for key in ("Release", "SrcRelease"):
+            with self.subTest(key=key):
+                report = self.report()
+                report["Results"][0]["Packages"][0].pop(key)
+                self.assertFalse(summarize(report, True, self.inventory())["jdkBinaryBoundToScanner"])
+
+    def test_accepts_complete_debian_version_without_separate_revision(self):
+        report = self.report()
+        for package in report["Results"][0]["Packages"]:
+            for version_key, release_key in (("Version", "Release"), ("SrcVersion", "SrcRelease")):
+                package[version_key] = package[version_key] + "-" + package.pop(release_key)
+        self.assertTrue(summarize(report, True, self.inventory())["jdkBinaryBoundToScanner"])
 
     def test_rejects_uninventoried_binary(self):
         report = self.report()
