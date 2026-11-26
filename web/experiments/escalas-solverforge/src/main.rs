@@ -47,43 +47,66 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
     let people=plan.employees.len();
     let positions:usize=plan.employees.iter().map(|p|p.facts.days).sum();
     let patterns:usize=plan.employees.iter().map(|p|p.allowed.len()).sum();
-    let incumbent=if adaptive {model::SeedGuard::capture(&plan)} else {None};
+    let incumbent=adaptive&&model::validate_complete(&plan);
     let search_start=Instant::now();
     let mut attempted=false;
     let mut retained=false;
-    let mut stagnation_applied=false;
     let mut native_cost=None;
+    let mut last_native_cost=None;
+    let mut best_native=None;
+    let mut rounds=Vec::new();
+    let mut allocated=0u64;
+    let mut stop_reason="CONSTRUCTOR_ONLY";
     if !seed_only {
-        let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(search_start).as_secs();
-        if remaining==0 || incumbent.is_some()&&plan.employees.iter().all(|p|p.pinned) {
-            if incumbent.is_some() {retained=true;}
-            else {return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");}
-        } else {
-            let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")) {
-                Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
-            };
-            config=config.with_termination_seconds(remaining).with_random_seed(37);
-            config.move_thread_count=MoveThreadCount::None;
-            // An incomplete/invalid seed gets the full remaining search budget.
-            if incumbent.is_some() {
-                if let Some(termination)=config.termination.as_mut() {
-                    termination.unimproved_seconds_spent_limit=Some(1);
-                    stagnation_applied=true;
-                } else {return failure(500,"SPIKE_FAILED","FACTORY","TERMINATION");}
-            }
-            attempted=true;
-            plan=match plan.solve_with_config(config) {Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
-            let computed=model::evaluate(&plan);
-            let expected=score::EscalasScore::of([-computed[0]],std::array::from_fn(|i|-computed[i+1]));
-            if plan.score!=Some(expected) {return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
-            native_cost=Some(computed);
-            if let Some(guard)=&incumbent {
-                if !guard.preserves(&plan) || computed>initial_cost {
-                    guard.restore(&mut plan);
-                    retained=true;
+        if incumbent&&plan.employees.iter().all(|p|p.pinned){
+            retained=true;stop_reason="PINNED";
+        }else{
+            loop{
+                let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(Instant::now()).as_secs()
+                    .min(budget.as_secs().saturating_sub(allocated));
+                if remaining==0{
+                    if incumbent{retained=best_native.is_none();stop_reason="BUDGET_EXHAUSTED";break;}
+                    return failure(504,"SOLVER_TIMED_OUT","SEARCH","BUDGET");
+                }
+                // v0.31.2 does not poll its unimproved-time limit during
+                // a long local-search phase. Use a real solver-wide time
+                // cap per round; only a guarded strict gain earns more time.
+                // Incomplete seeds keep the full original rescue budget.
+                let round_budget=if incumbent{remaining.min(2)}else{remaining};
+                allocated+=round_budget;
+                let before=model::evaluate(&plan);
+                let guard=if incumbent{model::SeedGuard::capture(&plan)}else{None};
+                if incumbent&&guard.is_none(){return failure(500,"SPIKE_FAILED","SEARCH","INCUMBENT_INVALID");}
+                let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")){
+                    Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
+                };
+                config=config.with_termination_seconds(round_budget).with_random_seed(37);
+                config.move_thread_count=MoveThreadCount::None;
+                attempted=true;
+                let round_start=Instant::now();
+                plan=match plan.solve_with_config(config){Ok(v)=>v,Err(_)=>return failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
+                let computed=model::evaluate(&plan);
+                let expected=score::EscalasScore::of([-computed[0]],std::array::from_fn(|i|-computed[i+1]));
+                if plan.score!=Some(expected){return failure(500,"SPIKE_FAILED","RESULT","SCORE_DRIFT");}
+                last_native_cost=Some(computed);
+                let preserves=guard.as_ref().is_none_or(|g|g.preserves(&plan));
+                let accepted=guard.is_none()||preserves&&computed<before;
+                rounds.push(json!({"budgetSeconds":round_budget,"seconds":seconds(round_start),
+                    "beforeCost":before,"candidateCost":computed,"guardPreserved":preserves,"accepted":accepted}));
+                if accepted{
+                    best_native=Some(computed);
+                    if !incumbent{stop_reason="FULL_SEARCH";break;}
+                }else{
+                    guard.as_ref().expect("guarded round").restore(&mut plan);
+                    retained=best_native.is_none();
+                    stop_reason=if preserves{"NO_IMPROVEMENT"}else{"GUARD_REJECTED"};
+                    break;
                 }
             }
         }
+        // Attribute the actual returned native candidate (if any), not a
+        // discarded later round. lastNativeCost identifies the final attempt.
+        native_cost=best_native.or(last_native_cost);
     }
     let search_seconds=if attempted {seconds(search_start)} else {0.0};
     let cost=model::evaluate(&plan);
@@ -108,9 +131,15 @@ fn solve(bytes:&[u8], start:Instant, seed_only:bool, budget:Duration, adaptive:b
         "solverforge":{"version":"0.31.2","mode":if seed_only {"SEED_ONLY"} else if adaptive {"ADAPTIVE"} else {"NATIVE"},
             "mapSeconds":map_seconds,"seedSeconds":seed_seconds,"searchSeconds":search_seconds,
             "seedComplete":seed_complete,"nativeSearch":attempted,"entities":people,"positions":positions,
-            "stagnationApplied":stagnation_applied,"nativeCost":native_cost,
+            "stagnationApplied":false,"nativeCost":native_cost,"lastNativeCost":last_native_cost,
+            "searchPolicy":if seed_only {"CONSTRUCTOR_ONLY"} else if incumbent {"BOUNDED_ROUNDS"} else {"FULL_BUDGET"},
+            "searchStopReason":stop_reason,"searchRounds":rounds,
             "repair":{"sectors":repair.sectors,"projections":repair.projections,"reconstructed":repair.reconstructed,
                 "accepted":repair.accepted,"deadlineReached":repair.deadline_reached,"projectionLimitHits":repair.projection_limit_hits,
+                "peak":{"attempted":repair.peak.attempted,"accepted":repair.peak.accepted,
+                    "beforePeakSum":repair.peak.before_peak_sum,"afterPeakSum":repair.peak.after_peak_sum,
+                    "beforePairs":repair.peak.before_pairs,"afterPairs":repair.peak.after_pairs,
+                    "deadlineReached":repair.peak.deadline_reached,"limitReached":repair.peak.limit_reached},
                 "rest":{"attempted":repair.rest.attempted,"acceptedSingle":repair.rest.accepted_single,
                     "acceptedPair":repair.rest.accepted_pair,"beforePairs":repair.rest.before_pairs,
                     "afterPairs":repair.rest.after_pairs,"deadlineReached":repair.rest.deadline_reached,
@@ -394,6 +423,21 @@ mod integration {
         assert_eq!(plan.employees[0].shift,"other");
         data["input"]["generationMode"]=json!("DAYS_AND_HOURS");
         assert!(matches!(wire::read(&data,Instant::now()+Duration::from_secs(5)),Err("CLOCK_OPTIONS")));
+    }
+
+    #[test]
+    fn adaptive_uses_bounded_native_rounds_and_preserves_incumbent(){
+        let bytes=serde_json::to_vec(&input()).unwrap();
+        let reply=solve(&bytes,Instant::now(),false,BUDGET,true);
+        assert_eq!(reply["body"]["status"],"FEASIBLE");
+        let t=&reply["solverforge"];
+        assert_eq!(t["searchPolicy"],"BOUNDED_ROUNDS");
+        assert_eq!(t["stagnationApplied"],false);
+        let rounds=t["searchRounds"].as_array().unwrap();
+        assert!(!rounds.is_empty());
+        assert!(rounds.iter().all(|r|r["budgetSeconds"].as_u64().is_some_and(|n|(1..=2).contains(&n))));
+        assert!(rounds.iter().take(rounds.len()-1).all(|r|r["accepted"]==true));
+        assert_eq!(t["lastNativeCost"],rounds.last().unwrap()["candidateCost"]);
     }
 
     #[test]

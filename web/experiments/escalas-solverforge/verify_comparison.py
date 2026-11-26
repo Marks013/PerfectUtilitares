@@ -152,6 +152,47 @@ def valid(row, profile):
     return engine_new and sample is not None
 
 
+def verify_search_rounds(t,seed,adaptive,budget):
+    policy=t.get("searchPolicy")
+    reason=t.get("searchStopReason")
+    rounds=t.get("searchRounds")
+    check(policy in ("CONSTRUCTOR_ONLY","BOUNDED_ROUNDS","FULL_BUDGET")
+          and (policy=="CONSTRUCTOR_ONLY")==seed
+          and (policy!="BOUNDED_ROUNDS" or adaptive and t["seedComplete"])
+          and isinstance(rounds,list) and len(rounds)<=budget
+          and bool(rounds)==t["nativeSearch"] and t.get("stagnationApplied") is False,"SEARCH_POLICY")
+    current=t["initialCost"]
+    best=None
+    for i,r in enumerate(rounds):
+        check(isinstance(r,dict) and integer(r.get("budgetSeconds")) and 1<=r["budgetSeconds"]<=budget
+              and numeric(r.get("seconds")) and r["seconds"]>0
+              and r.get("beforeCost")==current and isinstance(r.get("candidateCost"),list)
+              and len(r["candidateCost"])==13 and all(integer(v) for v in r["candidateCost"])
+              and type(r.get("guardPreserved")) is bool and type(r.get("accepted")) is bool,"SEARCH_ROUND")
+        if policy=="BOUNDED_ROUNDS":
+            check(r["budgetSeconds"]<=2 and r["accepted"]==(r["guardPreserved"] and r["candidateCost"]<current)
+                  and (r["accepted"] or i==len(rounds)-1),"ADAPTIVE_ROUND")
+        else:
+            check(policy=="FULL_BUDGET" and len(rounds)==1 and r["accepted"],"FULL_SEARCH")
+        if r["accepted"]:
+            current=r["candidateCost"]
+            best=current
+    check(sum(r["budgetSeconds"] for r in rounds)<=budget
+          and sum(r["seconds"] for r in rounds)<=t["searchSeconds"]+.01
+          and t.get("lastNativeCost")== (rounds[-1]["candidateCost"] if rounds else None)
+          and current==t["finalCost"],"SEARCH_TRACE")
+    if not rounds:
+        check(reason in (("CONSTRUCTOR_ONLY",) if seed else ("PINNED","BUDGET_EXHAUSTED"))
+              and t.get("nativeCost") is None,"SEARCH_STOP")
+    elif policy=="FULL_BUDGET":
+        check(reason=="FULL_SEARCH" and t.get("nativeCost")==best,"SEARCH_STOP")
+    else:
+        expected=("BUDGET_EXHAUSTED" if rounds[-1]["accepted"] else
+                  "NO_IMPROVEMENT" if rounds[-1]["guardPreserved"] else "GUARD_REJECTED")
+        check(reason==expected and t.get("nativeCost")== (best if best is not None else rounds[-1]["candidateCost"])
+              and t.get("resultSource")==("NATIVE" if best is not None else "SEED_RETAINED"),"SEARCH_STOP")
+
+
 def native(row, profile, seed=False, budget=12, adaptive=False):
     t = row.get("forge")
     check(isinstance(t, dict) and t.get("version") == "0.31.2" and t.get("partialModel") is True
@@ -185,10 +226,18 @@ def native(row, profile, seed=False, budget=12, adaptive=False):
     check(isinstance(rr,dict) and all(integer(rr.get(k)) for k in
         ("attempted","acceptedSingle","acceptedPair","beforePairs","afterPairs"))
         and rr["attempted"]<=200000 and rr["acceptedSingle"]+rr["acceptedPair"]<=rr["attempted"]
-        and rr["afterPairs"]<=rr["beforePairs"] and (not t["seedComplete"] or rr["afterPairs"]==t["initialCost"][6])
+        and rr["afterPairs"]<=rr["beforePairs"]
         and type(rr.get("deadlineReached")) is bool and type(rr.get("limitReached")) is bool,"REST_REPAIR_TELEMETRY")
+    peak=repair.get("peak")
+    check(isinstance(peak,dict) and all(integer(peak.get(k)) for k in
+        ("attempted","accepted","beforePeakSum","afterPeakSum","beforePairs","afterPairs"))
+        and peak["accepted"]<=peak["attempted"]<=100000 and peak["afterPeakSum"]<=peak["beforePeakSum"]
+        and peak["beforePairs"]==rr["afterPairs"] and peak["afterPairs"]<=peak["beforePairs"]
+        and (not t["seedComplete"] or (peak["afterPeakSum"]==t["initialCost"][4] and peak["afterPairs"]==t["initialCost"][6]))
+        and type(peak.get("deadlineReached")) is bool and type(peak.get("limitReached")) is bool,"PEAK_REPAIR_TELEMETRY")
     attempted = t["nativeSearch"]
     source = t.get("resultSource")
+    verify_search_rounds(t,seed,adaptive,budget)
     check(type(t.get("stagnationApplied")) is bool and (not t["stagnationApplied"] or adaptive and attempted),"STAGNATION")
     if attempted:
         cost=t.get("nativeCost")

@@ -47,7 +47,7 @@ fn apply(att:&mut [Presence;28],person:&Employee,mask:u32,insert:bool){
         }
     }
 }
-fn total_pairs(plan:&Plan)->i64{
+pub(super) fn total_pairs(plan:&Plan)->i64{
     plan.employees.iter().filter_map(|p|p.mask().map(|m|quality(p,m)[1])).sum()
 }
 fn single_preserves(p:&Employee,att:&[Presence;28],from:usize,to:usize)->bool{

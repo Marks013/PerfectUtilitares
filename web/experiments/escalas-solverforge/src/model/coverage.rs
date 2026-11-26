@@ -10,6 +10,7 @@ use super::presence::Presence;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Band {
     pub day: usize,
+    pub start: i32,
     pub minutes: i64,
     pub estimated: bool,
     pub minimum: i64,

@@ -90,8 +90,13 @@ class EvidenceTests(unittest.TestCase):
         row={"forge":{"version":"0.31.2","budgetSeconds":12,"partialModel":True,"mode":"ADAPTIVE","nativeSearch":True,
              "entities":10,"positions":70,"initialized":10,"allowedPatterns":150,"seedComplete":True,
              "mapSeconds":.1,"seedSeconds":.1,"searchSeconds":1,"initialCost":[0]*13,"finalCost":[0]*13,
-             "nativeCost":[0,1,0,0,0,0,0,0,0,0,0,0,0],"stagnationApplied":True,"resultSource":"SEED_RETAINED",
+             "nativeCost":[0,1,0,0,0,0,0,0,0,0,0,0,0],"stagnationApplied":False,"resultSource":"SEED_RETAINED",
+             "lastNativeCost":[0,1,0,0,0,0,0,0,0,0,0,0,0],"searchPolicy":"BOUNDED_ROUNDS","searchStopReason":"GUARD_REJECTED",
+             "searchRounds":[{"budgetSeconds":2,"seconds":.99,"beforeCost":[0]*13,
+                 "candidateCost":[0,1,0,0,0,0,0,0,0,0,0,0,0],"guardPreserved":False,"accepted":False}],
              "repair":{"sectors":1,"projections":10,"reconstructed":2,"accepted":1,"deadlineReached":False,"projectionLimitHits":0,
+                 "peak":{"attempted":2,"accepted":1,"beforePeakSum":1,"afterPeakSum":0,"beforePairs":0,"afterPairs":0,
+                     "deadlineReached":False,"limitReached":False},
              "rest":{"attempted":1,"acceptedSingle":1,"acceptedPair":0,"beforePairs":1,"afterPairs":0,
                  "deadlineReached":False,"limitReached":False}}},
              "finalAssessment":{"metrics":{"normalizedEstimatedShortage":0,"restAudit":{"correctableExcess":0,
@@ -101,6 +106,11 @@ class EvidenceTests(unittest.TestCase):
             invalid=copy.deepcopy(row);invalid["forge"][key]=value
             with self.assertRaises(ValueError):native(invalid,profile,adaptive=True)
         invalid=copy.deepcopy(row);invalid["forge"]["repair"]["accepted"]=2
+        with self.assertRaises(ValueError):native(invalid,profile,adaptive=True)
+        for key,value in (("budgetSeconds",11),("accepted",True),("candidateCost",[0]*13)):
+            invalid=copy.deepcopy(row);invalid["forge"]["searchRounds"][0][key]=value
+            with self.assertRaises(ValueError):native(invalid,profile,adaptive=True)
+        invalid=copy.deepcopy(row);invalid["forge"]["repair"]["peak"]["afterPeakSum"]=2
         with self.assertRaises(ValueError):native(invalid,profile,adaptive=True)
 
     def test_seed_only_cannot_claim_native_search(self):

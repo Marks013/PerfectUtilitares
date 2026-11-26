@@ -153,7 +153,7 @@ mod tests {
             let eligible=(0..members).fold(Presence::EMPTY,|a,id|a|Presence::one(id));
             let role=(0..members).step_by(2).fold(Presence::EMPTY,|a,id|a|Presence::one(id));
             let facts=Arc::new(Sector{days:7,members,bands:(0..7).map(|day|
-                Band{day,minutes:60,estimated:true,minimum:members as i64/2,eligible,
+                Band{day,start:480,minutes:60,estimated:true,minimum:members as i64/2,eligible,
                     role_floors:vec![(role,members as i64/4)]}).collect()});
             let patterns=catalog(7);
             let mut acc=SectorAccumulator::default();
@@ -175,8 +175,8 @@ mod tests {
     fn every_incremental_state_matches_independent_full_score() {
         for days in [7,28] {
             let facts=Arc::new(Sector{days,members:5,bands:(0..days).flat_map(|day| [
-                Band{day,minutes:60,estimated:true,minimum:3,eligible:Presence::from_low(31),role_floors:vec![(Presence::from_low(3),1),(Presence::from_low(28),1)]},
-                Band{day,minutes:30,estimated:false,minimum:1,eligible:Presence::from_low(15),role_floors:vec![]}
+                Band{day,start:480,minutes:60,estimated:true,minimum:3,eligible:Presence::from_low(31),role_floors:vec![(Presence::from_low(3),1),(Presence::from_low(28),1)]},
+                Band{day,start:480,minutes:30,estimated:false,minimum:1,eligible:Presence::from_low(15),role_floors:vec![]}
             ]).collect()});
             let all=catalog(days);
             let mut acc=SectorAccumulator::default();

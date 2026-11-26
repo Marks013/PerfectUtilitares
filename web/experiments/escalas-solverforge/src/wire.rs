@@ -273,7 +273,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
                 let mask=people.iter().enumerate().filter(|(_,p)|p.sector==sector&&p.role==role)
                     .fold(Presence::EMPTY,|m,(i,_)|m|Presence::one(i));(mask,min)
             }).collect();
-            facts[sector].bands.push(Band{day,minutes:(b-a) as i64,estimated,minimum,eligible,role_floors});
+            facts[sector].bands.push(Band{day,start:a,minutes:(b-a) as i64,estimated,minimum,eligible,role_floors});
             bands+=1;check(bands<=12000,"BAND_LIMIT")?;
         }
     }

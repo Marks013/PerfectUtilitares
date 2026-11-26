@@ -66,5 +66,6 @@ pub fn seed(plan: &mut Plan, deadline: Instant) -> (bool,super::sunday_repair::R
     if !greedy(plan,deadline) {return (false,super::sunday_repair::RepairStats{deadline_reached:Instant::now()>=deadline,..Default::default()});}
     let mut stats=super::sunday_repair::repair(plan,deadline);
     stats.rest=super::rest_repair::polish_rests(plan,deadline);
+    stats.peak=super::peak_repair::polish_peaks(plan,deadline);
     (true,stats)
 }
