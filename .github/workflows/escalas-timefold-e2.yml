@@ -88,13 +88,24 @@ jobs:
           done
           python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2.jsonl"
           test "$failed" = 0
+      - name: Evaluate bounded pattern initialization on the same runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline=$(docker image inspect escalas-e2-baseline:ci --format '{{.Id}}')
+          candidate=$(docker image inspect escalas-timefold-spike:ci --format '{{.Id}}')
+          failed=0
+          ESCALAS_TIMEFOLD_PATTERN_SEED=1 node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts branch-50-four-weeks 5 "$baseline" "$candidate" | tee "$RUNNER_TEMP/timefold-e2-pattern.jsonl" || failed=1
+          python3 experiments/escalas-timefold/verify_e2.py "$RUNNER_TEMP/timefold-e2-pattern.jsonl" --pattern
+          test "$failed" = 0
       - name: Keep aggregate evidence only
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2, node24
         with:
           name: timefold-e2-partial-model
           path: |
             ${{ runner.temp }}/timefold-e2-smoke.jsonl
             ${{ runner.temp }}/timefold-e2.jsonl
+            ${{ runner.temp }}/timefold-e2-pattern.jsonl
           if-no-files-found: ignore
           retention-days: 7

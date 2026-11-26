@@ -32,6 +32,9 @@ public final class SpikeMain {
         int code = 200;
         String stage = "MAPPING";
         try {
+            if (args.length > 1 || args.length == 1 && !args[0].equals("--pattern-seed"))
+                throw new WireModel.Unsupported("SEED_ARGUMENT");
+            boolean patternSeed = args.length == 1;
             byte[] bytes = System.in.readNBytes(LIMIT + 1);
             if (bytes.length > LIMIT) {
                 code = 413;
@@ -39,8 +42,19 @@ public final class SpikeMain {
             } else {
                 Roster input = WireModel.read(JSON.readTree(bytes));
                 int cells = input.days().size();
-                long initialized = input.days().stream().filter(day -> day.state() != null).count();
+                long beforeSeed = input.days().stream().filter(day -> day.state() != null).count();
                 double mappingSeconds = elapsed(start);
+                String seedOutcome = "NOT_REQUESTED";
+                double seedSeconds = 0;
+                if (patternSeed) {
+                    stage = "SEED";
+                    long seedStart = System.nanoTime();
+                    long seedDeadline = Math.min(seedStart + Duration.ofMillis(1250).toNanos(),
+                            start + Duration.ofSeconds(2).toNanos());
+                    seedOutcome = PatternSeeder.seed(input, seedDeadline).name();
+                    seedSeconds = elapsed(seedStart);
+                }
+                long initialized = input.days().stream().filter(day -> day.state() != null).count();
                 long residual = BUDGET_NS - (System.nanoTime() - start);
                 // No extra 12 seconds after mapping. Reserve a conservative setup/return margin.
                 residual -= Duration.ofMillis(500).toNanos();
@@ -93,6 +107,10 @@ public final class SpikeMain {
                 telemetry.put("mappingSeconds", mappingSeconds);
                 telemetry.put("entities", cells);
                 telemetry.put("initialized", initialized);
+                telemetry.put("beforeSeed", beforeSeed);
+                telemetry.put("seedMode", patternSeed ? "PATTERN" : "DEFAULT");
+                telemetry.put("seedOutcome", seedOutcome);
+                telemetry.put("seedSeconds", seedSeconds);
                 telemetry.put("bands", input.bands().size());
                 telemetry.put("windows", input.windows().size());
                 if (firstFeasible.get() >= 0) telemetry.put("firstFeasibleSeconds", firstFeasible.get() / 1e9);

@@ -8,7 +8,7 @@ def rows():
     out = []
     shared = dict(scenario="team-10-week", inputHash="c"*64, revision="a"*40,
                   evaluatorTree="b"*40, baselineRevision=BASE, arch="arm64", resources=RESOURCES,
-                  sampleKind="cold-container", hostCapacityMeasured=False, liveHttpMeasured=False,
+                  sampleKind="cold-container", seedMode="DEFAULT", hostCapacityMeasured=False, liveHttpMeasured=False,
                   profile=dict(activePositions=70, includedOnWire=10, days=7, mode="DAYS_AND_HOURS",
                                searchBudgetSeconds=12, processBudgetSeconds=18, transportBudgetSeconds=20,
                                savedAssignments=0, confirmedDemands=0))
@@ -27,7 +27,8 @@ def rows():
                    revision=BASE if engine=="ortools" else shared["revision"]))
         if engine == "timefold":
             row["spike"] = dict(partialModel=True, entities=70, initialized=10, bands=28, windows=10,
-                                mappingSeconds=.1, firstFeasibleSeconds=.8)
+                                mappingSeconds=.1, firstFeasibleSeconds=.8, beforeSeed=10,
+                                seedMode="DEFAULT", seedOutcome="NOT_REQUESTED", seedSeconds=0)
         out.append(row)
     out.append(dict(shared, kind="paired-coverage", repetition=0, comparable=True,
                     improved=False, regressed=False, reason="ACCEPTED"))
@@ -125,6 +126,12 @@ class EvidenceTests(unittest.TestCase):
         data = rows()
         data[0]["finalAssessment"]["metrics"]["coverageAudit"][0]["horizon"] = 999
         with self.assertRaises(ValueError):
+            self.validate(data)
+
+    def test_seed_telemetry_cannot_claim_unrequested_initialization(self):
+        data = rows()
+        data[1]["spike"].update(seedOutcome="APPLIED", initialized=70)
+        with self.assertRaisesRegex(ValueError, "SEED_DEFAULT"):
             self.validate(data)
 
     def test_incomplete_result(self):

@@ -47,9 +47,12 @@ async function main() {
     console.log(JSON.stringify({ kind: "preflight", scenario: id, valid: true, inputHash: digest(frozen), profile }));
     return;
   }
-  const adapters = { ortools: dockerAdapter(baselineImage, "ortools"), timefold: candidateImage ? dockerAdapter(candidateImage, "timefold") : undefined };
+  const patternSeed = process.env.ESCALAS_TIMEFOLD_PATTERN_SEED === "1";
+  if (patternSeed && (!candidateImage || id !== "branch-50-four-weeks")) throw new Error("CROSS_ENGINE_SEED_MODE");
+  const adapters = { ortools: dockerAdapter(baselineImage, "ortools"),
+    timefold: candidateImage ? dockerAdapter(candidateImage, "timefold", patternSeed) : undefined };
   const metadata = { scenario: id, baselineRevision, ...source, inputHash: digest(frozen), arch: arch(), resources, profile,
-    sampleKind: "cold-container", hostCapacityMeasured: false, liveHttpMeasured: false };
+    sampleKind: "cold-container", seedMode: patternSeed ? "PATTERN" : "DEFAULT", hostCapacityMeasured: false, liveHttpMeasured: false };
   type Trial = Awaited<ReturnType<typeof runTrial>>;
   const rows: Record<"ortools" | "timefold", Trial[]> = { ortools: [], timefold: [] };
   for (let repetition = 0; repetition < repeats; repetition++) {

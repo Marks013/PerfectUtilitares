@@ -22,7 +22,8 @@ const endpoint = "http://cross-engine.invalid";
 const maxBytes = 8 * 1024 * 1024;
 const statuses = ["FEASIBLE", "OPTIMAL", "UNKNOWN", "INFEASIBLE", "MODEL_INVALID"] as const;
 type SpikeTelemetry = { mappingSeconds: number; entities: number; initialized: number; bands: number; windows: number;
-  firstFeasibleSeconds: number | null; partialModel: true };
+  firstFeasibleSeconds: number | null; partialModel: true; beforeSeed: number;
+  seedMode: "DEFAULT" | "PATTERN"; seedOutcome: "NOT_REQUESTED" | "APPLIED" | "COMPLETE" | "TIME_LIMIT" | "NO_PATTERN" | "UNSUPPORTED"; seedSeconds: number };
 type CgroupTelemetry = { version: 2; scope: "container-before-response"; cpuUsageUsec: number;
   memoryPeakBytes: number; memoryLimitBytes: number; cpuQuotaUsec: number; cpuPeriodUsec: number; pidsLimit: number };
 export type WireReply = { httpStatus: number; body: unknown; maxRssKiB: number | null; spike?: SpikeTelemetry; cgroup?: CgroupTelemetry | null };
@@ -68,8 +69,19 @@ export function verifyReply(value: unknown): WireReply {
     if (!t || t.partialModel !== true || !nonnegative(t.mappingSeconds) || !count(t.entities) || !count(t.initialized)
       || t.initialized > t.entities || !count(t.bands) || !count(t.windows)
       || (t.firstFeasibleSeconds !== null && !nonnegative(t.firstFeasibleSeconds))) throw new Error("CROSS_ENGINE_SPIKE_TELEMETRY_INVALID");
+    const seedOutcome = t.seedOutcome;
+    if (!count(t.beforeSeed) || t.beforeSeed > t.initialized || !nonnegative(t.seedSeconds)
+      || (t.seedMode !== "DEFAULT" && t.seedMode !== "PATTERN")
+      || (seedOutcome !== "NOT_REQUESTED" && seedOutcome !== "APPLIED" && seedOutcome !== "COMPLETE"
+        && seedOutcome !== "TIME_LIMIT" && seedOutcome !== "NO_PATTERN" && seedOutcome !== "UNSUPPORTED"))
+      throw new Error("CROSS_ENGINE_SEED_TELEMETRY_INVALID");
+    if (t.seedMode === "DEFAULT" ? seedOutcome !== "NOT_REQUESTED" || t.seedSeconds !== 0 || t.beforeSeed !== t.initialized
+      : seedOutcome === "NOT_REQUESTED" || (seedOutcome === "APPLIED" ? t.initialized !== t.entities || t.beforeSeed === t.entities
+        : t.beforeSeed !== t.initialized || (seedOutcome === "COMPLETE" && t.beforeSeed !== t.entities)))
+      throw new Error("CROSS_ENGINE_SEED_TELEMETRY_INVALID");
     spike = { mappingSeconds: t.mappingSeconds, entities: t.entities, initialized: t.initialized,
-      bands: t.bands, windows: t.windows, firstFeasibleSeconds: t.firstFeasibleSeconds, partialModel: true };
+      bands: t.bands, windows: t.windows, firstFeasibleSeconds: t.firstFeasibleSeconds, partialModel: true,
+      beforeSeed: t.beforeSeed, seedMode: t.seedMode, seedOutcome, seedSeconds: t.seedSeconds };
   }
   let cgroup: CgroupTelemetry | null = null;
   if (record?.cgroup !== undefined && record.cgroup !== null) {
@@ -273,7 +285,7 @@ export async function runTrial(scenario: Scenario, frozen: string, adapter: Adap
   const raw = asRecord(response?.body);
   const rawStatus = knownStatus(raw?.status);
   const safeError = typeof raw?.error === "string" && /^[A-Z_]{1,60}$/.test(raw.error) ? raw.error : null;
-  const failureStage = ["MAPPING", "FACTORY", "SEARCH", "RESULT"].includes(String(raw?.failureStage)) ? raw?.failureStage : null;
+  const failureStage = ["MAPPING", "SEED", "FACTORY", "SEARCH", "RESULT"].includes(String(raw?.failureStage)) ? raw?.failureStage : null;
   const failureType = typeof raw?.failureType === "string" && /^[A-Za-z0-9_]{1,64}$/.test(raw.failureType) ? raw.failureType : null;
   const rawRejectionStage = ["INPUT_CHECK", "COVERAGE_CHECK", "SEARCH"].includes(String(raw?.rejectionStage)) ? raw?.rejectionStage : null;
   const rawDiagnosticFamilies = Array.isArray(raw?.solverDiagnostics) ? [...new Set(raw.solverDiagnostics.flatMap(entry => {

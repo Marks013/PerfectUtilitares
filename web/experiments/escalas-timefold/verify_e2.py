@@ -137,7 +137,7 @@ def valid_timely(row):
             and assessment_valid(final) and (final.get("comparison") or {}).get("regressed") is not True)
 
 
-def verify(rows, scenarios=SCENARIOS, repetitions=5):
+def verify(rows, scenarios=SCENARIOS, repetitions=5, seed_mode="DEFAULT"):
     check(isinstance(rows, list) and all(isinstance(r, dict) for r in rows), "ROW_FORMAT")
     check(all(r.get("kind") in ("measurement", "summary", "paired-coverage") for r in rows), "UNEXPECTED_ROW")
     check(len(rows) == len(scenarios) * (3 * repetitions + 2), "ROW_COUNT")
@@ -168,7 +168,8 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
         for row in case_rows:
             for key in ("inputHash", "revision", "evaluatorTree", "profile", "baselineRevision", "arch", "resources"):
                 check(row.get(key) == first.get(key), "IDENTITY_DRIFT:" + case)
-            check(row.get("sampleKind") == "cold-container" and row.get("hostCapacityMeasured") is False
+            check(row.get("sampleKind") == "cold-container" and row.get("seedMode") == seed_mode
+                  and row.get("hostCapacityMeasured") is False
                   and row.get("liveHttpMeasured") is False, "SAMPLE_KIND")
         expected_order = [(rep, engine) for rep in range(repetitions)
                           for engine in (ENGINES if rep % 2 == 0 else reversed(ENGINES))]
@@ -218,6 +219,16 @@ def verify(rows, scenarios=SCENARIOS, repetitions=5):
                           and integer(t.get("bands")) and t["bands"] > 0
                           and integer(t.get("windows")) and t["windows"] > 0
                           and numeric(t.get("mappingSeconds")) and t["mappingSeconds"] <= row["processSeconds"], "TELEMETRY")
+                    check(t.get("seedMode") == seed_mode and integer(t.get("beforeSeed"))
+                          and t["beforeSeed"] <= t["initialized"] and numeric(t.get("seedSeconds"))
+                          and t["mappingSeconds"] + t["seedSeconds"] <= row["processSeconds"], "SEED_TELEMETRY")
+                    if seed_mode == "DEFAULT":
+                        check(t.get("seedOutcome") == "NOT_REQUESTED" and t["seedSeconds"] == 0
+                              and t["beforeSeed"] == t["initialized"], "SEED_DEFAULT")
+                    else:
+                        check(t.get("seedOutcome") == "APPLIED" and t["beforeSeed"] < t["entities"]
+                              and t["initialized"] == t["entities"] and t["seedSeconds"] <= 1.35,
+                              "SEED_NOT_APPLIED")
                     value = t.get("firstFeasibleSeconds")
                     check(value is None or numeric(value) and t["mappingSeconds"] <= value <= row["processSeconds"], "FIRST_FEASIBLE")
                     check(not feasible or value is not None, "FIRST_FEASIBLE_MISSING")
@@ -279,8 +290,14 @@ if __name__ == "__main__":
     try:
         with open(sys.argv[1], encoding="utf-8") as stream:
             rows = [json.loads(line) for line in stream if line.strip()]
-        smoke = len(sys.argv) == 3 and sys.argv[2] == "--smoke"
-        result = verify(rows, ("team-10-week",), 1) if smoke else verify(rows)
+        mode = sys.argv[2] if len(sys.argv) == 3 else ""
+        check(mode in ("", "--smoke", "--pattern"), "VERIFY_MODE")
+        if mode == "--smoke":
+            result = verify(rows, ("team-10-week",), 1)
+        elif mode == "--pattern":
+            result = verify(rows, ("branch-50-four-weeks",), 5, "PATTERN")
+        else:
+            result = verify(rows)
         print(json.dumps({"decision": "E2_PARTIAL_EXPLORATION_ONLY", "scenarios": result}))
     except EvidenceError as error:
         print("E2 evidence rejected: " + str(error), file=sys.stderr)

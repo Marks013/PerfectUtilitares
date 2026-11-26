@@ -86,7 +86,7 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false) {
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
   const name = "escalas-cross-engine-" + randomUUID();
   const special = JSON.parse(body).input._restPairTarget === 20;
@@ -98,7 +98,10 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
     "--env", "PYTHONDONTWRITEBYTECODE=1", "--env", "ESCALAS_SOLVER_WORKERS=1",
     "--env", "ESCALAS_SOLVER_LINEARIZATION=0", "--env", "ESCALAS_SOLVER_SYMMETRY=0", "-i"];
   if (engine === "ortools") args.push("--entrypoint", "python", image, "-B", "-c", validateOnly ? validationPython : python);
-  else args.push(image);
+  else {
+    args.push(image);
+    if (patternSeed) args.push("--pattern-seed");
+  }
   try {
     return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 9 * 1024 * 1024 });
   } finally { cleanup(name); }
@@ -118,10 +121,11 @@ export function validateBaselineEnvelope(image: string, body: string) {
   }
 }
 
-export function dockerAdapter(image: string, engine: Engine): Adapter {
+export function dockerAdapter(image: string, engine: Engine, patternSeed = false): Adapter {
+  if (patternSeed && engine !== "timefold") throw new Error("CROSS_ENGINE_SEED_MODE");
   inspectImage(image, engine);
   return body => {
-    const child = runIsolated(image, engine, body);
+    const child = runIsolated(image, engine, body, false, patternSeed);
     let reply: WireReply;
     // GNU timeout 124 is a known Timefold supervisor deadline. 137 is ambiguous
     // (OOM or forced termination); do not misreport it as a normal timeout.
