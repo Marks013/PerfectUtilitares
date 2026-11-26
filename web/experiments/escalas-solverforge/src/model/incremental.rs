@@ -158,7 +158,7 @@ mod tests {
             check(&acc,&rows);
             for id in 0..5 {
                 let m=Member{id,cohort:if id<3 {0} else {1},mask:if id==4 {None} else {Some(all[id*3])},locked_off:if id%2==0 {1} else {0},
-                    saved_known:127,saved_work:all[id],sunday_cap:id%2+1,facts:Arc::clone(&facts)};
+                    saved_known:127,saved_work:all[id],facts:Arc::clone(&facts)};
                 acc.accumulate(m.clone());rows.insert(id,m);check(&acc,&rows);
             }
             for step in 0..100 {

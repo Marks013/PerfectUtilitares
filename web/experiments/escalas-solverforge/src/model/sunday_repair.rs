@@ -104,7 +104,11 @@ pub fn repair(plan:&mut Plan,deadline:Instant) {
                 old_count+=signature(mask,facts.days).count_ones();
                 apply(&mut outside,p,mask,false);
                 bits.push(1u64<<p.id);
-                let sigs:BTreeSet<_>=p.allowed.iter().map(|&j|signature(p.catalog[j],facts.days)).collect();
+                let mut sigs=BTreeSet::new();
+                for (n,&j) in p.allowed.iter().enumerate() {
+                    if n%128==0 && Instant::now()>=deadline{return;}
+                    sigs.insert(signature(p.catalog[j],facts.days));
+                }
                 domains.push(sigs.into_iter().collect::<Vec<_>>());
             }
             // Count projection is exact only for identical eligibility.

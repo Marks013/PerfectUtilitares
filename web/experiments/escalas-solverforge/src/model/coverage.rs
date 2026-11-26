@@ -42,7 +42,6 @@ pub struct Member {
     pub locked_off: u32,
     pub saved_known: u32,
     pub saved_work: u32,
-    pub sunday_cap: usize,
     pub facts: Arc<Sector>,
 }
 

@@ -39,7 +39,6 @@ impl Employee {
             locked_off: self.locked_off,
             saved_known: self.saved_known,
             saved_work: self.saved_work,
-            sunday_cap: self.sunday_cap,
             facts: Arc::clone(&self.facts),
         }
     }

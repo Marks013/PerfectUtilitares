@@ -46,3 +46,7 @@ Não há benchmark aprovado neste commit até execução efetiva do Cargo, smoke
 ### Revisão de paridade dominical
 
 A coorte agora combina setor, cargo, geometria de relógio e cap dominical. Recuperação conjunta de domingos usa projeções de domínios legais, prazo original, guardas de cobertura do setor e comparação independente TS. O gate E2 de não inferioridade é separado da validade e dos diagnósticos. Não certifica equivalência E3 ou produção.
+
+### Contrato comum Java/Rust E2-WIRE-1
+
+26 casos sintéticos (base + mutações JSON Pointer), mesma cópia byte a byte do recurso JUnit em Timefold 7c426f887a3a1424e01d2a3e877bad196e34ecad. O workflow verifica identidade antes do build e o teste Rust executa o mapper, não um mock. Alinhar IDs, limite de catálogo, datas civis 1900–2099, ausência de shiftId em OFF, arrays de histórico e slots inativos. Aceitação pelo mapper não equivale a uma escala viável. Sem JNI/JVM no Rust, sem alteração do contrato público ou do comparador TS. Cargo default features vazio confirmado na tag; Clippy obrigatório para deprecated/unused/dead_code e compilação candidato com -D warnings; formatação automática e demais lints ainda pendentes.

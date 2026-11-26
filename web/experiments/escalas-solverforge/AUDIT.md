@@ -50,3 +50,10 @@ O benchmark anterior produziu 18 propostas válidas por motor, mas SolverForge 5
 ## SF18–SF20 — reparo dominical e configuração
 
 Coortes de equilíbrio por setor, cargo, geometria de relógio e limite dominical, dentro de 42h e relógio fixo; cálculo integral independente e acumulador incremental continuam separados. Reparo opcional limitado a 20 mil estados/250 mil transições por coorte e prazo existente: projeta domínios legais em contagens de domingos, reconstrói padrões e só aceita redução dominical sem piorar hard, total, pico e presença diária do setor. Não importa incumbentes dos outros motores. Testes de projeção conjunta, prazo, coortes e limites civis. O validador TS permanece obrigatório, inclusive função/faixa, fechamento e qualidade de descanso. E3/E4 continuam pendentes: 40/44h, misto, feriados, ausências, histórico/futuro, relógios variáveis, modos REST_ONLY/HOURS_ONLY, dezembro, 115/250 e proteções privadas. Não reduzir obrigações para obter resultado. A melhora ainda depende de CI e novo benchmark ARM64.
+
+## SF21–SF24 — compatibilidade Java e higiene
+
+- E2-WIRE-1: 26 casos idênticos ao Timefold 7c426f887a3a1424e01d2a3e877bad196e34ecad, validados por comparação byte a byte e testes nativos. Corrigir divergências de admissibilidade dentro do recorte E2, não expandir modelo em silêncio.
+- Remover override Cargo default-features ignorado (upstream default=[]), export de legal só em testes e campo Member.sunday_cap redundante; Clippy com lints específicos obrigatórios e rustc -D warnings no candidato, não nas dependências. Rustfmt e lint completo ainda pendentes.
+- Verificar deadline durante construção de assinaturas dominicais, sem mudar domínio ou quotas.
+- Node24 no upload de artefatos da CI comum, mesmo SHA dos experimentos. Não suprimir depreciações. As revisões permanecem independentes e a comparação Timefold E2.5/CP-SAT permanece congelada. E3/E4 e homologação pendentes; nenhum JNI, mudança de produção, dados ou merge.

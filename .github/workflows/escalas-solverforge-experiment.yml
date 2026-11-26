@@ -48,6 +48,8 @@ jobs:
         run: |
           set -euo pipefail
           python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
+          # Corpus must be byte-identical to the independently pinned Java test.
+          git -C .. show 7c426f887a3a1424e01d2a3e877bad196e34ecad:web/experiments/escalas-timefold/src/test/resources/e2-wire-contract.json | cmp - experiments/escalas-solverforge/src/e2-wire-contract.json
           node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
       - name: Install reviewed Rust toolchain and native musl linker
         shell: bash
@@ -75,7 +77,8 @@ jobs:
           cargo +"$RUST_VERSION" fetch --locked --manifest-path "$manifest"
           cargo +"$RUST_VERSION" metadata --locked --offline --format-version 1 --filter-platform "$RUST_TARGET" --manifest-path "$manifest" > "$RUNNER_TEMP/forge-metadata.json"
           cargo +"$RUST_VERSION" test --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
-          cargo +"$RUST_VERSION" build --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
+          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D deprecated -D unused_imports -D dead_code
+          cargo +"$RUST_VERSION" rustc --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike -- -D warnings
           cmp "$checkout/Cargo.lock" experiments/escalas-solverforge/Cargo.lock
           cp "$checkout/Cargo.lock" "$RUNNER_TEMP/forge-evidence/Cargo.lock"
           binary="$CARGO_TARGET_DIR/$RUST_TARGET/release/perfectutilitares-solverforge-spike"

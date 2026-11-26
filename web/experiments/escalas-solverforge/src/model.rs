@@ -8,7 +8,9 @@ mod sunday_repair;
 
 pub use coverage::{Band, Cost, Member, Sector, evaluate, validate_complete};
 pub use incremental::SectorAccumulator;
-pub use patterns::{allowed_indices, catalog, full_mask, legal, worked};
+pub use patterns::{allowed_indices, catalog, full_mask, worked};
+#[cfg(test)]
+use patterns::legal;
 pub use seed::seed;
 
 #[cfg(test)]

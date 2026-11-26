@@ -8,6 +8,19 @@ use crate::model::{Band, Sector, allowed_indices, catalog, full_mask};
 type Result<T> = std::result::Result<T, &'static str>;
 fn check(ok: bool, code: &'static str) -> Result<()> { if ok { Ok(()) } else { Err(code) } }
 fn text<'a>(v: &'a V, k: &str) -> Result<&'a str> { v.get(k).and_then(V::as_str).ok_or("EXPECTED_TEXT") }
+fn identifier<'a>(v: &'a V, k: &str) -> Result<&'a str> {
+    let value=text(v,k)?;
+    check(!value.is_empty() && value.chars().count()<=100,"IDENTIFIER")?;
+    Ok(value)
+}
+fn empty_array(v:&V,k:&str)->bool {
+    v.get(k).is_none_or(|x|x.as_array().is_some_and(Vec::is_empty))
+}
+fn valid_inactive_slot(slot:&V)->bool {
+    slot.as_object().is_some_and(|o|o.len()==2)
+        && slot.get("enabled").and_then(V::as_bool)==Some(false)
+        && slot.get("weekday").is_some_and(|d|d.is_null()||d.as_i64().is_some_and(|n|(0..=6).contains(&n)))
+}
 fn number(v: &V, k: &str) -> Result<i32> {
     v.get(k).and_then(V::as_i64).and_then(|n| i32::try_from(n).ok()).ok_or("EXPECTED_INTEGER")
 }
@@ -34,7 +47,7 @@ fn civil_date(value: &str) -> bool {
     let year = value[0..4].parse::<u32>().unwrap_or(0);
     let month = value[5..7].parse::<usize>().unwrap_or(0);
     let day = value[8..10].parse::<u32>().unwrap_or(0);
-    if year == 0 || !(1..=12).contains(&month) { return false; }
+    if !(1900..=2099).contains(&year) || !(1..=12).contains(&month) { return false; }
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
     let lengths = [31, if leap {29} else {28},31,30,31,30,31,31,30,31,30,31];
     day > 0 && day <= lengths[month - 1]
@@ -67,7 +80,7 @@ fn records(input: &V, field: &str, people: &[Person], by_id: &HashMap<String, us
         let day = date_index(text(row, "date")?, days)?;
         let work = match text(row, "kind")? { "WORK" => true, "OFF" => false, _ => return Err("ASSIGNMENT_KIND") };
         check(if work { row.get("shiftId").and_then(V::as_str) == Some(people[person].shift.as_str()) }
-            else { row.get("shiftId").is_none_or(V::is_null) }, "ASSIGNMENT_CLOCK")?;
+            else { row.get("shiftId").is_none() }, "ASSIGNMENT_CLOCK")?;
         let locked = match row.get("locked") { None => None, Some(v) => Some(v.as_bool().ok_or("LOCK_TYPE")?) };
         check(result.insert((person, day), Row { work, locked }).is_none(), "DUPLICATE_ASSIGNMENT")?;
     }
@@ -104,7 +117,9 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     check(range(closing,300,1440) && range(meal,30,180) && range(inter,660,1440) && range(weekly_rest,2100,4320), "POLICY_LIMIT")?;
     let limit_blocks = boolean(policy,"limitContinuousWorkBlocks",false)?;
     let mut clocks = BTreeMap::new();
-    for clock in array(input,"shifts")? {
+    let shift_rows=array(input,"shifts")?;
+    check(!shift_rows.is_empty() && shift_rows.len()<=120,"CLOCK_LIMIT")?;
+    for clock in shift_rows {
         let segments = array(clock,"segments")?;
         check(segments.len() == 3, "CLOCK_KIND")?;
         check(text(&segments[0],"kind")? == "WORK" && text(&segments[1],"kind")? == "BREAK"
@@ -116,7 +131,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
         check(a >= 300 && a < b && b == c && c < d && d == e && e < f && f <= closing.min(1200)
             && b-a+f-e == 504 && d-c >= meal && d-c <=120 && 1440-(f-a) >= inter
             && 2880-(f-a) >= weekly_rest && (!limit_blocks || (b-a).max(f-e) <= 270), "CLOCK_GEOMETRY")?;
-        check(clocks.insert(text(clock,"id")?.to_string(),[(a,b),(e,f)]).is_none(), "DUPLICATE_CLOCK")?;
+        check(clocks.insert(identifier(clock,"id")?.to_string(),[(a,b),(e,f)]).is_none(), "DUPLICATE_CLOCK")?;
     }
     let employees = array(input,"employees")?;
     check(!employees.is_empty() && employees.len() <= 50, "PEOPLE_LIMIT")?;
@@ -124,7 +139,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     let mut people = Vec::new();
     let mut by_id = HashMap::new();
     for person in employees {
-        let id = text(person,"id")?;
+        let id = identifier(person,"id")?;
         check(id.strip_prefix("person-").is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             && text(person,"name")?.starts_with("Synthetic person "), "SYNTHETIC_ID")?;
         let active = text(person,"activeFrom")?;
@@ -139,11 +154,12 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
             check(leadership.is_object() && text(leadership, "source")? == "INFERRED",
                 "LEADERSHIP_UNSUPPORTED")?;
         }
-        for k in ["history","planningHistory","planningFuture","fixedOffDays","preferredOffDays","manualShiftByDate","manualShiftOverrides","manualShiftBaseIds"] {
-            check(empty(person,k), "PERSON_RESTRICTION_UNSUPPORTED")?;
+        for k in ["history","planningHistory","planningFuture","fixedOffDays","preferredOffDays","manualShiftOverrides","manualShiftBaseIds"] {
+            check(empty_array(person,k), "PERSON_RESTRICTION_UNSUPPORTED")?;
         }
+        check(empty(person,"manualShiftByDate"),"PERSON_RESTRICTION_UNSUPPORTED")?;
         if let Some(slots) = person.get("fixedRestSlots") {
-            check(slots.as_array().is_some_and(|a| a.len()==2 && a.iter().all(|s| s.get("enabled").and_then(V::as_bool)==Some(false))), "FIXED_REST_UNSUPPORTED")?;
+            check(slots.as_array().is_some_and(|a| a.len()==2 && a.iter().all(valid_inactive_slot)), "FIXED_REST_UNSUPPORTED")?;
         }
         let options=array(person,"shiftIds")?;
         check(options.len()==1, "CLOCK_OPTIONS")?;
@@ -170,7 +186,7 @@ pub fn read(root: &V, deadline: Instant) -> Result<Plan> {
     for demand in array(input,"demands")? {
         // The real schema requires unique IDs. The minimal Rust test fixture
         // also supplies them; a duplicate must not disappear into a max floor.
-        check(demand_ids.insert(text(demand, "id")?), "DUPLICATE_DEMAND")?;
+        check(demand_ids.insert(identifier(demand, "id")?), "DUPLICATE_DEMAND")?;
         let day=date_index(text(demand,"date")?,days)?;
         let a=number(demand,"start")?;let b=number(demand,"end")?;let minimum=number(demand,"minimum")?;
         check(a>=0 && a<b && b<=1440 && range(minimum,0,250), "DEMAND")?;

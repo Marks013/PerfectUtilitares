@@ -212,6 +212,31 @@ mod integration {
     }
 
     #[test]
+    fn common_java_rust_wire_contract() {
+        let corpus:Value=serde_json::from_str(include_str!("e2-wire-contract.json")).unwrap();
+        assert_eq!(corpus["version"],"E2-WIRE-1");
+        assert_eq!(corpus["cases"].as_array().unwrap().len(),26);
+        for sample in corpus["cases"].as_array().unwrap() {
+            let name=sample["name"].as_str().unwrap();
+            let mut value=corpus["base"].clone();
+            if let Some(pointer)=sample["pointer"].as_str() {
+                let (parent,key)=pointer.rsplit_once('/').unwrap();
+                value.pointer_mut(parent).and_then(Value::as_object_mut).unwrap()
+                    .insert(key.to_owned(),sample["value"].clone());
+            }
+            let result=wire::read(&value,Instant::now()+Duration::from_secs(5));
+            if sample["accept"]==true {
+                let plan=result.unwrap_or_else(|err|panic!("{name}: {err}"));
+                assert_eq!(plan.employees.len(),1,"{name}");
+                assert_eq!(plan.employees[0].facts.days,7,"{name}");
+                assert_eq!(plan.employees[0].facts.bands.len(),1,"{name}");
+            } else {
+                assert!(result.is_err(),"{name}");
+            }
+        }
+    }
+
+    #[test]
     fn seed_only_is_not_reported_as_native_search() {
         let bytes=serde_json::to_vec(&input()).unwrap();
         let reply=solve(&bytes,Instant::now(),true,BUDGET);

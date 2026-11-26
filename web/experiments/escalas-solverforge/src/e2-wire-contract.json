@@ -1,0 +1,384 @@
+{
+  "version": "E2-WIRE-1",
+  "base": {
+    "input": {
+      "schemaVersion": 1,
+      "branchCode": "SYNTH",
+      "simulation": true,
+      "timeZone": "America/Sao_Paulo",
+      "planningWeekStartsOn": "SUNDAY",
+      "restRulesVersion": 3,
+      "generationMode": "DAYS_AND_HOURS",
+      "defaultWeeklyHours": 42,
+      "startDate": "2026-11-01",
+      "endDate": "2026-11-07",
+      "storeClosingMinutes": 1200,
+      "policy": {
+        "calendarMode": "MANUAL",
+        "normativeProfile": "CUSTOM",
+        "weeklyLimit": 44,
+        "dailyLimitMinutes": 528,
+        "maxConsecutiveWorkDays": 5,
+        "minMealMinutes": 60,
+        "minInterShiftMinutes": 660,
+        "minWeeklyRestMinutes": 2100,
+        "compensationAuthorized": false,
+        "holidayRestAllowed": false,
+        "closedDates": [],
+        "holidayDates": [],
+        "authorizedHolidayDates": []
+      },
+      "shifts": [
+        {
+          "id": "clock",
+          "segments": [
+            {
+              "kind": "WORK",
+              "start": 420,
+              "end": 660
+            },
+            {
+              "kind": "BREAK",
+              "start": 660,
+              "end": 780
+            },
+            {
+              "kind": "WORK",
+              "start": 780,
+              "end": 1044
+            }
+          ]
+        }
+      ],
+      "employees": [
+        {
+          "id": "person-0",
+          "name": "Synthetic person 0",
+          "sector": "S",
+          "role": "Caixa",
+          "weeklyHours": 42,
+          "shiftIds": [
+            "clock"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "VARIABLE",
+          "offPattern": "ANY",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [],
+          "preferredOffDays": []
+        }
+      ],
+      "assignments": [
+        {
+          "employeeId": "person-0",
+          "date": "2026-11-01",
+          "kind": "OFF",
+          "locked": true
+        }
+      ],
+      "demands": [
+        {
+          "id": "d-1",
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "base-with-locked-off",
+      "accept": true
+    },
+    {
+      "name": "separate-overlapping-demand-ids",
+      "pointer": "/input/demands",
+      "value": [
+        {
+          "id": "d-1",
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        },
+        {
+          "id": "d-2",
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        }
+      ],
+      "accept": true
+    },
+    {
+      "name": "duplicate-demand-id",
+      "pointer": "/input/demands",
+      "value": [
+        {
+          "id": "d-1",
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        },
+        {
+          "id": "d-1",
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        }
+      ],
+      "accept": false
+    },
+    {
+      "name": "missing-demand-id",
+      "pointer": "/input/demands",
+      "value": [
+        {
+          "date": "2026-11-01",
+          "sector": "S",
+          "role": "Caixa",
+          "start": 480,
+          "end": 540,
+          "minimum": 1,
+          "estimated": true
+        }
+      ],
+      "accept": false
+    },
+    {
+      "name": "empty-demand-id",
+      "pointer": "/input/demands/0/id",
+      "value": "",
+      "accept": false
+    },
+    {
+      "name": "unrepresented-sector",
+      "pointer": "/input/demands/0/sector",
+      "value": "Missing sector",
+      "accept": false
+    },
+    {
+      "name": "coerced-estimate",
+      "pointer": "/input/demands/0/estimated",
+      "value": "true",
+      "accept": false
+    },
+    {
+      "name": "coerced-simulation",
+      "pointer": "/input/simulation",
+      "value": "true",
+      "accept": false
+    },
+    {
+      "name": "admission-1900",
+      "pointer": "/input/employees/0/activeFrom",
+      "value": "1900-01-01",
+      "accept": true
+    },
+    {
+      "name": "admission-1899",
+      "pointer": "/input/employees/0/activeFrom",
+      "value": "1899-12-31",
+      "accept": false
+    },
+    {
+      "name": "admission-year-zero",
+      "pointer": "/input/employees/0/activeFrom",
+      "value": "0000-01-01",
+      "accept": false
+    },
+    {
+      "name": "history-object",
+      "pointer": "/input/employees/0/history",
+      "value": {},
+      "accept": false
+    },
+    {
+      "name": "inactive-slots-valid",
+      "pointer": "/input/employees/0/fixedRestSlots",
+      "value": [
+        {
+          "enabled": false,
+          "weekday": null
+        },
+        {
+          "enabled": false,
+          "weekday": 3
+        }
+      ],
+      "accept": true
+    },
+    {
+      "name": "inactive-slots-missing-weekday",
+      "pointer": "/input/employees/0/fixedRestSlots",
+      "value": [
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false,
+          "weekday": null
+        }
+      ],
+      "accept": false
+    },
+    {
+      "name": "inactive-slots-invalid-weekday",
+      "pointer": "/input/employees/0/fixedRestSlots",
+      "value": [
+        {
+          "enabled": false,
+          "weekday": 7
+        },
+        {
+          "enabled": false,
+          "weekday": null
+        }
+      ],
+      "accept": false
+    },
+    {
+      "name": "off-null-shift",
+      "pointer": "/input/assignments/0/shiftId",
+      "value": null,
+      "accept": false
+    },
+    {
+      "name": "locked-off-carry",
+      "pointer": "/input/assignments/0/monthlyCarry",
+      "value": true,
+      "accept": false
+    },
+    {
+      "name": "unsupported-mode",
+      "pointer": "/input/generationMode",
+      "value": "HOURS_ONLY",
+      "accept": false
+    },
+    {
+      "name": "unknown-private-field",
+      "pointer": "/input/_unknownConstraint",
+      "value": true,
+      "accept": false
+    },
+    {
+      "name": "empty-shift-id",
+      "pointer": "/input/shifts/0/id",
+      "value": "",
+      "accept": false
+    },
+    {
+      "name": "unbounded-clock",
+      "pointer": "/input/shifts/0/segments/0/start",
+      "value": 2147483647,
+      "accept": false
+    },
+    {
+      "name": "manual-leadership",
+      "pointer": "/input/employees/0/leadership",
+      "value": {
+        "source": "MANUAL",
+        "role": "SECTOR",
+        "sectors": [
+          "S"
+        ]
+      },
+      "accept": false
+    },
+    {
+      "name": "duplicate-person",
+      "pointer": "/input/employees",
+      "value": [
+        {
+          "id": "person-0",
+          "name": "Synthetic person 0",
+          "sector": "S",
+          "role": "Caixa",
+          "weeklyHours": 42,
+          "shiftIds": [
+            "clock"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "VARIABLE",
+          "offPattern": "ANY",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [],
+          "preferredOffDays": []
+        },
+        {
+          "id": "person-0",
+          "name": "Synthetic person 0",
+          "sector": "S",
+          "role": "Caixa",
+          "weeklyHours": 42,
+          "shiftIds": [
+            "clock"
+          ],
+          "scheduleMode": "TIMED",
+          "offMode": "VARIABLE",
+          "offPattern": "ANY",
+          "activeFrom": "",
+          "maxConsecutiveSundays": 1,
+          "historyKnown": false,
+          "history": [],
+          "fixedOffDays": [],
+          "preferredOffDays": []
+        }
+      ],
+      "accept": false
+    },
+    {
+      "name": "calendar-provenance",
+      "pointer": "/input/planningCalendarSource",
+      "value": {},
+      "accept": false
+    },
+    {
+      "name": "holiday-outside-model",
+      "pointer": "/input/policy/holidayDates",
+      "value": [
+        "2026-11-02"
+      ],
+      "accept": false
+    },
+    {
+      "name": "full-warm-start-not-supplied",
+      "pointer": "/input/_initialAssignments",
+      "value": [
+        {
+          "employeeId": "person-0",
+          "date": "2026-11-01",
+          "kind": "OFF",
+          "locked": true
+        }
+      ],
+      "accept": false
+    }
+  ]
+}
