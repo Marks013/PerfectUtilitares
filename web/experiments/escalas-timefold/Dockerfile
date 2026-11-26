@@ -5,7 +5,7 @@ ENV PATH=/opt/java/openjdk/bin:$PATH
 ENV LANG=C.UTF-8
 RUN set -eu; \
     apt-get -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get -o 'Dpkg::Options::=--path-include=*' install -y --no-install-recommends ca-certificates 'openjdk-21-jre-headless=21.0.13.1+2-1~24.04.1'; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o 'Dpkg::Options::=--path-include=*' install -y --no-install-recommends ca-certificates 'libc6=2.39-0ubuntu8.12' 'libc-bin=2.39-0ubuntu8.12' 'openjdk-21-jre-headless=21.0.13.1+2-1~24.04.1'; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /opt/java; \
     arch=$(dpkg --print-architecture); \

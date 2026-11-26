@@ -27,10 +27,10 @@ class WireModelTest {
         var root = envelope();
         var input = (ObjectNode) root.path("input");
         input.set("demands", JSON.readTree("""
-          [{"date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":2,"estimated":true},
-           {"date":"2026-11-01","sector":"S","role":"Caixa","start":480,"end":540,"minimum":1,"estimated":true},
-           {"date":"2026-11-01","sector":"S","role":"Caixa","start":510,"end":540,"minimum":1,"estimated":true},
-           {"date":"2026-11-01","sector":"S","role":"Repositor","start":480,"end":540,"minimum":1,"estimated":true}]
+          [{"id":"d-1","date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":2,"estimated":true},
+           {"id":"d-2","date":"2026-11-01","sector":"S","role":"Caixa","start":480,"end":540,"minimum":1,"estimated":true},
+           {"id":"d-3","date":"2026-11-01","sector":"S","role":"Caixa","start":510,"end":540,"minimum":1,"estimated":true},
+           {"id":"d-4","date":"2026-11-01","sector":"S","role":"Repositor","start":480,"end":540,"minimum":1,"estimated":true}]
           """));
         var model = WireModel.read(root);
         assertEquals(7, model.days().size());
@@ -130,7 +130,7 @@ class WireModelTest {
                 () -> WireModel.read(root)).getMessage());
         policy.put("minWeeklyRestMinutes", 2100);
         input.set("demands", JSON.readTree("""
-            [{"date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":1,"estimated":"true"}]
+            [{"id":"d-1","date":"2026-11-01","sector":"S","start":480,"end":540,"minimum":1,"estimated":"true"}]
             """));
         assertEquals("EXPECTED_BOOLEAN", assertThrows(WireModel.Unsupported.class,
                 () -> WireModel.read(root)).getMessage());
@@ -157,6 +157,29 @@ class WireModelTest {
             """));
         assertEquals("ASSIGNMENT_METADATA_UNSUPPORTED", assertThrows(WireModel.Unsupported.class,
                 () -> WireModel.read(root)).getMessage());
+    }
+    @Test void commonJavaRustWireContract() throws Exception {
+        try (var source=getClass().getResourceAsStream("/e2-wire-contract.json")) {
+            assertNotNull(source);
+            var corpus=JSON.readTree(source);
+            assertEquals("E2-WIRE-1",corpus.path("version").asText());
+            for (var sample:corpus.path("cases")) {
+                var value=corpus.path("base").deepCopy();
+                String name=sample.path("name").asText();
+                if (sample.has("pointer")) {
+                    String pointer=sample.path("pointer").asText();
+                    int split=pointer.lastIndexOf('/');
+                    var target=(ObjectNode)value.at(pointer.substring(0,split));
+                    target.set(pointer.substring(split+1),sample.path("value"));
+                }
+                if (sample.path("accept").asBoolean()) {
+                    var model=assertDoesNotThrow(() -> WireModel.read(value),name);
+                    assertEquals(7,model.days().size(),name);
+                } else {
+                    assertThrows(IllegalArgumentException.class,() -> WireModel.read(value),name);
+                }
+            }
+        }
     }
     @Test void rejectsLockedSaturdayOff() throws Exception {
         var root = envelope();

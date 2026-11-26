@@ -27,6 +27,20 @@ final class WireModel {
         check(v.isTextual(), "EXPECTED_TEXT");
         return v.textValue();
     }
+    private static String identifier(JsonNode n, String key) {
+        String value = str(n,key);
+        check(!value.isEmpty() && value.codePointCount(0,value.length()) <= 100, "IDENTIFIER");
+        return value;
+    }
+    private static boolean emptyArray(JsonNode n, String key) {
+        return !n.has(key) || n.path(key).isArray() && n.path(key).isEmpty();
+    }
+    private static boolean validInactiveSlot(JsonNode slot) {
+        JsonNode day = slot.path("weekday");
+        return slot.isObject() && slot.size()==2 && slot.path("enabled").isBoolean()
+                && !slot.path("enabled").booleanValue()
+                && (day.isNull() || day.isIntegralNumber() && day.canConvertToInt() && day.intValue()>=0 && day.intValue()<=6);
+    }
     private static int integer(JsonNode n, String key) {
         JsonNode v = n.path(key);
         check(v.isIntegralNumber() && v.canConvertToInt(), "EXPECTED_INTEGER");
@@ -55,7 +69,9 @@ final class WireModel {
         String value = str(person, "activeFrom");
         if (value.isEmpty()) return true;
         check(value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "ACTIVE_DATE");
-        return !LocalDate.parse(value).isAfter(first);
+        LocalDate day=LocalDate.parse(value);
+        check(day.getYear()>=1900 && day.getYear()<=2099,"ACTIVE_DATE");
+        return !day.isAfter(first);
     }
     private static boolean empty(JsonNode n, String key) {
         return !n.has(key) || n.path(key).isArray() && n.path(key).isEmpty()
@@ -102,8 +118,10 @@ final class WireModel {
                 && integer(policy, "minWeeklyRestMinutes") >= 2100 && integer(policy, "minWeeklyRestMinutes") <= 4320,
                 "POLICY_LIMITS");
         Map<String, List<Day.Segment>> clocks = new HashMap<>();
-        for (JsonNode clock : array(input, "shifts")) {
-            String id = str(clock, "id");
+        List<JsonNode> shiftRows=array(input,"shifts");
+        check(!shiftRows.isEmpty() && shiftRows.size()<=120,"CLOCK_LIMIT");
+        for (JsonNode clock : shiftRows) {
+            String id = identifier(clock, "id");
             List<JsonNode> segments = array(clock, "segments");
             check(segments.size() == 3 && str(segments.get(0), "kind").equals("WORK")
                     && str(segments.get(1), "kind").equals("BREAK") && str(segments.get(2), "kind").equals("WORK"), "CLOCK_KIND");
@@ -122,7 +140,7 @@ final class WireModel {
 
         Map<String, Person> people = new LinkedHashMap<>();
         for (JsonNode person : array(input, "employees")) {
-            String id = str(person, "id"), name = str(person, "name");
+            String id = identifier(person, "id"), name = str(person, "name");
             check(id.matches("person-[0-9]+") && name.startsWith("Synthetic person "), "SYNTHETIC_ID");
             check(bool(person, "planningEnabled", true)
                     && str(person, "scheduleMode").equals("TIMED") && integer(person, "weeklyHours") == 42
@@ -133,12 +151,13 @@ final class WireModel {
             if (person.has("leadership")) check(person.path("leadership").isObject()
                     && str(person.path("leadership"), "source").equals("INFERRED"), "LEADERSHIP_UNSUPPORTED");
             for (String field : List.of("history", "planningHistory", "planningFuture", "fixedOffDays",
-                    "preferredOffDays", "manualShiftByDate", "manualShiftOverrides", "manualShiftBaseIds"))
-                check(empty(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
+                    "preferredOffDays", "manualShiftOverrides", "manualShiftBaseIds"))
+                check(emptyArray(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
+            check(empty(person,"manualShiftByDate"),"PERSON_RESTRICTION_UNSUPPORTED");
             check(!person.has("fixedRestSlots") || person.path("fixedRestSlots").isArray()
                     && person.path("fixedRestSlots").size() == 2
                     && java.util.stream.StreamSupport.stream(person.path("fixedRestSlots").spliterator(), false)
-                        .allMatch(slot -> slot.path("enabled").isBoolean() && !slot.path("enabled").booleanValue()),
+                        .allMatch(WireModel::validInactiveSlot),
                     "FIXED_REST_UNSUPPORTED");
             List<JsonNode> options = array(person, "shiftIds");
             String fixed = person.has("fixedImportedShiftId") ? str(person, "fixedImportedShiftId") : "";
@@ -209,12 +228,20 @@ final class WireModel {
         }
         // Disjoint bands per day/sector/demand type; preserve all function floors.
         Map<DemandKey, List<Demand>> grouped = new LinkedHashMap<>();
+        Set<String> demandIds=new HashSet<>();
+        Set<String> activeSectors=new HashSet<>();
+        for(Person person:people.values()) activeSectors.add(person.sector());
         for (JsonNode demand : array(input, "demands")) {
+            check(demandIds.add(identifier(demand,"id")),"DUPLICATE_DEMAND");
             int day = Math.toIntExact(ChronoUnit.DAYS.between(first, LocalDate.parse(str(demand, "date"))));
             int a = integer(demand, "start"), b = integer(demand, "end"), min = integer(demand, "minimum");
             check(day >= 0 && day < days && a >= 0 && b <= 1440 && a < b && min >= 0 && min <= 250, "DEMAND");
             String role = demand.hasNonNull("role") ? str(demand, "role") : null;
-            DemandKey key = new DemandKey(day, str(demand, "sector"), bool(demand, "estimated", false));
+            String sector=str(demand,"sector");
+            // Same explicitly bounded scope as the Rust experiment. A sector
+            // without a participant is unsupported, not a zero-cost demand.
+            check(activeSectors.contains(sector),"EMPTY_DEMAND_SECTOR");
+            DemandKey key = new DemandKey(day, sector, bool(demand, "estimated", false));
             grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(new Demand(a, b, min, role));
         }
         List<Roster.Band> bands = new ArrayList<>();
@@ -259,7 +286,7 @@ final class WireModel {
             String kind = str(row, "kind");
             check(kind.equals("WORK") || kind.equals("OFF"), "ASSIGNMENT_KIND_UNSUPPORTED");
             String shift = row.hasNonNull("shiftId") ? str(row, "shiftId") : null;
-            check(kind.equals("WORK") ? people.get(person).shift().equals(shift) : shift == null, "ASSIGNMENT_CLOCK");
+            check(kind.equals("WORK") ? people.get(person).shift().equals(shift) : !row.has("shiftId"), "ASSIGNMENT_CLOCK");
             check(!row.has("locked") || row.path("locked").isBoolean(), "LOCK_TYPE");
             var key = new Key(person, date);
             var record = new Record(Day.State.valueOf(kind), shift, row.has("locked") ? row.path("locked").booleanValue() : null);
