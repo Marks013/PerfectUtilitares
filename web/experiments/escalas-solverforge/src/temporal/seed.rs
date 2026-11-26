@@ -50,8 +50,34 @@ fn construction_order(plan:&TemporalPlan)->Vec<usize>{
     });
     order
 }
+// Use an unambiguous unchanged legal roster before inventing a greedy
+// incumbent. Otherwise an unnecessary clock change can become a service
+// floor and prevent the native search from returning the valid saved grid.
+// A blank or partial input with several zero-change paths is NOT a reference.
+// These are choices, not pins; the full selected domains remain available.
+fn initialize_unchanged(plan:&mut TemporalPlan,deadline:Instant)->bool{
+    if Instant::now()>=deadline{return false;}
+    let mut selected=Vec::with_capacity(plan.employees.len());
+    for person in &plan.employees{
+        if let Some(index)=person.pattern{selected.push(index);continue;}
+        let mut unchanged=None;
+        for (n,&index) in person.allowed.iter().enumerate(){
+            if n.is_multiple_of(128)&&Instant::now()>=deadline{return false;}
+            if person.catalog[index].personal[14]!=0{continue;}
+            if unchanged.replace(index).is_some(){return false;}
+        }
+        let Some(index)=unchanged else{return false;};
+        selected.push(index);
+    }
+    if Instant::now()>=deadline{return false;}
+    let prior:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
+    for (p,index) in plan.employees.iter_mut().zip(selected){p.pattern=Some(index);}
+    if super::evaluate(plan)[0]==0&&Instant::now()<deadline{return true;}
+    for (p,choice) in plan.employees.iter_mut().zip(prior){p.pattern=choice;}
+    false
+}
 pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
-    let complete=plan.employees.iter().all(|p|p.pattern.is_some());
+    let complete=plan.employees.iter().all(|p|p.pattern.is_some())||initialize_unchanged(plan,deadline);
     let mut sectors=BTreeMap::<usize,Sector>::new();
     let mut timed_roles=BTreeMap::<(usize,usize),usize>::new();
     for person in &plan.employees{
@@ -184,5 +210,82 @@ mod tests{
         let mut expected:Vec<_>=(0..plan.employees.len()).collect();
         expected.sort_by_key(|&i|(plan.employees[i].allowed.len(),i));
         assert_eq!(construction_order(&plan),expected);
+    }
+
+    // Same fixed-days/variable-clocks input as the original HOURS_ONLY
+    // benchmark, not a reference output borrowed from another engine.
+    fn hours_grid()->Value{
+        let corpus:Value=serde_json::from_str(include_str!("../e2-wire-contract.json")).unwrap();
+        let mut data=corpus["base"].clone();
+        data["input"]["generationMode"]=json!("HOURS_ONLY");
+        data["input"]["mixed42Sectors"]=json!(["S"]);
+        let shift=|id:&str,start:i32,block:i32,meal:i32|json!({"id":id,"segments":[
+            {"kind":"WORK","start":start,"end":start+block},
+            {"kind":"BREAK","start":start+block,"end":start+block+meal},
+            {"kind":"WORK","start":start+block+meal,"end":start+2*block+meal}]});
+        data["input"]["shifts"]=json!([shift("eight",420,240,60),shift("nine",420,270,180),shift("late",480,240,60)]);
+        let template=data["input"]["employees"][0].clone();
+        data["input"]["employees"]=Value::Array((0..3).map(|i|{
+            let mut p=template.clone();
+            p["id"]=json!(format!("person-{i}"));p["name"]=json!(format!("Synthetic person {i}"));
+            p["role"]=json!("Repositor");p["shiftIds"]=json!(["eight","nine","late"]);p
+        }).collect());
+        let mut assignments=Vec::new();
+        for (i,off) in [[0,2],[1,4],[0,3]].iter().enumerate(){
+            let mut worked=0;
+            for day in 0..7{
+                let mut row=json!({"employeeId":format!("person-{i}"),"date":format!("2026-11-{:02}",day+1),"locked":day==6});
+                if off.contains(&day){row["kind"]=json!("OFF");}
+                else{row["kind"]=json!("WORK");row["shiftId"]=json!(if worked<2{"nine"}else{"eight"});worked+=1;}
+                assignments.push(row);
+            }
+        }
+        data["input"]["assignments"]=Value::Array(assignments);
+        data["input"]["demands"]=json!([{"id":"late-demand","date":"2026-11-04","sector":"S",
+            "start":1050,"end":1140,"minimum":1,"estimated":false}]);
+        data
+    }
+    #[test]
+    fn hours_only_benchmark_preserves_a_feasible_saved_grid_without_pinning(){
+        let data=hours_grid();
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        assert_eq!(plan.employees.iter().map(|p|p.allowed.len()).sum::<usize>(),72);
+        construct(&mut plan,Instant::now()+Duration::from_secs(1));
+        let cost=super::super::evaluate(&plan);
+        assert_eq!(cost[0],0);assert_eq!(&cost[13..15],&[0,0]);
+        assert!(plan.employees.iter().all(|p|!p.pinned&&p.allowed.len()>1));
+        let output=super::super::solve(&serde_json::to_vec(&data).unwrap(),Instant::now(),Duration::from_secs(5));
+        assert_eq!(output["body"]["status"],"FEASIBLE");
+        assert_eq!(output["temporal"]["nativeSearch"],true);
+        assert_eq!(output["temporal"]["guardPreserved"],true);
+        assert_eq!(output["temporal"]["initialCost"][14],0);
+        assert_eq!(output["temporal"]["finalCost"][14],0);
+    }
+    #[test]
+    fn unchanged_initialization_rejects_a_globally_infeasible_grid_without_mutation(){
+        let mut data=hours_grid();data["input"]["demands"][0]["minimum"]=json!(4);
+        let mut plan=read(&data,Instant::now()+Duration::from_secs(5)).unwrap();
+        let before:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
+        assert!(!initialize_unchanged(&mut plan,Instant::now()+Duration::from_secs(1)));
+        assert_eq!(plan.employees.iter().map(|p|p.pattern).collect::<Vec<_>>(),before);
+    }
+    #[test]
+    fn unchanged_initialization_does_not_invent_a_reference_for_ambiguous_input(){
+        let mut plan=order_fixture(false);
+        assert!(plan.employees.iter().all(|p|p.pattern.is_none()));
+        assert!(!initialize_unchanged(&mut plan,Instant::now()+Duration::from_secs(1)));
+        assert!(plan.employees.iter().all(|p|p.pattern.is_none()));
+    }
+    #[test]
+    fn unchanged_initialization_respects_the_deadline_and_existing_choices(){
+        let mut plan=read(&hours_grid(),Instant::now()+Duration::from_secs(5)).unwrap();
+        let chosen=plan.employees[0].allowed[0];plan.employees[0].pattern=Some(chosen);
+        let before:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
+        assert!(!initialize_unchanged(&mut plan,Instant::now()));
+        assert_eq!(plan.employees.iter().map(|p|p.pattern).collect::<Vec<_>>(),before);
+        // Existing explicit choices remain authoritative, even if they do not
+        // match the historical grid. No implicit re-pinning is introduced.
+        let _=initialize_unchanged(&mut plan,Instant::now()+Duration::from_secs(1));
+        assert_eq!(plan.employees[0].pattern,Some(chosen));
     }
 }
