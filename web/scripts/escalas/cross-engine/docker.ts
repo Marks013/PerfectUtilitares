@@ -238,7 +238,7 @@ export function solverforgeAdapter(image: string, seedOnly = false, budgetSecond
 }
 
 
-export type TemporalTelemetry = {
+type TemporalTelemetry = {
   version: 1; scope: "SYNTHETIC_ONE_WEEK_TIMED"; partialModel: true;
   mapSeconds: number; searchSeconds: number; nativeSearch: boolean;
   entities: number; patterns: number; initialCost: number[]; finalCost: number[];

@@ -1,0 +1,74 @@
+name: Escalas SolverForge fast Rust qualification
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-solverforge/**'
+      - '.github/workflows/escalas-solverforge-compile.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-solverforge-fast-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: Pinned native ARM64 tests and strict lint
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: web
+    env:
+      CI: 'true'
+      UPSTREAM: '78889c3ff9fda158c70e6a1f67f8c7f0fdae922e'
+      RUST_VERSION: '1.99.1'
+      RUST_TARGET: 'aarch64-unknown-linux-musl'
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+      CARGO_INCREMENTAL: '0'
+      RAYON_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Independent Python evidence tests
+        run: python3 -m unittest discover -s experiments/escalas-solverforge -p 'test_*.py'
+      - name: Install reviewed Rust toolchain and native musl linker
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy --component rustfmt --target "$RUST_TARGET"
+          sudo apt-get -o APT::Update::Error-Mode=any update
+          sudo apt-get install -y --no-install-recommends musl-tools binutils
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          rustc +"$RUST_VERSION" -Vv > "$RUNNER_TEMP/forge-evidence/rustc-version.txt"
+          cargo +"$RUST_VERSION" --version > "$RUNNER_TEMP/forge-evidence/cargo-version.txt"
+          dpkg-query -W musl musl-dev musl-tools binutils > "$RUNNER_TEMP/forge-evidence/linker-packages.txt"
+      - name: Compile and test pinned native Rust workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkout="$RUNNER_TEMP/solverforge-upstream"
+          git clone --depth 1 --branch v0.31.2 https://github.com/SolverForge/solverforge.git "$checkout"
+          test "$(git -C "$checkout" rev-parse HEAD)" = "$UPSTREAM"
+          python3 experiments/escalas-solverforge/prepare_workspace.py "$checkout"
+          export CARGO_HOME="$RUNNER_TEMP/solverforge-cargo"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/solverforge-target"
+          manifest="$checkout/Cargo.toml"
+          cargo +"$RUST_VERSION" fetch --locked --manifest-path "$manifest"
+          cargo +"$RUST_VERSION" metadata --locked --offline --format-version 1 --filter-platform "$RUST_TARGET" --manifest-path "$manifest" > "$RUNNER_TEMP/forge-metadata.json"
+          cargo +"$RUST_VERSION" test --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike
+          cargo +"$RUST_VERSION" clippy --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D warnings
+          cargo +"$RUST_VERSION" rustc --locked --offline --release --target "$RUST_TARGET" --manifest-path "$manifest" -p perfectutilitares-solverforge-spike -- -D warnings
+          cmp "$checkout/Cargo.lock" experiments/escalas-solverforge/Cargo.lock
+          cp "$checkout/Cargo.lock" "$RUNNER_TEMP/forge-evidence/Cargo.lock"
+          binary="$CARGO_TARGET_DIR/$RUST_TARGET/release/perfectutilitares-solverforge-spike"
+          test -x "$binary"
+          readelf -h "$binary" | grep -F AArch64
+          if readelf -lW "$binary" | grep -q ' INTERP '; then exit 1; fi
+          if readelf -dW "$binary" | grep -q '(NEEDED)'; then exit 1; fi
+          sha256sum "$binary" | cut -d ' ' -f 1 > "$RUNNER_TEMP/forge-evidence/binary.sha256"
