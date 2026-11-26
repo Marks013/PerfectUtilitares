@@ -25,6 +25,31 @@ impl Counts{
 struct Sector{
     facts:Arc<TemporalFacts>,counts:Vec<Counts>,presence:[i64;MAX_DAYS],timed:[i64;MAX_DAYS],
 }
+// Allocate immutable entries first, then people whose legal timed paths
+// are the only source of service on some civil dates. A small UNTIMED or
+// partial domain must not consume the remaining worker's exclusive dates.
+fn construction_order(plan:&TemporalPlan)->Vec<usize>{
+    let available:Vec<u64>=plan.employees.iter().map(|p|{
+        if p.untimed{return 0;}
+        if let Some(index)=p.pattern{return p.catalog[index].civil_work;}
+        p.allowed.iter().fold(0,|days,&index|days|p.catalog[index].civil_work)
+    }).collect();
+    let mut suppliers=BTreeMap::<usize,[u16;MAX_DAYS]>::new();
+    for (p,&available) in plan.employees.iter().zip(&available){
+        let counts=suppliers.entry(p.sector).or_insert([0;MAX_DAYS]);
+        for (day,count) in counts.iter_mut().enumerate().take(p.facts.days){
+            if available&(1u64<<day)!=0{*count+=1;}
+        }
+    }
+    let mut order:Vec<_>=(0..plan.employees.len()).collect();
+    order.sort_by_key(|&i|{
+        let p=&plan.employees[i];
+        let exclusive=(0..p.facts.days).filter(|&d|
+            available[i]&(1u64<<d)!=0&&suppliers[&p.sector][d]==1).count();
+        (p.pattern.is_none(),std::cmp::Reverse(exclusive),p.allowed.len(),i)
+    });
+    order
+}
 pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     let complete=plan.employees.iter().all(|p|p.pattern.is_some());
     let mut sectors=BTreeMap::<usize,Sector>::new();
@@ -32,8 +57,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     for person in &plan.employees{
         if !person.untimed{*timed_roles.entry((person.sector,person.role)).or_default()+=1;}
     }
-    let mut order:Vec<_>=(0..plan.employees.len()).collect();
-    order.sort_by_key(|&i|(plan.employees[i].allowed.len(),i));
+    let order=construction_order(plan);
     for i in order{
         let p=&plan.employees[i];
         // Clock reach is a collective service tie. Without another timed
@@ -110,4 +134,55 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
         plan.employees[i].pattern=Some(choice);
     }
     if !complete { polish::improve(plan,deadline); }
+}
+
+#[cfg(test)]
+mod tests{
+    use super::*;
+    use std::time::Duration;
+    use serde_json::{Value,json};
+    use super::super::read;
+
+    fn order_fixture(partial:bool)->TemporalPlan{
+        let corpus:Value=serde_json::from_str(include_str!("../e2-wire-contract.json")).unwrap();
+        let mut data=corpus["base"].clone();
+        data["input"]["endDate"]=json!("2026-11-21");
+        data["input"]["assignments"]=json!([]);data["input"]["demands"]=json!([]);
+        let template=data["input"]["employees"][0].clone();
+        data["input"]["employees"]=Value::Array((0..3).map(|i|{
+            let mut p=template.clone();
+            p["id"]=json!(format!("person-{i}"));p["name"]=json!(format!("Synthetic person {i}"));
+            if partial&&i==1{
+                p["activeFrom"]=json!("2026-11-04");p["activeUntil"]=json!("2026-11-17");
+            }
+            if partial&&i==2{
+                p["activeFrom"]=json!("2026-11-08");p["scheduleMode"]=json!("UNTIMED");p["shiftIds"]=json!([]);
+            }
+            p
+        }).collect());
+        read(&data,Instant::now()+Duration::from_secs(5)).unwrap()
+    }
+    #[test]
+    fn exclusive_timed_dates_precede_smaller_partial_and_untimed_domains(){
+        let mut plan=order_fixture(true);
+        assert!(plan.employees[2].untimed);
+        assert!(plan.employees[2].allowed.len()<plan.employees[0].allowed.len());
+        let before:Vec<_>=plan.employees.iter().map(|p|p.pattern).collect();
+        let order=construction_order(&plan);assert_eq!(order[0],0);
+        assert_eq!(order,construction_order(&plan));
+        assert_eq!(plan.employees.iter().map(|p|p.pattern).collect::<Vec<_>>(),before);
+        // A complete admitted choice is counted before an uninitialized
+        // exclusive worker. No saved or pinned pattern is modified by sorting.
+        let selected=plan.employees[1].allowed[0];plan.employees[1].pattern=Some(selected);
+        assert_eq!(construction_order(&plan)[0],1);
+        assert_eq!(plan.employees[1].pattern,Some(selected));
+    }
+    #[test]
+    fn interchangeable_timed_people_keep_the_original_order(){
+        let plan=order_fixture(false);
+        assert!(plan.employees.iter().all(|p|!p.untimed&&p.pattern.is_none()));
+        let mut expected:Vec<_>=(0..plan.employees.len()).collect();
+        expected.sort_by_key(|&i|(plan.employees[i].allowed.len(),i));
+        assert_eq!(construction_order(&plan),expected);
+    }
 }
