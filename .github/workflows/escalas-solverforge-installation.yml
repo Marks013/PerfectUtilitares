@@ -1,0 +1,39 @@
+name: Escalas SolverForge locked installation (ARM64)
+
+on:
+  pull_request:
+    paths:
+      - 'web/experiments/escalas-solverforge/**'
+      - '.github/workflows/escalas-solverforge-installation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: escalas-solverforge-installation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Locked source, RustSec audit and isolated native demo
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      CI: 'true'
+      ESCALAS_CROSS_ENGINE_ISOLATED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test independent evidence validation
+        run: python3 -m unittest discover -s web/experiments/escalas-solverforge -p 'test_*.py'
+      - name: Verify locked release, audit and run upstream demo
+        run: bash web/experiments/escalas-solverforge/run-smoke.sh "$RUNNER_TEMP/solverforge-evidence"
+      - name: Preserve public dependency and synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: solverforge-installation-evidence
+          path: ${{ runner.temp }}/solverforge-evidence/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -5,7 +5,7 @@ ENV PATH=/opt/java/openjdk/bin:$PATH
 ENV LANG=C.UTF-8
 RUN set -eu; \
     apt-get -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates 'openjdk-21-jre-headless=21.0.13.1+2-1~24.04.1'; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o 'Dpkg::Options::=--path-include=*' install -y --no-install-recommends ca-certificates 'openjdk-21-jre-headless=21.0.13.1+2-1~24.04.1'; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /opt/java; \
     arch=$(dpkg --print-architecture); \
@@ -32,7 +32,7 @@ RUN set -eu; \
 FROM java-runtime AS build
 RUN set -eu; \
     apt-get -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    DEBIAN_FRONTEND=noninteractive apt-get -o 'Dpkg::Options::=--path-include=*' install -y --no-install-recommends \
       'openjdk-21-jre-headless=21.0.13.1+2-1~24.04.1' 'openjdk-21-jdk-headless=21.0.13.1+2-1~24.04.1'; \
     rm -rf /var/lib/apt/lists/*; \
     /bin/sh /usr/local/bin/verify-jdk build
