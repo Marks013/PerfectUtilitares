@@ -84,15 +84,19 @@ final class WireModel {
                 check(!field.startsWith("_") || field.equals("_initialAssignments"), "UNKNOWN_PRIVATE_FIELD"));
         for (String field : List.of("mixed42Sectors", "movementPriorities"))
             check(empty(input, field), "UNSUPPORTED_INPUT");
-        check(policy.path("calendarMode").asText().equals("MANUAL")
+        check(!input.has("planningCalendarSource"), "CALENDAR_SOURCE_UNSUPPORTED");
+        for (String field : List.of("calendarProvenance", "collectiveAgreement", "operationalCertificate"))
+            check(!policy.has(field), "POLICY_METADATA_UNSUPPORTED");
+        check(str(policy, "calendarMode").equals("MANUAL")
                 && optionalEnum(policy, "normativeProfile", "CUSTOM", "CUSTOM").equals("CUSTOM")
-                && integer(policy, "weeklyLimit") >= 42 && integer(policy, "dailyLimitMinutes") >= 504
+                && List.of(42,44).contains(integer(policy, "weeklyLimit"))
+                && integer(policy, "dailyLimitMinutes") >= 504 && integer(policy, "dailyLimitMinutes") <= 600
                 && integer(policy, "maxConsecutiveWorkDays") == 5, "POLICY");
         for (String field : List.of("closedDates", "holidayDates", "authorizedHolidayDates", "paidHolidayDates"))
             check(empty(policy, field), "HOLIDAY_UNSUPPORTED");
         check(!policy.has("mealIntervalAgreement"), "MEAL_AGREEMENT_UNSUPPORTED");
         int closing = integer(input, "storeClosingMinutes");
-        check(closing >= 1 && closing <= 1440
+        check(closing >= 300 && closing <= 1440
                 && integer(policy, "minMealMinutes") >= 30 && integer(policy, "minMealMinutes") <= 180
                 && integer(policy, "minInterShiftMinutes") >= 660 && integer(policy, "minInterShiftMinutes") <= 1440
                 && integer(policy, "minWeeklyRestMinutes") >= 2100 && integer(policy, "minWeeklyRestMinutes") <= 4320,
@@ -106,6 +110,7 @@ final class WireModel {
             int a = integer(segments.get(0), "start"), b = integer(segments.get(0), "end");
             int c = integer(segments.get(1), "start"), d = integer(segments.get(1), "end");
             int e = integer(segments.get(2), "start"), f = integer(segments.get(2), "end");
+            check(java.util.stream.IntStream.of(a,b,c,d,e,f).allMatch(v -> v >= 0 && v <= 1440), "CLOCK_RANGE");
             check(a >= 300 && a < b && b == c && c < d && d == e && e < f && f <= Math.min(1200, closing)
                     && b - a + f - e == 504 && d - c >= integer(policy, "minMealMinutes") && d - c <= 120
                     && 1440 - (f - a) >= integer(policy, "minInterShiftMinutes")
@@ -125,6 +130,8 @@ final class WireModel {
                     && !bool(person, "historyKnown", false) && !person.has("simulationDailyMinutes")
                     && !person.has("activeUntil") && startsBy(person, first), "PERSON_PROFILE");
             optionalEnum(person, "weeklyHoursMode", "INDIVIDUAL", "INDIVIDUAL", "BRANCH");
+            if (person.has("leadership")) check(person.path("leadership").isObject()
+                    && str(person.path("leadership"), "source").equals("INFERRED"), "LEADERSHIP_UNSUPPORTED");
             for (String field : List.of("history", "planningHistory", "planningFuture", "fixedOffDays",
                     "preferredOffDays", "manualShiftByDate", "manualShiftOverrides", "manualShiftBaseIds"))
                 check(empty(person, field), "PERSON_RESTRICTION_UNSUPPORTED");
@@ -134,7 +141,7 @@ final class WireModel {
                         .allMatch(slot -> slot.path("enabled").isBoolean() && !slot.path("enabled").booleanValue()),
                     "FIXED_REST_UNSUPPORTED");
             List<JsonNode> options = array(person, "shiftIds");
-            String fixed = person.path("fixedImportedShiftId").asText("");
+            String fixed = person.has("fixedImportedShiftId") ? str(person, "fixedImportedShiftId") : "";
             check(options.size() == 1 && options.getFirst().isTextual()
                     && (fixed.isEmpty() || fixed.equals(options.getFirst().textValue())), "CLOCK_OPTIONS");
             String shift = options.getFirst().textValue();
@@ -244,6 +251,8 @@ final class WireModel {
             LocalDate first, LocalDate last) {
         Map<Key, Record> result = new HashMap<>();
         for (JsonNode row : array(input, field)) {
+            for (String key : List.of("absenceSource", "monthlyCarry", "carriedHolidayRest"))
+                check(!row.has(key), "ASSIGNMENT_METADATA_UNSUPPORTED");
             String person = str(row, "employeeId"), date = str(row, "date");
             LocalDate day = LocalDate.parse(date);
             check(people.containsKey(person) && !day.isBefore(first) && !day.isAfter(last), "ASSIGNMENT_REFERENCE");

@@ -40,3 +40,9 @@ Novo modo somente construtor, com exatamente o mesmo mapper e PatternSeeder, dea
 5. Se houver ganho comprovado, avaliar JVM persistente, HTTP/autenticação/cancelamento, fila e isolamento E5/E6; avaliar 2 OCPUs com mesma quota no baseline e candidato em teste separado, GC/JIT ou multistart independente (não paralelismo incremental Enterprise). Manter 1536 MiB até evidência de pressão. Capacidade real A1 4 OCPUs/24 GB, sem tocar produção. Gate humano antes da troca e remoção do OR-Tools.
 
 Status: E2.5 tecnicamente aprovado em cinco workflows, segurança inconclusiva. E2.6 corrige a lacuna e adiciona um experimento de atribuição, ainda requer CI e evidência ARM64. Nenhuma garantia de ausência universal de vulnerabilidades, equivalência completa ou superioridade geral. Um único PR ativo para o restante do projeto.
+
+## E2.7 — curva de busca e coortes comparáveis
+
+Evidência d56c823, workflows 45739559754/45739559881: 7/7 verdes; PATTERN 50/28, 26208 vs CP-SAT 32256, zero regressão; construtor isolado 26208 em 2,37 s vs 12,45 s com busca. Na atribuição 6/7 buscas seriam retidas pelo seletor original por distribuição de descanso. Não presumir que mais movimentos melhoram o produto.
+
+Ajustar agrupamento dominical por setor, cargo, geometria de relógio e limite dominical; evitar objetivo de distribuição de datas para coorte unitária. Alinhar rejeição de metadados fora de E2 e limites numéricos civis com SolverForge/CP-SAT. Testes negativos e de grupos. Novo diagnóstico isolado de 2/4/8/12s e estagnação de 1s, mais construtor, seis rotações. A configuração de estagnação somente aplica quando há seed guardada e nunca é ativada no caminho padrão. Sem alterar prazos 12/18/20, score hard, verificador TS, controles históricos ou quotas. Falhas em budgets curtos são dados, não omitidas. Não alterar o default até prova de benefício sem regressões em holdouts. E3/E4 integral, bairros compostos nativos, contrato HTTP/cancelamento e A1 continuam pendentes.

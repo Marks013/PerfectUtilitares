@@ -30,17 +30,21 @@ public final class SpikeMain {
 
     public static void main(String[] args) throws Exception {
         long start = System.nanoTime();
-        boolean pattern = false, warm = false, seedOnly = false;
+        boolean pattern = false, warm = false, seedOnly = false, stagnation = false;
+        Integer budgetSeconds = null;
         for (String arg : args) {
             if (arg.equals("--pattern-seed") && !pattern) pattern = true;
             else if (arg.equals("--warm-batch") && !warm) warm = true;
             else if (arg.equals("--seed-only") && !seedOnly) seedOnly = true;
+            else if (arg.equals("--stagnation-1s") && !stagnation) stagnation = true;
+            else if (budgetSeconds == null && arg.matches("--budget-seconds=(2|4|8|12)"))
+                budgetSeconds = Integer.parseInt(arg.substring("--budget-seconds=".length()));
             else {
                 System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
                 return;
             }
         }
-        if (seedOnly && (!pattern || warm)) {
+        if (seedOnly && (!pattern || warm) || (budgetSeconds != null || stagnation) && (!pattern || warm || seedOnly)) {
             System.out.println("{\"httpStatus\":400,\"body\":{\"error\":\"SPIKE_UNSUPPORTED_INPUT\",\"failureType\":\"SEED_ARGUMENT\"},\"maxRssKiB\":null}");
             return;
         }
@@ -48,12 +52,13 @@ public final class SpikeMain {
         // one JVM, with fresh domain and solver manager on every invocation.
         byte[] bytes = System.in.readNBytes(LIMIT + 1);
         int repeats = warm ? 3 : 1;
+        long budgetNs = budgetSeconds == null ? BUDGET_NS : Duration.ofSeconds(budgetSeconds).toNanos();
         for (int i = 0; i < repeats; i++) {
-            System.out.println(solveOne(bytes, pattern, seedOnly, i == 0 ? start : System.nanoTime()));
+            System.out.println(solveOne(bytes, pattern, seedOnly, stagnation, budgetNs, i == 0 ? start : System.nanoTime()));
         }
     }
 
-    private static String solveOne(byte[] bytes, boolean patternSeed, boolean seedOnly, long start) throws Exception {
+    private static String solveOne(byte[] bytes, boolean patternSeed, boolean seedOnly, boolean stagnation, long budgetNs, long start) throws Exception {
         ObjectNode reply = JSON.createObjectNode();
         ObjectNode body = reply.putObject("body");
         reply.putNull("maxRssKiB"); // JVM heap is not RSS; cgroup counters are reported separately.
@@ -74,13 +79,13 @@ public final class SpikeMain {
                     stage = "SEED";
                     long seedStart = System.nanoTime();
                     long seedDeadline = Math.min(seedStart + Duration.ofMillis(1250).toNanos(),
-                            start + Duration.ofSeconds(2).toNanos());
+                            Math.min(start + Duration.ofSeconds(2).toNanos(), start + budgetNs - Duration.ofMillis(500).toNanos()));
                     seedOutcome = PatternSeeder.seed(input, seedDeadline).name();
                     seedSeconds = elapsed(seedStart);
                 }
                 boolean guarded = seedOutcome.equals("APPLIED") && SeedGuard.install(input);
                 long initialized = input.days().stream().filter(day -> day.state() != null).count();
-                long residual = BUDGET_NS - (System.nanoTime() - start);
+                long residual = budgetNs - (System.nanoTime() - start);
                 // No extra 12 seconds after mapping. Reserve a conservative setup/return margin.
                 residual -= Duration.ofMillis(500).toNanos();
                 Roster result = null;
@@ -104,10 +109,14 @@ public final class SpikeMain {
                     }
                 } else if (residual >= 1_000_000L) {
                     stage = "FACTORY";
-                    try (var manager = SolverManager.<Roster>create(config(Duration.ofMillis(residual / 1_000_000L)),
+                    var searchConfig = config(Duration.ofMillis(residual / 1_000_000L));
+                    // Diagnostic only: do not stop an unguarded construction on a
+                    // stagnation criterion, and do not change the normal 12s path.
+                    if (stagnation && guarded) searchConfig.withTerminationUnimprovedSpentLimit(Duration.ofSeconds(1));
+                    try (var manager = SolverManager.<Roster>create(searchConfig,
                             new SolverManagerConfig().withParallelSolverCount("1"))) {
                         stage = "SEARCH";
-                        if (System.nanoTime() - start < BUDGET_NS - Duration.ofMillis(250).toNanos()) {
+                        if (System.nanoTime() - start < budgetNs - Duration.ofMillis(250).toNanos()) {
                             var job = manager.solveBuilder().withProblemId("synthetic-e2").withProblem(input)
                                     .withBestSolutionEventConsumer(event -> {
                                         var solution = event.solution();
@@ -119,7 +128,7 @@ public final class SpikeMain {
                                     }).run();
                             var finished = new AtomicBoolean(false);
                             Thread watchdog = Thread.ofPlatform().daemon().name("e2-deadline").unstarted(() -> {
-                                long stop = start + BUDGET_NS - Duration.ofMillis(250).toNanos();
+                                long stop = start + budgetNs - Duration.ofMillis(250).toNanos();
                                 while (!finished.get()) {
                                     long remaining = stop - System.nanoTime();
                                     if (remaining <= 0) {
@@ -156,7 +165,7 @@ public final class SpikeMain {
                 Long guardViolation = guarded && result != null && result.score() != null
                         ? Math.max(0L, -result.score().softScore(0)) : null;
                 boolean valid = completeFeasible && (!guarded || guardViolation != null && guardViolation == 0L)
-                        && System.nanoTime() - start <= BUDGET_NS;
+                        && System.nanoTime() - start <= budgetNs;
                 body.put("status", valid ? "FEASIBLE" : "UNKNOWN");
                 body.put("message", valid ? (seedOnly ? "Synthetic E2 constructor-only diagnostic" : "Synthetic E2 partial candidate")
                         : "Synthetic E2 no feasible candidate within budget");
@@ -190,6 +199,9 @@ public final class SpikeMain {
                 if (firstTime >= 0) telemetry.put("firstFeasibleSeconds", firstTime / 1e9);
                 else telemetry.putNull("firstFeasibleSeconds");
                 telemetry.put("partialModel", true);
+                telemetry.put("budgetSeconds", budgetNs / 1_000_000_000L);
+                telemetry.put("stagnationRequested", stagnation);
+                telemetry.put("stagnationApplied", stagnation && guarded && !seedOnly && residual >= 1_000_000L);
             }
         } catch (WireModel.Unsupported | java.time.DateTimeException | ArithmeticException error) {
             code = 400;
@@ -209,7 +221,7 @@ public final class SpikeMain {
         reply.set("cgroup", CgroupSample.read(JSON, Path.of("/sys/fs/cgroup")));
         // Error and proof texts are fixed; do not serialize stack traces, the input or internal scores.
         byte[] output = JSON.writeValueAsBytes(reply);
-        if (code == 200 && body.path("status").asText().equals("FEASIBLE") && System.nanoTime() - start > BUDGET_NS) {
+        if (code == 200 && body.path("status").asText().equals("FEASIBLE") && System.nanoTime() - start > budgetNs) {
             body.put("status", "UNKNOWN");
             body.put("message", "Synthetic E2 result exceeded internal deadline");
             body.putArray("assignments");

@@ -133,6 +133,17 @@ class RosterConstraintsTest {
                 sunday("person-1", 1, false, Day.State.WORK, 1))
                 .penalizesBy(5000);
     }
+    @Test void sundayRatesDoNotCompareDifferentRolesOrClocks() {
+        Day first = sunday("person-0",0,false,Day.State.WORK,1);
+        Day second = sunday("person-1",0,false,Day.State.OFF,1);
+        second.setRole("Caixa");
+        verifier.verifyThat(RosterConstraints::sundaySpread).given(first,second).penalizesBy(0);
+        second.setRole(first.role());
+        second.setWorkSegments(List.of(new Day.Segment(480,720),new Day.Segment(780,1044)));
+        verifier.verifyThat(RosterConstraints::sundaySpread).given(first,second).penalizesBy(0);
+        verifier.verifyThat(RosterConstraints::sundayDateSpread).given(first,
+                sunday("person-0",1,false,Day.State.OFF,1)).penalizesBy(0);
+    }
     @Test void coverageGeneralAndRolePathsIncludeZeroAttendance() {
         var general = new Roster.Band(1, "Sector 1", null, 480, 540, 2, true);
         var role = new Roster.Band(1, "Sector 1", "Repositor", 540, 600, 2, true);

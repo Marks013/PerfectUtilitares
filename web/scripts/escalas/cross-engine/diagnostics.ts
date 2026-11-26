@@ -130,6 +130,44 @@ async function main() {
       ...quality, decision: "EXPLORATORY_ATTRIBUTION_ONLY" }));
   }
 
+  // Diagnostic-only shorter budgets and opt-in stagnation. Each variant
+  // appears once in every position, preserving the same envelope and quotas.
+  const curve = [
+    { name: "CONSTRUCTOR", budget: 12, seed: true, stagnation: false },
+    ...[2,4,8,12].map(budget => ({ name: "NATIVE_" + budget, budget, seed: false, stagnation: false })),
+    { name: "STAGNATION_1S", budget: 12, seed: false, stagnation: true },
+  ];
+  const curveRows = new Map<string, Trial[]>();
+  for (let repetition=0;repetition<curve.length;repetition++) {
+    const round = new Map<string, Trial>();
+    for (let position=0;position<curve.length;position++) {
+      const v=curve[(repetition+position)%curve.length];
+      const adapter=dockerAdapter(candidate,"timefold",true,false,v.seed,v.seed ? undefined : v.budget,v.stagnation);
+      const trial=await runTrial(scenario,frozen,adapter);
+      if(trial.inputHash!==metadata.inputHash) throw new Error("DIAGNOSTIC_INPUT_DRIFT");
+      if(valid(trial) && (!trial.cgroup || trial.processSeconds! > v.budget+.1 || trial.spike?.seedOnly!==v.seed))
+        throw new Error("DIAGNOSTIC_CURVE_IDENTITY");
+      round.set(v.name,trial);
+      const rows=curveRows.get(v.name)??[];rows.push(trial);curveRows.set(v.name,rows);
+      const {proposal:_proposal,...record}=trial;
+      console.log(JSON.stringify({kind:"curve-measurement",...metadata,variant:v.name,repetition,position,
+        requestedBudgetSeconds:v.budget,stagnation:v.stagnation,identity:inspectImage(candidate,"timefold"),...record}));
+    }
+    const seed=round.get("CONSTRUCTOR")!;
+    for (const v of curve.filter(x=>!x.seed)) {
+      console.log(JSON.stringify({kind:"curve-comparison",...metadata,repetition,variant:v.name,
+        ...comparison(seed,round.get(v.name)!),decision:"EXPLORATORY_ATTRIBUTION_ONLY"}));
+    }
+  }
+  for (const v of curve) {
+    const rows=curveRows.get(v.name)??[], good=rows.filter(valid);
+    if(rows.length!==curve.length) throw new Error("DIAGNOSTIC_CURVE_COUNT");
+    console.log(JSON.stringify({kind:"curve-summary",...metadata,variant:v.name,requestedBudgetSeconds:v.budget,
+      samples:rows.length,validNew:good.length,shortageP50:quantile(good.flatMap(r=>r.finalAssessment?.metrics?.normalizedEstimatedShortage??[]),.5),
+      productP50Seconds:quantile(good.map(r=>r.productSeconds),.5),peakBytes:good.length?Math.max(...good.map(r=>r.cgroup!.memoryPeakBytes)):null,
+      decision:"EXPLORATORY_NOT_CERTIFIED"}));
+  }
+
   // Repeat the identical payload three times in the same JVM, with fresh
   // domain and manager each time. Replay replies through the real client;
   // never report the replay latency as actual warm service time.

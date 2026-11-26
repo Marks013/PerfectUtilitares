@@ -25,7 +25,7 @@ public class RosterConstraints implements ConstraintProvider {
         return BendableScore.ofSoft(1, SOFT_LEVELS, index + 3, 1L);
     }
     record SectorDay(String sector, int day) {}
-    record SundayGroup(String sector, int cap) {}
+    record SundayGroup(String sector, String role, java.util.List<Day.Segment> clock, int cap) {}
     record SectorPerson(SundayGroup group, String person) {}
     record SundayDate(SundayGroup group, int day) {}
     @Override
@@ -182,7 +182,7 @@ public class RosterConstraints implements ConstraintProvider {
     }
 
     private static SundayGroup sundayGroup(Day day) {
-        return new SundayGroup(day.sector(), day.getSundayCap());
+        return new SundayGroup(day.sector(), day.role(), day.getWorkSegments(), day.getSundayCap());
     }
     private static long rate(long worked, long opportunities) {
         return worked * 10_000L / opportunities;
@@ -205,6 +205,8 @@ public class RosterConstraints implements ConstraintProvider {
     }
     Constraint sundayDateSpread(ConstraintFactory f) {
         BiConstraintStream<SundayGroup, Long> rates = f.forEachIncludingUnassigned(Day.class).filter(Day::sundayOpportunity)
+                .ifExistsIncludingUnassigned(Day.class, equal(RosterConstraints::sundayGroup, RosterConstraints::sundayGroup),
+                        filtering((day, peer) -> !day.person().equals(peer.person())))
                 .groupBy(day -> new SundayDate(sundayGroup(day), day.index()),
                         sum(day -> day.working() ? 1L : 0L), count())
                 .map((date, worked, available) -> date.group(),

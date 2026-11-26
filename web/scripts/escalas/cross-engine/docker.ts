@@ -91,7 +91,9 @@ function cleanup(name: string) {
 }
 
 /** Same immutable image, quota and cleanup for preflight and measured runs. */
-function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false, seedOnly = false) {
+function runIsolated(image: string, engine: Engine, body: string, validateOnly = false, patternSeed = false, warm = false, seedOnly = false, budgetSeconds?: number, stagnation = false) {
+  if ((budgetSeconds !== undefined || stagnation) && (engine !== "timefold" || validateOnly || warm || seedOnly || !patternSeed
+    || budgetSeconds !== undefined && ![2,4,8,12].includes(budgetSeconds))) throw new Error("CROSS_ENGINE_BUDGET_MODE");
   if (seedOnly && (engine !== "timefold" || validateOnly || warm || !patternSeed)) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (warm && (engine !== "timefold" || validateOnly || !patternSeed)) throw new Error("CROSS_ENGINE_WARM_MODE");
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
@@ -116,6 +118,8 @@ function runIsolated(image: string, engine: Engine, body: string, validateOnly =
     args.push(image);
     if (patternSeed) args.push("--pattern-seed");
     if (seedOnly) args.push("--seed-only");
+    if (budgetSeconds !== undefined) args.push("--budget-seconds=" + budgetSeconds);
+    if (stagnation) args.push("--stagnation-1s");
   }
   try {
     return spawnSync("docker", args, { input: body, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: (warm ? 27 : 9) * 1024 * 1024 });
@@ -136,7 +140,9 @@ export function validateBaselineEnvelope(image: string, body: string) {
   }
 }
 
-export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false, seedOnly = false): Adapter {
+export function dockerAdapter(image: string, engine: Engine, patternSeed = false, historical = false, seedOnly = false,
+  budgetSeconds?: number, stagnation = false): Adapter {
+  if (historical && (budgetSeconds !== undefined || stagnation)) throw new Error("CROSS_ENGINE_BUDGET_MODE");
   if (seedOnly && (historical || !patternSeed || engine !== "timefold")) throw new Error("CROSS_ENGINE_SEED_ONLY_MODE");
   if (patternSeed && engine !== "timefold") throw new Error("CROSS_ENGINE_SEED_MODE");
   const identity = inspectImage(image, engine);
@@ -144,7 +150,7 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
       || (patternSeed && identity.revision !== "335efcc09f1410266f70c6e5fb5be03a1294e33f")))
     throw new Error("CROSS_ENGINE_HISTORICAL_REVISION");
   return body => {
-    const child = runIsolated(image, engine, body, false, patternSeed, false, seedOnly);
+    const child = runIsolated(image, engine, body, false, patternSeed, false, seedOnly, budgetSeconds, stagnation);
     let reply: WireReply;
     // GNU timeout 124 is a known Timefold supervisor deadline. 137 is ambiguous
     // (OOM or forced termination); do not misreport it as a normal timeout.
@@ -160,6 +166,13 @@ export function dockerAdapter(image: string, engine: Engine, patternSeed = false
         // the current validator. Only pinned controls can omit their old spike.
         if (historical && value && typeof value === "object") delete value.spike;
         reply = verifyReply(value);
+        if ((budgetSeconds !== undefined || stagnation) && reply.httpStatus === 200
+          && (value.spike?.budgetSeconds !== (budgetSeconds ?? 12)
+            || value.spike?.stagnationRequested !== stagnation
+            || stagnation && (reply.body as {status?: string}).status === "FEASIBLE" && value.spike?.stagnationApplied !== true
+            || (reply.body as {status?: string;wallTimeSeconds?: number}).status === "FEASIBLE"
+              && !((reply.body as {wallTimeSeconds: number}).wallTimeSeconds <= (budgetSeconds ?? 12) + .1)))
+          throw new Error("CROSS_ENGINE_BUDGET_TELEMETRY");
         if (engine === "timefold" && reply.httpStatus === 200 && ["OPTIMAL", "INFEASIBLE"].includes((reply.body as { status: string }).status))
           throw new Error("CROSS_ENGINE_UNSUPPORTED_PROOF");
       }

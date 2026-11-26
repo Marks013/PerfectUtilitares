@@ -135,6 +135,29 @@ class WireModelTest {
         assertEquals("EXPECTED_BOOLEAN", assertThrows(WireModel.Unsupported.class,
                 () -> WireModel.read(root)).getMessage());
     }
+    @Test void rejectsUnmodelledMetadataAndClockBounds() throws Exception {
+        var root = envelope();
+        var input = (ObjectNode) root.path("input");
+        input.putObject("planningCalendarSource");
+        assertEquals("CALENDAR_SOURCE_UNSUPPORTED", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        input.remove("planningCalendarSource");
+        var person = (ObjectNode) input.path("employees").get(0);
+        person.putObject("leadership").put("source","MANUAL");
+        assertEquals("LEADERSHIP_UNSUPPORTED", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        person.remove("leadership");
+        var segment = (ObjectNode) input.path("shifts").get(0).path("segments").get(0);
+        segment.put("start",Integer.MAX_VALUE);
+        assertEquals("CLOCK_RANGE", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+        segment.put("start",420);
+        input.set("assignments",JSON.readTree("""
+            [{"employeeId":"person-0","date":"2026-11-01","kind":"OFF","monthlyCarry":true}]
+            """));
+        assertEquals("ASSIGNMENT_METADATA_UNSUPPORTED", assertThrows(WireModel.Unsupported.class,
+                () -> WireModel.read(root)).getMessage());
+    }
     @Test void rejectsLockedSaturdayOff() throws Exception {
         var root = envelope();
         ((ObjectNode)root.path("input")).set("assignments", JSON.readTree(
