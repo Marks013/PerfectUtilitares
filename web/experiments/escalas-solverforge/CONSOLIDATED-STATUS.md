@@ -1,82 +1,79 @@
-# SolverForge — contratos de cobertura recuperados; main bloqueada
+# SolverForge — sugestões iniciais e catálogos corrigidos; main bloqueada
 
 Atualização: 27/11/2026. Branch: `experiment/solverforge-consolidado-2026-11-26`.
-Base: `2d547d092f67289354c9f5bd22bec7c71ed40724`.
-Árvore de código efetivamente compilada e verificada: `d10941c086ca1f425d8a6282fe4924f9831708ca`.
+Base: `f422cf3ff51cfdfb2827cc904a4e7d5e88d7b05c`.
+Árvore de código compilada e verificada: `3b33cad1eee52b5de05dad55432158ceff996baa`.
 
-## Escopo e limites preservados
+## Escopo preservado
 
-O runtime continua exclusivamente SolverForge, com Python para autenticação, transporte, validação e supervisão. OR-Tools permanece somente como controle histórico externo do benchmark. Rust 1.100.0, upstream fixado, dependências e Cargo.lock não foram alterados. O componente rustfmt da mesma versão foi instalado apenas no laboratório e aplicado somente ao novo módulo de testes.
+O runtime continua exclusivamente SolverForge, com Python para transporte, autenticação, validação e supervisão. OR-Tools permanece somente como controle histórico externo. Rust 1.100.0, upstream, dependências e Cargo.lock não foram alterados. Foram alterados cinco arquivos de código/testes/inventário e este relatório.
 
-Foram alterados seis arquivos de código/testes/inventário e este relatório. O comparador externo, os cenários, as asserções públicas anteriores de qualidade e os workflows permanentes de qualificação permanecem iguais à base. Não houve merge, deploy, build Docker nem alteração na main, Timefold #74 ou branch original do PR #75. O workflow temporário usado exclusivamente para transportar objetos Git com hash verificado é removido da árvore final; seu sucesso não representa qualificação.
+Não houve alteração da main, Timefold #74, branch original do PR #75 ou produção, nem merge, deploy ou build Docker. Comparador externo, cenários, prazos, limites dos domínios, workflows permanentes de qualificação, esquema HTTP e asserções públicas anteriores foram preservados. O workflow temporário de transporte de objetos Git verificados por hash é removido da árvore final; seu sucesso não qualifica o motor.
 
-## Dois defeitos reproduzidos e corrigidos
+## Correções e otimização
 
-### Déficit de referência fechada não pode desaparecer dos limites privados
+### Sugestões opcionais não podem invalidar a solicitação original
 
-A leitura descartava a estimativa de uma data fechada/feriado pago antes de compilar `_coverageComparison`. Isso permitia aceitar uma escala sem contabilizar o déficit constante que o limite privado exigia preservar. A fonte histórica `5732c4e21d793a0e22149907cd3e78e563a1ed05`, em `_coverage`, mantém essas referências quando há comparação privada.
+Foram reproduzidas rejeições nativas por sugestão duplicada e referência de turno desconhecida. Pelo HTTP autenticado, uma sugestão duplicada ou com data fora do horizonte produzia 422 apesar de a solicitação autoritativa ser viável. A nova leitura interna descarta integralmente uma sugestão inutilizável e continua a partir das atribuições e regras originais. Não aproveita silenciosamente apenas parte da sugestão.
 
-Agora, a referência permanece no cálculo quando `_coverageComparison` está presente. Sem essa comparação, a exclusão preexistente das estimativas de feriados pagos e dos domingos fechados configurados continua preservada. Nenhuma data é reaberta, nenhum limite é ampliado e nenhum turno é inventado.
+A fonte histórica `5732c4e21d793a0e22149907cd3e78e563a1ed05` distingue a validação pública de `model_input` da avaliação interna de `_initial_hint_baseline`. Essa distinção permanece: formatos e referências inválidos continuam rejeitados na fronteira HTTP; somente a sugestão opcional que chega à avaliação interna é descartada quando inutilizável. O esquema público não foi relaxado. O decodificador sintético continua estrito.
 
-A regressão nativa e a chamada HTTP real mostraram a falha antes da correção. Depois, um déficit fechado de 60 minutos-pessoa com margem de fechamento zero é rejeitado; com margem explicitamente fornecida de 60, a proposta é aceita e informa os 60 reais em COVERAGE e CLOSING_COVERAGE. O contrato de uma data técnica fora do mês visível também verifica que a data continua no horizonte e no fechamento, sem ser acrescentada ao total mensal.
+A leitura limita sugestões a 10.500 registros e verifica o prazo durante o percurso. MAPPING_TIMEOUT nunca é convertido em sugestão inválida ou ignorado. Uma sugestão não pode esconder erros nas atribuições obrigatórias, redefinir afastamentos, folgas fixas, feriados, bloqueios, vigência ou o modo HOURS_ONLY. As proteções privadas e a cobertura confirmada continuam obrigatórias.
 
-### Cargo vazio em demanda geral
+Registros de colaboradores excluídos podem acompanhar a sugestão quando são exatamente os registros originais preservados. Não se tornam entidades de otimização nem fornecem cobertura. Alterar esses registros invalida a sugestão, sem alterar os registros reais. Essa diferença também foi reproduzida antes da correção e verificada por HTTP real.
 
-A demanda pública com `role: ""` era convertida em uma exigência para um cargo vazio, causando uma prova incorreta de falta de capacidade quando o contrato histórico a trata como demanda geral. A leitura pública agora conserva esse significado. Metadados dos colaboradores não são reescritos; nomes de cargos não vazios continuam exatos.
+### Rejeição global sem efeitos no catálogo
 
-Essa correção não generaliza o campo de cargo dos limites privados de serviço. Um cargo efetivamente registrado como vazio continua sendo uma chave específica nesses limites. Há testes separados para a demanda geral e para essa proteção privada. O caso de sucesso foi executado por HTTP autenticado real, preservando a entrada.
+Uma sugestão pessoalmente legal, mas inviável para a cobertura global, podia ser acrescentada ao catálogo amostrado antes da verificação final. A rejeição limpava a escolha, mas deixava o catálogo modificado. O caso foi reproduzido em seis semanas com horários equivalentes e uma sugestão não presente na amostra.
 
-## Portabilidade com rastreabilidade
+Agora, os avaliadores reais de setor e globais verificam componentes temporários antes de copiar ou substituir qualquer entrada de catálogo. Uma sugestão rejeitada deixa intactos catálogo, alternativas permitidas, custos de desempate, seleção e flags de fixação. Uma sugestão globalmente viável continua disponível como escolha móvel. Não foram alterados os limites de amostragem ou a política existente de inclusão de sugestões aceitas no limite do catálogo.
 
-Foram reabertas as fontes históricas exatas e portados 18 contratos do inventário:
+Os objetivos de alteração continuam referidos à grade originalmente salva. No contrato de troca de dois dias, a construção mede PEOPLE_CHANGED=1 e STABILITY=2, sem transformar a sugestão em uma nova referência de custo zero. Não há fabricação de telemetria ou alegação de ótimo global.
 
-- Seis de cálculo diário: deduplicação, sobreposição, máximos por cargo, déficit de função não compensado por excedente de outra, separação de confirmado/estimado e obrigatoriedade por cargo.
-- Quatro de presença: WORK real não substituído por DUTY, ausência de piso inventado a partir de DUTY, preservação de presença diante de alvo zero e compatibilidade com afastamento/folga bloqueada.
-- Oito de proteção/comparação: cobertura do setor de origem e de domingo na primeira construção, redistribuição de déficit entre domingos, limites setoriais e dominicais, pico simultâneo, divisão por cortes de horário, margem implícita zero por cargo, fechamento fora do mês e contagem única da pessoa na passagem entre datas.
+### Reuso de catálogos equivalentes
 
-Cada registro mantém sua identidade histórica, revisão de origem, SHA-256 do corpo original, justificativa da portabilidade, destino Rust, nome qualificado do teste e SHA-256 do arquivo de destino. A baixa só foi aplicada depois de verificar esses nomes na execução nativa completa aprovada. Os 481 identificadores históricos foram preservados; 337 continuam pendentes. `readyForMain` permanece false.
+Um teste adicional mostrou quatro cópias de um mesmo catálogo quando quatro pessoas com o mesmo domínio recebiam uma sugestão idêntica fora da amostra. A aplicação agora compartilha o catálogo imutável enriquecido e os índices permitidos para a combinação exata de domínio original e estados sugeridos.
 
-Os contratos originalmente isolados de cobertura continuam testes de componente: usam o decodificador, o cálculo integral e as proteções reais do SolverForge com atribuições controladas, assim como os modelos CP antigos isolavam essa álgebra. Eles não são apresentados como escalas semanais completas legalmente válidas. Os testes de primeira construção e os testes HTTP exercitam também o fluxo completo. Não foram recriados CpModel, variáveis CP ou auxiliares falsos apenas para satisfazer mocks.
+Nesse teste, quatro catálogos distintos passaram a um compartilhado. Os custos individuais de desempate SHA continuam separados e conferidos contra o cálculo de cada pessoa. Sugestões diferentes usam famílias separadas, também verificadas. Isso reduz duplicação nessa operação; não é medição de RSS total, ganho geral de latência ou benchmark de escalas completas.
 
-Algumas verificações adicionais têm escopo parcial e não receberam baixa no inventário: por exemplo, a preservação numérica dos domingos mensais não é apresentada como substituição integral do diagnóstico textual histórico, nem a aceitação de candidatos pela proteção como prova de equivalência de toda a busca antiga. A contagem das pendências não foi reduzida por esses casos.
+## Contratos históricos e rastreabilidade
 
-A verificação do inventário agora admite destinos Rust explicitamente registrados, mantendo a exigência de zero pendências para release. Ela rejeita arquivos cujo hash mudou, funções ausentes, testes ignorados ou condicionais, módulos desabilitados, caminhos externos e identidades incompatíveis. Esses testes estruturais não substituem a execução obrigatória do cargo test na CI.
+Foram portados nove contratos: sete de sugestões iniciais e dois de preservação de feriados/afastamentos na geração. Cada registro mantém identidade histórica, revisão de origem, SHA-256 do corpo original, justificativa, destino Rust, nome qualificado do teste e hash do arquivo de destino. A baixa ocorreu após confirmar a execução nativa completa.
 
-## Validação executada
+Os 481 identificadores históricos permanecem preservados. As pendências caíram de 337 para 328; readyForMain permanece false. Não houve descarte de contratos para liberar o teste. Uma omissão inicial do metadado de linguagem dos novos destinos foi detectada pela verificação existente e corrigida antes da publicação, sem modificar o verificador.
 
-Ambiente isolado Linux x86_64/GNU, Rust 1.100.0. As fontes foram comparadas byte a byte com a cópia compilada e os seis blobs de publicação foram conferidos por hash.
+## Validação final executada
 
-| Verificação | Base 2d547d0 | Candidato desta rodada |
+Laboratório isolado Linux x86_64/GNU, Rust 1.100.0. Fontes comparadas byte a byte com a cópia compilada. Novos testes: 17 Rust e quatro Python HTTP. As falhas de sugestão, mutação de catálogo e duplicação foram reproduzidas antes das respectivas correções.
+
+| Verificação | Base f422cf3 | Código desta rodada |
 |---|---:|---:|
-| Testes Rust completos aprovados | 136 | 162 |
+| Testes Rust completos aprovados | 162 | 179 |
 | Testes Python do experimento aprovados | 45 | 45 |
-| Testes de transporte, fases, HTTP, presença e ocupação civil | 69 | 71 |
-| Testes da suíte pública completa | 250 | 257 |
-| Falhas da suíte pública | 1 | 1 |
-| Erros da suíte pública | 0 | 0 |
-| Testes ignorados da suíte pública | 0 | 0 |
-| Contratos históricos pendentes | 355 | 337 |
+| Transporte, fases, HTTP, presença e ocupação civil | 71 | 75 |
+| Testes na suíte pública completa | 257 | 261 |
+| Falhas na suíte pública | 1 | 1 |
+| Erros / testes ignorados na suíte pública | 0 / 0 | 0 / 0 |
+| Contratos históricos pendentes | 337 | 328 |
 
-Clippy all-targets com -D warnings, build release, Ruff, conferência do Cargo.lock e git diff --check passaram. Foram acrescentados 26 testes Rust e sete testes Python, incluindo dois caminhos HTTP reais e cinco verificações de integridade dos destinos nativos. Os 71 testes de fronteira fazem parte da suíte maior, não são cobertura adicional independente.
+Clippy all-targets com -D warnings, build release, Ruff, conferência do Cargo.lock e git diff --check passaram. Os 75 testes de fronteira integram a suíte pública maior; não são cobertura adicional independente. Os cinco testes direcionados de HTTP e integridade do inventário também passaram.
 
-Uma verificação nativa adicional confrontou a cobertura e o fechamento com um cálculo independente minuto a minuto em 256 combinações de demanda, duplicação, ordem de entrada e equipes. Os valores coincidiram. Não é benchmark nem demonstração de ótimo global.
-
-A suíte pública sem filtro terminou com 257 testes, uma falha, zero erros e zero ignorados, em 259,049 segundos. A única falha é `test_every_retired_test_has_a_reviewed_migration_disposition`, por 337 contratos ainda pendentes. O código de saída permanece 1. Não há aprovação integral para main.
+A suíte pública final, executada novamente após a otimização de compartilhamento, terminou com 261 testes em 264,673 segundos, uma falha, zero erros e zero ignorados. A única falha é `test_every_retired_test_has_a_reviewed_migration_disposition`, por 328 contratos ainda pendentes. O resultado permanece FAILED e o código de saída é 1. A ausência de outras falhas nos testes atuais não prova os contratos ainda ausentes.
 
 ## Pendências de homologação
 
-Continuam necessárias a portabilidade ou revisão explícita dos 337 contratos, a não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, ARM64/musl do novo commit, contêiner/segurança/E2E e as 32 repetições de desempenho e estabilidade. A equivalência integral dos objetivos e dos contratos temporais ainda não está certificada. Hora noturna reduzida e outros limites já documentados não são declarados implementados por esta rodada.
+Continuam necessárias a portabilidade ou revisão explícita dos 328 contratos, a não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, a qualificação ARM64/musl do novo commit, contêiner/segurança/E2E e as 32 repetições de desempenho e estabilidade. Esses benchmarks não foram executados nesta rodada. Hora noturna reduzida e a equivalência integral dos objetivos não são declaradas concluídas.
 
-O benchmark ampliado e a medição de estabilidade não foram executados neste candidato. Não houve revisão por subagente autônomo. As verificações de álgebra, os testes negativos, a conferência das fontes históricas e a revisão do diff não são apresentadas como revisão independente nem como ganho geral de desempenho.
+Não houve revisão por subagente autônomo; o Codex do laboratório continuava sem autenticação. A revisão do código, comparação com fontes históricas e os testes não são apresentados como revisão independente. Nenhum resultado desta rodada autoriza merge ou deploy.
 
 ## Evidências e retomada
 
-Laboratório: `/vercel/lab/contracts-round7`. Workspace: `/vercel/solverforge-round7`, baseado em `2d547d0`; retomar o próximo bloco em uma worktree limpa do commit publicado. SHA-256 dos logs finais:
+Diretório: `/vercel/lab/contracts-round8`. Workspace: `/vercel/solverforge-round8`, baseado em f422cf3. Retomar o próximo bloco em uma worktree limpa do commit publicado, preservando os logs anteriores.
 
-- Rust: `2b0a4c7b24c8a77c5aecc1411bc7da261e3638e843130926c5940e94b1f5c9f0`.
-- Clippy: `59c151386e03247033ff283b096b54e8da17fe39927caa2ee70b0152bb6c7ca2`.
-- Build: `c3ca109861d7426819db9e118e38eefd785f84203eecdca51f6fd4921d74f3b7`.
-- Fronteiras: `096c3d062bd968ad56ab48be55c9fc3de5e6e3d37ca90ea97c6f0302e40fc101`.
-- Suíte pública: `26a8952c4adcf9bb49146b30c1ffebbe59e3aea85c164fa0c5beb1e0c03cb322`.
+SHA-256 dos logs finais:
 
-O checkpoint publicado preserva os resultados, a árvore verificada, os hashes e as pendências; não autoriza merge ou deploy.
+- Rust: `c737b0b55bd2d4318544f166e776bb1133809478c244d87c60267ee4ad0fa74b`.
+- Clippy: `621be0b67e4e74ef1dcb3af691cc35d6da1bd9bedba3d928b1833d1049b26e03`.
+- Build: `8785579081f54da207cb04c94b602bff6d0d42bffdd8043bf569ae715490e5f8`.
+- Fronteiras: `2a6583ac765e4f77b73685b827286de08a685cfc1c1780174df9da43ce542995`.
+- Suíte pública: `0496f0c5cc173e0fbf3a58294d3797cdaddbfe61bcd78622a37917bf5afaeb33`.

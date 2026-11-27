@@ -263,6 +263,71 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-04")["kind"], "WORK")
         self.assertEqual(data, before)
 
+    def test_duplicate_or_outside_native_hint_falls_back_over_real_http(self):
+        for bad in ("duplicate", "outside"):
+            with self.subTest(bad=bad):
+                data = fixture(40)
+                data["assignments"] = [{"employeeId":"p0", "date":f"2026-11-{d:02}",
+                                        "kind":"WORK" if d <= 6 else "OFF",
+                                        **({"shiftId":"day"} if d <= 6 else {})} for d in range(2,9)]
+                data["_initialAssignments"] = copy.deepcopy(data["assignments"])
+                if bad == "duplicate":
+                    data["_initialAssignments"].append(copy.deepcopy(data["_initialAssignments"][0]))
+                else:
+                    data["_initialAssignments"][0]["date"] = "2026-11-09"
+                before = copy.deepcopy(data)
+                status, result = self.request("/solve", {"input":data}, self.identity())
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["status"], "FEASIBLE", result)
+                self.assertEqual(result["assignments"], data["assignments"])
+                self.assertEqual(data, before)
+
+    def test_public_hint_schema_remains_strict_before_native_launch(self):
+        for hint in ({"not":"a list"}, [{"employeeId":"other-tenant", "date":"2026-11-02", "kind":"OFF"}],
+                     [{"employeeId":"p0", "date":"2026-11-02", "kind":"WORK", "shiftId":"retired"}]):
+            with self.subTest(hint=hint):
+                data = fixture(40)
+                data["_initialAssignments"] = hint
+                status, result = self.request("/solve", {"input":data}, self.identity())
+                self.assertEqual(status, 400, result)
+                self.assertNotIn("assignments", result)
+
+    def test_valid_hint_keeps_saved_costs_and_disabled_protected_records_over_http(self):
+        data = fixture(40, people=2)
+        data["employees"][1]["planningEnabled"] = False
+        data["assignments"] = [{"employeeId":"p0", "date":f"2026-11-{d:02}",
+                                "kind":"WORK" if d <= 6 else "OFF",
+                                **({"shiftId":"day"} if d <= 6 else {})} for d in range(2,9)]
+        protected = {"employeeId":"p1", "date":"2026-11-03", "kind":"OFF", "locked":True}
+        data["assignments"].append(protected)
+        data["_initialAssignments"] = copy.deepcopy(data["assignments"])
+        data["_initialAssignments"][3] = {"employeeId":"p0", "date":"2026-11-05", "kind":"OFF"}
+        data["_initialAssignments"][5] = {"employeeId":"p0", "date":"2026-11-07", "kind":"WORK", "shiftId":"day"}
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        phases = {p["objective"]:p for p in result["optimization"]["phases"]}
+        self.assertEqual(phases["PEOPLE_CHANGED"]["initialValue"], 1)
+        self.assertEqual(phases["STABILITY"]["initialValue"], 2)
+        self.assertEqual([a for a in result["assignments"] if a["employeeId"] == "p1"], [protected])
+        self.assertEqual(data, before)
+
+    def test_non_scalar_assignment_references_are_rejected_without_server_failure(self):
+        for field in ("employeeId", "shiftId"):
+            for bad in (["p0" if field == "employeeId" else "day"], {"value":"not-a-reference"}):
+                for location in ("assignments", "_initialAssignments"):
+                    with self.subTest(field=field, bad=bad, location=location):
+                        data = fixture(40)
+                        row = {"employeeId":"p0", "date":"2026-11-03", "kind":"WORK", "shiftId":"day"}
+                        row[field] = bad
+                        data[location] = [row]
+                        before = copy.deepcopy(data)
+                        status, result = self.request("/solve", {"input":data}, self.identity())
+                        self.assertEqual(status, 400, result)
+                        self.assertNotIn("assignments", result)
+                        self.assertEqual(data, before)
+
     def test_authentication_precedes_parsing_and_slot_allocation(self):
         status, result = self.request(
             "/solve", {"bad": "input"}, self.identity(), auth=False

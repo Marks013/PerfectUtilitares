@@ -469,15 +469,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         clocks.push(c);
     }
     let clocks=Arc::new(clocks);
-    let mut hints=BTreeMap::<(&str,i32),Record>::new();
-    if input.get("_initialAssignments").is_some(){
-        for row in array(input,"_initialAssignments")?{
-            let pid=text(row,"employeeId")?;
-            let day=relative(text(row,"date")?)?;
-            check((0..days as i32).contains(&day),"HINT_DATE")?;
-            check(hints.insert((pid,day),code(row,&ids,pid,false)?).is_none(),"DUPLICATE_HINT")?;
-        }
-    }
+    let hints=initial_hint::read(input,&calendar,&ids,service,deadline)?;
     let mut witnesses=Vec::new();
 
     check(!people.is_empty()&&people.len()<=if days==7&&!service{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
@@ -797,20 +789,33 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     let required:usize=witnesses.iter().flatten().map(|p|p.states[..days].iter().filter(|&&s|s!=INACTIVE).count()).sum();
     let complete=!hints.is_empty()&&witnesses.iter().all(Option::is_some)&&hints.len()==required
         &&hints.keys().all(|(pid,_)|seen.contains(pid));
-    if complete{
+    // Validate the full suggested roster before copying or replacing any
+    // sampled catalogue entry. An unusable suggestion has no domain effects.
+    let accepted=complete&&initial_hint::feasible(&employees,&witnesses,deadline)?;
+    if accepted{
+        // Equal witnesses into the same original personal domain can share
+        // immutable catalogues. Person-specific SHA tie costs remain separate.
+        type WitnessDomain=(Arc<Vec<Pattern>>,Arc<[usize]>,usize);
+        let mut enriched=BTreeMap::<(usize,[u8;MAX_DAYS]),WitnessDomain>::new();
         for (person,hint) in employees.iter_mut().zip(witnesses){
+            check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
             let hint=hint.unwrap();
             if let Some(index)=person.catalog.iter().position(|p|p.states==hint.states){person.pattern=Some(index);continue;}
             // A complete seven-day catalogue cannot miss a legal witness.
             check(days!=7,"HINT_EXACT_DOMAIN_DRIFT")?;
-            let mut catalog=person.catalog.as_ref().clone();
-            if catalog.len()==PATH_LIMIT{catalog.pop();}
-            let index=catalog.len();catalog.push(hint);
-            person.allowed=Arc::from((0..catalog.len()).collect::<Vec<_>>());
+            let key=(Arc::as_ptr(&person.catalog) as usize,hint.states);
+            let (catalog,allowed,index)=enriched.entry(key).or_insert_with(||{
+                let mut catalog=person.catalog.as_ref().clone();
+                if catalog.len()==PATH_LIMIT{catalog.pop();}
+                let index=catalog.len();catalog.push(hint);
+                let allowed=Arc::from((0..catalog.len()).collect::<Vec<_>>());
+                (Arc::new(catalog),allowed,index)
+            }).clone();
+            person.allowed=allowed;
             let ranks:[u16;MAX_DAYS]=std::array::from_fn(|d|if d<days{tie_rank::rank(&person.name_id,&labels[d]) as u16}else{0});
             person.tie_costs=Arc::from(catalog.iter().map(|p|p.states.iter().zip(ranks)
                 .filter(|(s,_)|**s==OFF).map(|(_,r)|r).sum::<u16>()).collect::<Vec<_>>());
-            person.catalog=Arc::new(catalog);person.pinned=person.allowed.len()==1;person.pattern=Some(index);
+            person.catalog=catalog;person.pinned=person.allowed.len()==1;person.pattern=Some(index);
         }
     }
     if service{
@@ -822,12 +827,8 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         check(facts.iter().enumerate().all(|(id,f)|active.contains(&id)||f.bands.iter()
             .all(|b|!b.estimated||b.general==0&&b.roles.iter().all(|(_,n)|*n==0))),"EMPTY_SECTOR_ESTIMATES_PENDING")?;
     }
-    let mut plan=TemporalPlan{employees,score:None};
-    if complete&&evaluate(&plan)[0]!=0{
-        // A complete but globally infeasible hint cannot replace construction.
-        for p in &mut plan.employees{if !p.pinned{p.pattern=None;}}
-    }
-    Ok(plan)
+    check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
+    Ok(TemporalPlan{employees,score:None})
 }
 fn unknown(start:Instant)->V{
     json!({"httpStatus":200,"body":{"status":"UNKNOWN","message":"No validated temporal candidate","assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null})
@@ -1500,3 +1501,8 @@ mod boundary_tests;
 
 #[cfg(test)]
 mod historical_coverage_tests;
+
+#[cfg(test)]
+mod hint_contract_tests;
+
+mod initial_hint;
