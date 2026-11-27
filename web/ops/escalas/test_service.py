@@ -146,6 +146,47 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-04")["kind"], "OFF")
         self.assertEqual(data, before)
 
+    def test_informational_documents_do_not_override_limits_over_real_http(self):
+        data = fixture(40)
+        data["policy"].update(normativeProfile="SINDECOMU_SUPERMARKETS_2026_2027",
+                              collectiveAgreement={"reviewed":False,"validUntil":"2020-01-01"})
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertEqual(data, before)
+        data["policy"]["dailyLimitMinutes"] = 300
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "INFEASIBLE")
+        self.assertEqual(result["assignments"], [])
+
+    def test_visible_month_does_not_invent_dates_outside_requested_week(self):
+        data = fixture(40)
+        data["visibleMonth"] = "2026-11"
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertTrue(all(data["startDate"] <= a["date"] <= data["endDate"] for a in result["assignments"]))
+        self.assertEqual(data, before)
+
+    def test_presence_only_keeps_daily_rests_without_inventing_hourly_intervals(self):
+        from contract_fixtures import make_untimed
+        data = fixture(40)
+        make_untimed(data['employees'][0])
+        data['policy'].update(minInterShiftMinutes=10000, minWeeklyRestMinutes=20000)
+        before = copy.deepcopy(data)
+        status, result = self.request('/solve', {'input':data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['status'], 'FEASIBLE')
+        self.assertEqual(sum(a['kind'] == 'DUTY' for a in result['assignments']), 5)
+        self.assertEqual(sum(a['kind'] == 'OFF' for a in result['assignments']), 2)
+        self.assertTrue(all('shiftId' not in a for a in result['assignments']))
+        self.assertEqual(data, before)
+
     def test_authentication_precedes_parsing_and_slot_allocation(self):
         status, result = self.request(
             "/solve", {"bad": "input"}, self.identity(), auth=False

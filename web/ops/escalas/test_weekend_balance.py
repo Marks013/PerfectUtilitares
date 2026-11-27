@@ -1,4 +1,4 @@
-"""Original public contracts retained during engine migration; assertions unchanged."""
+"""Native phase callbacks preserve cancellation and immutable-input guarantees; CP-SAT engine callbacks are retired."""
 from contract_fixtures import fixture
 from solver import solve
 import unittest
@@ -19,20 +19,19 @@ class CooperativeControlTests(unittest.TestCase):
 
 
     class Control:
-        def __init__(self, stop_on_solve=None, stop_on_checkpoint=None):
-            self.searches, self.checks = 0, 0
-            self.stop_on_solve, self.stop_on_checkpoint = stop_on_solve, stop_on_checkpoint
+        def __init__(self, stop_on_phase=None, stop_on_checkpoint=None):
+            self.phases, self.checks = [], 0
+            self.stop_on_phase, self.stop_on_checkpoint = stop_on_phase, stop_on_checkpoint
 
         def checkpoint(self):
             self.checks += 1
             if self.checks == self.stop_on_checkpoint:
                 raise CooperativeControlTests.Cancelled()
 
-        def solve(self, engine, model):
-            self.searches += 1
-            if self.searches == self.stop_on_solve:
+        def on_phase(self, phase):
+            self.phases.append(phase)
+            if phase == self.stop_on_phase:
                 raise CooperativeControlTests.Cancelled()
-            return engine.solve(model)
 
 
     def test_control_runs_seed_and_later_searches_without_changing_input(self):
@@ -43,7 +42,7 @@ class CooperativeControlTests(unittest.TestCase):
         result = solve(data, control=control)
         self.assertIn(result['status'], ('OPTIMAL', 'FEASIBLE'))
         self.assertGreater(control.checks, 10)
-        self.assertGreater(control.searches, 1)
+        self.assertEqual(control.phases, ["CONSTRUCTION", "REFINEMENT"])
         self.assertEqual(data, original)
 
     def test_cancel_during_construction_propagates_without_a_mathematical_status(self):
@@ -52,4 +51,4 @@ class CooperativeControlTests(unittest.TestCase):
 
     def test_cancel_during_later_search_propagates_without_assignments(self):
         with self.assertRaises(self.Cancelled):
-            solve(fixture(people=3), control=self.Control(stop_on_solve=2))
+            solve(fixture(people=3), control=self.Control(stop_on_phase="REFINEMENT"))

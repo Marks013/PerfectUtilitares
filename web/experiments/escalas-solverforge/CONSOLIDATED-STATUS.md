@@ -1,77 +1,92 @@
-# SolverForge — rotação, jornadas e registros preservados; main bloqueada
+# SolverForge — contratos públicos e cancelamento nativo; main bloqueada
 
 Atualização: 27/11/2026. Branch: `experiment/solverforge-consolidado-2026-11-26`.
-Base: `00df1500e77676bdf12b1806aaecc5d1420035dd`.
-Árvore de código compilada e verificada antes desta atualização documental: `c132641aaccca05e9e99c930061edcf1c574ff8d`.
+Base: `f8b86eb8be5c98790c892b50d8820b6376bbad82`.
+Árvore de código compilada e testada, antes deste relatório: `be066f3e60091025fa10ee0afc7b6c0ff7324991`.
 
-## Runtime e escopo
+## Escopo preservado
 
-O runtime continua exclusivamente SolverForge, com Python para transporte HTTP, autenticação, validação e supervisão. Não há fallback OR-Tools/CP-SAT. O controle histórico OR-Tools permanece fora do runtime, somente no benchmark externo. Rust 1.100.0, upstream fixado e Cargo.lock foram preservados.
+O runtime continua exclusivamente SolverForge. O Python mantém autenticação, validação de entrada, transporte e supervisão do processo Rust; não há fallback OR-Tools/CP-SAT. O controle histórico OR-Tools permanece somente fora do runtime, no benchmark. Rust 1.100.0, upstream fixado, dependências e Cargo.lock não foram alterados.
 
-Foram modificados oito arquivos de código/testes, incluindo o novo módulo de admissão de jornadas, além deste relatório. Não houve alteração do comparador externo, fixtures de benchmark, objetivos de qualidade, limites de busca, dependências, lockfile ou inventário de migração. Nenhum teste público existente foi removido ou teve suas asserções reduzidas. Não houve merge, build Docker ou deploy.
+O comparador externo, suas fixtures, verify_comparison.py, os workflows de qualificação e seus limites permanecem byte a byte iguais à base. Nenhum merge, deploy, build Docker ou alteração na main, Timefold #74 ou branch original do PR #75 foi realizado. A limpeza integral e a equivalência funcional ainda não estão concluídas.
 
-## Correções reproduzidas e verificadas
+## Correções realizadas
 
-### Rotação dos colaboradores sem horário
+### Contratos de política e metadados
 
-O cenário público de quatro líderes com cargos distintos, quatro semanas e regra dominical protetiva deixava o setor sem ninguém em um domingo. O defeito foi reproduzido no teste Python original e em uma regressão Rust antes da correção.
+A admissão do serviço estava herdando proibições próprias do experimento sintético. Agora reconhece o perfil já previsto no produto, `SINDECOMU_SUPERMARKETS_2026_2027`, além de CUSTOM, e aceita os metadados documentais omitidos, nulos ou em objeto conforme o comportamento histórico inspecionado. Perfis desconhecidos e metadados explicitamente malformados continuam rejeitados. A admissão sintética permanece separada e estrita.
 
-A expansão do catálogo agora considera rotações de semanas completas para colaboradores sem horário, verificadas contra as opções diárias originais, bloqueios, histórico e contexto futuro. A seleção das testemunhas respeita primeiro o custo de rotação sem horário, já existente no escore. Não foram inventados mínimos de presença, alterados os agrupamentos por cargo ou convertido DUTY em cobertura horária. Permanecem o limite de 384 caminhos, 8.192 tentativas e os prazos existentes.
+Campos documentais de revisão, validade e certificados não são tratados como autorização operacional nem como bloqueio inventado. Continuam obrigatórios os limites configurados, fechamentos, bloqueios de atribuições e restrições de folga do perfil reconhecido. Feriado aberto não é convertido em fechamento por ausência de autorização documental; feriado fechado não é reaberto por documento. Isso recupera o contrato do software, não constitui parecer ou certificação jurídica.
 
-O teste público original passou: pelo menos dois DUTY em cada data, cinco dias de trabalho e duas folgas por semana para cada colaborador, duas jornadas dominicais por pessoa e nenhuma referência de turno inventada. Isso demonstra esse cenário, não toda a não inferioridade ampliada.
+O máximo numérico de intervalo de refeição segue o contrato original: inteiro entre 121 e 360 quando explicitamente configurado; caso contrário, 120. Booleano não vale como autorização numérica. Configurações mixed42 fora do alvo semanal ou de um setor de correspondência exata são inativas, sem habilitar exceção. Um alvo pessoal que excede o teto semanal é avaliado como conflito real das restrições, em vez de erro de esquema.
 
-### Jornadas manuais, pausas e simulação
+### Calendário visível e recuperação de setor vazio
 
-O serviço separa a estrutura de uma jornada de sua admissibilidade para cada pessoa/data. Uma alternativa manual acima do limite não invalida automaticamente toda a solicitação: pode resultar em uma folga legal, mas nunca ser substituída silenciosamente ou satisfazer cobertura obrigatória. Quando não existe padrão pessoal admissível, a resposta usa a prova de domínio exaustivo vazio, com diagnóstico, sem relaxar bloqueios.
+O calendário do serviço agora usa a interseção do mês visível com as datas realmente solicitadas. Não exige que uma solicitação semanal contenha o mês inteiro, não acrescenta dias e continua rejeitando um mês sem interseção. O calendário sintético conserva sua admissão anterior.
 
-Pausas remuneradas contam somente na duração creditada, não como refeição ou serviço horário. A duração curta de simulação depende dos campos explícitos já previstos no contrato original; fora da simulação não há esse desvio. O reconhecimento sintético continua separado e estrito. Jornadas noturnas/contexto além da meia-noite continuam com limitações explícitas, não foram declaradas implementadas nesta rodada.
+Essa rejeição de entrada impedia que os quatro casos públicos de recuperação de setor vazio sequer chegassem ao motor. Os quatro subcasos originais passaram, inclusive REST_ONLY/DAYS_AND_HOURS, sugestões iniciais e registros bloqueados, mantendo asserções de cobertura. Não é prova de não inferioridade ampliada.
 
-### Colaboradores excluídos e integridade da resposta
+Configurações legadas de folgas mantêm seus dias fixos reais sem receber a projeção estrutural reservada a fixedRestSlots. Quando as folgas tornam impossível cumprir a semana, o domínio exaustivo demonstra INFEASIBLE. A consistência estrita dos slots explícitos não foi removida.
 
-Pessoas com planningEnabled=false não entram nas entidades de otimização. Seus registros protegidos são preservados literalmente; em HOURS_ONLY todos os registros existentes dessas pessoas são mantidos. Um WORK preservado de pessoa excluída não atende demanda. Setores sem entidades ativas são verificados com capacidade zero, em vez de serem ignorados na prova de cobertura.
+### Cancelamento nas fases reais do SolverForge
 
-O transporte rejeita registros excluídos novos, removidos ou alterados, duplicatas e mudanças indevidas de tipo/metadados em HOURS_ONLY, inclusive a perda de um campo explicitamente nulo. As jornadas permitidas continuam podendo mudar apenas o relógio quando o contrato permite. Há testes positivos e adversariais de integridade e dois novos caminhos HTTP reais.
+O executável emite dois eventos fixos, sem payload pessoal: CONSTRUCTION e REFINEMENT, nos pontos em que essas fases realmente começam. Não são chamadas simuladas a um motor antigo. O stdout continua contendo somente a resposta JSON.
 
-Entradas exclusivamente com pessoas excluídas e estimativas positivas em setores sem participantes ativos continuam explicitamente não suportadas; não são apresentadas como escalas viáveis nem têm seu custo omitido silenciosamente.
+O supervisor lê o canal stderr com teto total de 4.096 bytes, aceita somente a sequência conhecida, rejeita duplicação, ordem inválida, fase desconhecida ou protocolo incompleto, e descarta mensagens não protocolares sem expô-las. O callback opcional on_phase é acompanhado por checkpoints. Exceções de cancelamento encerram e recolhem o processo/grupo possuído, sem devolver atribuições parciais ou status matemático falso.
 
-### Feriados configurados e tamanho das equipes
+Os testes incluem fragmentação de bytes, excesso de saída, protocolo malformado, ruído não exposto, cancelamento com verificação de que o processo filho foi encerrado, além do controle cooperativo sobre o executável real. Cancelamento na construção e no refinamento passou nos contratos portados.
 
-Feriados remunerados expressamente configurados são aceitos conforme sua presença simultânea em paidHolidayDates, closedDates e holidayDates, sem inferir novas datas. Um bloqueio de trabalho ou folga comum incompatível com esse feriado produz conflito comprovado, não erro de esquema. O teste original do feriado no início parcial de dezembro passou, preservando as duas folgas regulares.
+### Equipes sem horário e metadados de objetivos
 
-O serviço admite equipes de até 250 pessoas também no horizonte semanal, mantendo os limites sintéticos anteriores. Um teste com 76 colaboradores sem horário verifica o compartilhamento real do catálogo e ausência de turnos inventados. O total de padrões distintos em cache é limitado a 360.000, preservando o envelope máximo anterior de doze perfis de 30.000 caminhos; entradas acima desse limite são rejeitadas explicitamente. Não houve medição de ganho geral de memória ou desempenho.
+Para equipes exclusivamente UNTIMED/MISSING, valores horários de descanso são aceitos dentro do limite de inteiro, sem inventar intervalos de relógio. Os limites inferiores e a validação de tipo permanecem; equipes com qualquer participante com horário continuam submetidas às faixas anteriores. O teste original de presença sem intervalos horários passou, com cinco DUTY e duas folgas.
 
-## Validação local executada
+O relatório de otimização agora identifica CLOSING_COVERAGE como aplicável somente quando há demanda estimada realmente sobreposta ao fechamento. A pontuação, a ordem dos objetivos e os comparadores não foram alterados. Não há declaração de ótimo global nem apresentação dos níveis lexicográficos como buscas independentes.
 
-Ambiente Linux x86_64/GNU isolado, Rust 1.100.0. Os oito blobs publicados foram comparados com os arquivos verificados; as fontes Rust também foram comparadas byte a byte com a cópia compilada.
+## Portabilidade explícita dos testes antigos
 
-| Verificação | Base 00df150 | Candidato desta rodada |
+Oito contratos existentes foram portados da instrumentação interna do CP-SAT para as fronteiras reais do SolverForge: três de controle cooperativo, dois de jornada manual, um de feriado fechado, um de prazo expirado e um de ordenação/qualidade dos objetivos.
+
+Não foram recriados CpModel, _solve, _read_assignments ou hints artificiais só para satisfazer mocks. Os testes passaram a observar a resposta nativa antes do transporte, a chamada real de processo, os eventos efetivos de fases e cálculos independentes de carga/horário. Permanecem verificações de entrada imutável, cobertura, carga semanal, relógios manuais, ausência de bloqueios inventados, rejeição antes do processo e cancelamento sem resultado parcial. A introspecção de variáveis internas de hints do CP-SAT foi explicitamente aposentada, não apresentada como executada pelo novo motor.
+
+Seis desses testes estavam no inventário histórico; foram marcados ported_native_contract com hash do corpo histórico e justificativa. Dois testes manuais que não constavam naquele inventário foram registrados separadamente em additionalPublicPorts. Os 481 identificadores históricos e todos os 355 itens ainda pendentes foram preservados. Nenhuma pendência foi apagada para liberar a prontidão. Um novo teste valida identidades, hashes e destinos executáveis.
+
+Um teste Rust anterior passou a usar UNMODELED_POLICY para verificar a rejeição de perfil desconhecido, pois seu antigo exemplo tornou-se o perfil reconhecido. As novas regressões verificam separadamente aceitação e restrições desse perfil.
+
+## Validação executada
+
+Laboratório Linux x86_64/GNU, Rust 1.100.0. Fontes Rust comparadas byte a byte com a cópia compilada; árvore de publicação verificada por hashes Git. Os resultados não substituem ARM64/musl, contêiner, E2E ou produção.
+
+| Verificação | Base f8b86eb | Candidato desta rodada |
 |---|---:|---:|
-| Testes Rust completos aprovados | 109 | 116 |
+| Testes Rust completos aprovados | 116 | 126 |
 | Testes Python do experimento aprovados | 45 | 45 |
-| Testes HTTP/processo aprovados | 49 | 54 |
-| Suíte pública completa: testes executados | 229 | 234 |
-| Suíte pública: falhas | 4 | 3 |
-| Suíte pública: erros | 53 | 27 |
+| Transporte, fases, HTTP e validação de presença | 54 | 65 |
+| Suíte pública completa: testes executados | 234 | 246 |
+| Suíte pública: falhas | 3 | 2 |
+| Suíte pública: erros | 27 | 3 |
 | Suíte pública: ignorados | 0 | 0 |
 
-Clippy all-targets com -D warnings, build release, Ruff, conferência do Cargo.lock e git diff --check passaram. Foram acrescentados sete testes Rust e cinco testes Python, sem retirar os existentes. Os 54 testes HTTP/processo estão contidos na suíte pública, não são cobertura adicional independente.
+Clippy all-targets com -D warnings, build release, Ruff, Cargo.lock e git diff --check passaram. Foram acrescentados dez testes Rust e doze testes Python. Os 65 testes da fronteira fazem parte da suíte pública, não são cobertura adicional independente. A redução dos erros decorre tanto de correções funcionais como da portabilidade explícita dos oito contratos; não é atribuída exclusivamente ao algoritmo.
 
-A suíte pública completa continua REPROVADA: a execução final sem filtro terminou com 3 falhas e 27 erros. O resultado final foi novamente verificado após a última correção de integridade de metadados. Não se confunde aprovação nativa ou de transporte com equivalência funcional.
+A execução pública final sem filtro continua REPROVADA: 246 testes, duas falhas e três erros, zero ignorados. Asserções de qualidade não foram afrouxadas.
 
-## Pendências e impedimentos de release
+## Bloqueios atuais comprovados
 
-As três falhas restantes são o bloqueio de prontidão da migração e duas expectativas antigas de controle cooperativo da busca. Os 27 erros compreendem 20 ocorrências de entrada ainda não suportada, seis dependências de auxiliares da implementação anterior e uma incompatibilidade de validação. Esses contratos não foram descartados para liberar a CI.
+1. A prontidão da migração continua reprovada por 355 contratos históricos ainda sem portabilidade/revisão completa.
+2. O teste portado de objetivos agora alcança a asserção original de não piora por componente e a reprova. Em reprodução direcionada, PEOPLE_CHANGED passou de 0 para 3 e STABILITY de 0 para 12. A busca lexicográfica aceita uma melhora anterior enquanto esses componentes pioram; a equivalência desse contrato permanece não demonstrada. Não alteramos a asserção, não fabricamos valores de fase e não declaramos eliminação da regressão.
+3. Os três erros restantes envolvem jornadas que atravessam a meia-noite: invasão de data civil de afastamento, proteção de folga futura publicada e contabilização dominical do trabalho iniciado no sábado anterior. A funcionalidade continua explicitamente não suportada onde falta a modelagem completa; não foi convertida em inviabilidade fictícia.
 
-O inventário preserva os 481 registros históricos e mantém 355 pendências de portabilidade ou revisão explícita. Continuam necessárias a equivalência das políticas/calendários ainda não admitidos, os contextos noturnos, a recuperação de escalas e a revisão dos contratos internos antigos. A não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, a validação de contêiner/segurança e as 32 repetições de desempenho não foram executadas para este candidato. Ganhos de versões anteriores não certificam o runtime atual.
+Continuam necessárias a não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, a validação de contêiner e segurança, e as 32 repetições de desempenho/estabilidade. Nenhum desses resultados foi produzido nesta rodada para o novo candidato. Não há alegação de ganho geral de desempenho ou prontidão para main.
 
-Publicação somente na branch consolidada, sem força nem reescrita de histórico. Main, Timefold #74, produção e a branch original do PR #75 não foram alterados por esta intervenção. O workflow temporário usado exclusivamente para transportar objetos Git verificados por hash foi retirado da árvore final; seu sucesso não é qualificação. A CI ARM64 existente e sua verificação pública sem filtro permanecem obrigatórias.
+## Evidências e publicação
 
-## Evidência local
+Diretório do laboratório: `/vercel/lab/contracts-round5`.
 
-Diretório de retomada: `/vercel/lab/contracts-round4`. SHA-256 dos logs:
+SHA-256 dos logs finais:
+- Rust: `4f8f45ae9d328b7bb26dfb797dc75848e1451fcabb4678b4f2de33d5887bffd5`.
+- Clippy: `6466b7c9794b958ce3acad1628d938f0d9248df27ab4b60b123c41db48cc6119`.
+- Build: `dcef8d877bdb7f7fd17acf1528f782f1643bb937d57a8cb35e8d9f8417e00856`.
+- Fronteiras: `57ad95ac443e85000603b8201858cb4a8ef25ea03ab9630acb2f810f5571f864`.
+- Suíte pública completa: `3fda590eafb294a49978711e6c1d0a1016f99e1945b2f481acb82eae23fccbfc`.
 
-- Rust: `690eea1e30cad39398a34ff507e05571079a412d5f3e869a6e57c68df9b1eeb4`.
-- Clippy: `406a44c18ada2a36c939852b95766b44817fd22ab3e791bff1b23ef028a74a02`.
-- Build: `ebdb9aaa57e4b68de8d48817e69880e0377a4336b51cd1612e73cc95dfb3fadf`.
-- HTTP/processo: `70169132127d079f292f684b784e60bd8327a24897a9289108455be89e551031`.
-- Suíte completa final: `7a3ee0f5ca2bc2e159fb7fa450173f609b7377e0183bea92bd920f7c8956a9ab`.
+Mudanças em dezoito arquivos de código/testes e neste relatório. O workflow temporário de transferência de objetos verificados por hash é retirado da árvore final; sua execução não é qualificação. Publicação somente na branch consolidada, sem força nem reescrita de histórico.

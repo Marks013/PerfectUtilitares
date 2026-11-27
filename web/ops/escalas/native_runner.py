@@ -37,9 +37,45 @@ def _stop(process):
     except ProcessLookupError:
         pass
     process.wait()
-    for stream in (process.stdin, process.stdout):
+    for stream in (process.stdin, process.stdout, process.stderr):
         if stream is not None:
             stream.close()
+
+
+class _NativePhases:
+    """Fixed, bounded native events; no arbitrary stderr is exposed or logged."""
+    prefix = b"SOLVERFORGE_PHASE_V1 "
+    expected = (b"CONSTRUCTION", b"REFINEMENT")
+
+    def __init__(self, control):
+        self.control = control
+        self.buffer = bytearray()
+        self.total = 0
+        self.index = 0
+
+    def feed(self, data):
+        self.total += len(data)
+        if self.total > 4096:
+            raise NativeError(502, "SOLVER_RESPONSE_INVALID")
+        self.buffer.extend(data)
+        while b"\n" in self.buffer:
+            line, _, remaining = self.buffer.partition(b"\n")
+            self.buffer = remaining
+            if not line.startswith(self.prefix):
+                continue
+            phase = line[len(self.prefix):]
+            if self.index >= len(self.expected) or phase != self.expected[self.index]:
+                raise NativeError(502, "SOLVER_RESPONSE_INVALID")
+            self.index += 1
+            self.control.checkpoint()
+            callback = getattr(self.control, "on_phase", None)
+            if callable(callback):
+                callback(phase.decode("ascii"))
+            self.control.checkpoint()
+
+    def finish(self):
+        if self.buffer.startswith(self.prefix):
+            raise NativeError(502, "SOLVER_RESPONSE_INVALID")
 
 
 def _exchange(command, request, control):
@@ -56,7 +92,7 @@ def _exchange(command, request, control):
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             env=environment,
             close_fds=True,
             start_new_session=True,
@@ -64,12 +100,14 @@ def _exchange(command, request, control):
     except OSError:
         raise NativeError(503, "SOLVER_UNAVAILABLE") from None
     output = bytearray()
+    phases = _NativePhases(control)
     try:
         with selectors.DefaultSelector() as selector:
-            for stream in (process.stdin, process.stdout):
+            for stream in (process.stdin, process.stdout, process.stderr):
                 os.set_blocking(stream.fileno(), False)
             selector.register(process.stdin, selectors.EVENT_WRITE)
             selector.register(process.stdout, selectors.EVENT_READ)
+            selector.register(process.stderr, selectors.EVENT_READ)
             offset = 0
             while (
                 selector.get_map()
@@ -101,6 +139,8 @@ def _exchange(command, request, control):
                         if not data:
                             selector.unregister(stream)
                             stream.close()
+                        elif stream is process.stderr:
+                            phases.feed(data)
                         else:
                             if len(output) + len(data) > MAX_BYTES:
                                 raise NativeError(502, "SOLVER_RESPONSE_INVALID")
@@ -112,6 +152,7 @@ def _exchange(command, request, control):
         raise SolveTimedOut()
     if process.returncode != 0:
         raise NativeError(500, "SOLVER_FAILED")
+    phases.finish()
     return bytes(output)
 
 

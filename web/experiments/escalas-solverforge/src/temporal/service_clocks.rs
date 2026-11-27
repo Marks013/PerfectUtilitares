@@ -11,14 +11,14 @@ impl Admission{
         if !long&&c.paid>policy.daily{return false;}
         if c.paid>480&&!policy.simulation&&!policy.compensation{return false;}
         if policy.limit_blocks&&self.block>270{return false;}
-        if c.paid>360&&self.meal>120&&!policy.simulation&&!long{return false;}
+        if c.paid>360&&self.meal>policy.max_meal&&!policy.simulation&&!long{return false;}
         let required=if c.paid>360{policy.meal}else if c.paid>240&&!(policy.simulation&&policy.short_pause){15}else{0};
         self.meal>=required
     }
 }
 #[derive(Clone,Copy)]
 pub(super) struct Policy{
-    pub(super) closing:i32,pub(super) daily:i32,pub(super) meal:i32,
+    pub(super) closing:i32,pub(super) daily:i32,pub(super) meal:i32,pub(super) max_meal:i32,
     pub(super) simulation:bool,pub(super) compensation:bool,
     pub(super) short_pause:bool,pub(super) limit_blocks:bool,
 }

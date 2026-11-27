@@ -30,48 +30,39 @@ def manual_fixture(people=1):
 
 class ManualShiftTests(unittest.TestCase):
     def test_partial_selection_overrides_import_and_is_used_by_hours_coverage_and_hints(self):
+        import json
+        import native_runner
         data = manual_fixture()
-        selected = {'2026-11-03': 'local-early', '2026-11-05': 'local-early'}
+        selected = {'2026-11-03':'local-early', '2026-11-05':'local-early'}
         data['employees'][0]['manualShiftByDate'] = selected
-        # A formerly valid preferred seed still carries the imported clocks.
         data['_initialAssignments'] = copy.deepcopy(data['assignments'])
-        data['demands'] = [{'date': day, 'sector': 'Reposição', 'start': 420, 'end': 480,
-                            'minimum': 1} for day in selected]
+        data['demands'] = [{'date':day, 'sector':'Reposição', 'start':420, 'end':480, 'minimum':1} for day in selected]
         validate_model_input(data)
         before = copy.deepcopy(data)
-        raw_results, hinted = [], set()
-        original_read, original_hints = solver._read_assignments, solver._feasibility_hints
+        raw_results = []
+        original = native_runner._body
 
-        def read(*args, **kwargs):
-            records = original_read(*args, **kwargs)
-            raw_results.append(copy.deepcopy(records))
-            return records
+        def read(raw):
+            value = json.loads(raw)
+            if value.get('httpStatus') == 200 and value['body']['status'] in ('FEASIBLE','OPTIMAL'):
+                raw_results.append(copy.deepcopy(value['body']['assignments']))
+            return original(raw)
 
-        def hints(model, *args, **kwargs):
-            reused = original_hints(model, *args, **kwargs)
-            for index, value in zip(model.proto.solution_hint.vars, model.proto.solution_hint.values):
-                for day, sid in selected.items():
-                    if model.proto.variables[index].name == f's:p0:{day}:{sid}' and value == 1:
-                        hinted.add(day)
-            return reused
-
-        with patch('solver._read_assignments', side_effect=read), patch('solver._feasibility_hints', side_effect=hints):
+        with patch('native_runner._body', side_effect=read):
             result = solver.solve(data)
-        self.assertIn(result['status'], ('FEASIBLE', 'OPTIMAL'), result)
+        self.assertIn(result['status'], ('FEASIBLE','OPTIMAL'), result)
         self.assertEqual(data, before)
-        self.assertEqual(hinted, set(selected))
-        shifts = {s['id']: s for s in data['shifts']}
+        shifts = {s['id']:s for s in data['shifts']}
         worked = [a for a in result['assignments'] if a['kind'] == 'WORK']
-        self.assertEqual(sum(solver.shift_metrics(shifts[a['shiftId']])[0] for a in worked), 40 * 60)
+        paid = sum(s['end']-s['start'] for a in worked for s in shifts[a['shiftId']]['segments'] if s['kind'] != 'BREAK')
+        self.assertEqual(paid, 40*60)
         for day, sid in selected.items():
             assignment = next(a for a in worked if a['date'] == day)
             self.assertEqual(assignment['shiftId'], sid)
             self.assertFalse(assignment.get('locked', False))
-            self.assertTrue(any(s['kind'] == 'WORK' and s['start'] <= 420 and s['end'] >= 480
-                                for s in shifts[sid]['segments']))
+            self.assertTrue(any(s['kind'] == 'WORK' and s['start'] <= 420 and s['end'] >= 480 for s in shifts[sid]['segments']))
             self.assertTrue(raw_results)
-            self.assertTrue(all(any(a['date'] == day and a['kind'] == 'WORK' and a['shiftId'] == sid
-                                   for a in records) for records in raw_results))
+            self.assertTrue(all(any(a['date'] == day and a['kind'] == 'WORK' and a['shiftId'] == sid for a in rows) for rows in raw_results))
         self.assertTrue(all(a['shiftId'] == 'day' for a in worked if a['date'] not in selected))
 
     def test_hours_only_preserves_off_absence_holiday_locks_closure_and_excluded_people(self):
@@ -131,7 +122,7 @@ class ManualShiftTests(unittest.TestCase):
             data = manual_fixture()
             data['employees'][0]['manualShiftByDate'] = selection
             for invoke in (validate_model_input, solver.solve):
-                with patch('solver._solve', side_effect=AssertionError('must reject before CP')):
+                with patch('solver.run_native', side_effect=AssertionError('must reject before native launch')):
                     with self.assertRaises(ModelInputError) as caught:
                         invoke(data)
                 self.assertEqual(caught.exception.fields[0]['reason'], reason)

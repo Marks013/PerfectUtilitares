@@ -31,6 +31,12 @@ impl Calendar{
     }
     // Week grouping changes; civil weekday numbers and input dates never do.
     pub fn aligned(first:&str,last:&str,month:Option<&str>,week_start:usize)->Result<Self>{
+        Self::build(first,last,month,week_start,false)
+    }
+    pub fn service(first:&str,last:&str,month:Option<&str>,week_start:usize)->Result<Self>{
+        Self::build(first,last,month,week_start,true)
+    }
+    fn build(first:&str,last:&str,month:Option<&str>,week_start:usize,clip_month:bool)->Result<Self>{
         check(week_start<=1,"PLANNING_WEEK")?;
         let start=ordinal(first)?;let end=ordinal(last)?;
         let days=end-start+1;
@@ -66,7 +72,7 @@ impl Calendar{
         };
         let scope=if let Some(value)=month{
             let (a,b)=month_range(value)?;
-            check(a>=start&&b<=end,"VISIBLE_MONTH")?;Some((a,b))
+            check(if clip_month{a<=end&&b>=start}else{a>=start&&b<=end},"VISIBLE_MONTH")?;Some((a,b))
         }else{
             let (a,b)=month_range(&labels[labels.len()/2][..7])?;
             let technical_start=a-(a-week_start as i32).rem_euclid(7);

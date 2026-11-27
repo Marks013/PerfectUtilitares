@@ -1,7 +1,6 @@
-"""Original public contracts retained during engine migration; assertions unchanged."""
+"""Holiday behavioral contracts; closed-holiday shortage checked through the real native result rather than a CP model object."""
 from contract_fixtures import fixture
 import solver
-import time
 import unittest
 
 def holiday_data(day="2026-12-25", start="2026-12-21", closed=True):
@@ -48,6 +47,11 @@ class HolidayTests(unittest.TestCase):
         for module in self.models():
             with self.subTest(model=module.__name__):
                 data = holiday_data()
-                data["demands"] = [{"date": "2026-12-25", "sector": "Reposição", "start": 480, "end": 720, "minimum": 2, "estimated": True}]
-                result = module._coverage(module.cp_model.CpModel(), data, [], {}, {}, time.monotonic())
-                self.assertEqual(result, [])
+                data['demands'] = [{'date':'2026-12-25', 'sector':'Reposição', 'start':480, 'end':720, 'minimum':2, 'estimated':True}]
+                result = module.solve(data)
+                self.assertIn(result['status'], ('FEASIBLE','OPTIMAL'), result)
+                coverage = [p['incumbentValue'] for p in result['optimization']['phases'] if p['objective'] == 'COVERAGE']
+                self.assertTrue(all(value == 0 for value in coverage), coverage)
+                holiday = [a for a in result['assignments'] if a['date'] == '2026-12-25']
+                self.assertTrue(holiday)
+                self.assertTrue(all(a['kind'] == 'HOLIDAY' and 'shiftId' not in a for a in holiday))

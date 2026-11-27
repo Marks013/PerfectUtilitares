@@ -403,7 +403,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         &&branch.trim().bytes().all(|c|c.is_ascii_digit())&&branch.trim().trim_start_matches('0')=="2";
     let first=text(input,"startDate")?;
     let month=input.get("visibleMonth").map(|m|m.as_str().ok_or("VISIBLE_MONTH")).transpose()?;
-    let calendar=if service{Calendar::aligned(first,text(input,"endDate")?,month,usize::from(convention=="MONDAY"))?}
+    let calendar=if service{Calendar::service(first,text(input,"endDate")?,month,usize::from(convention=="MONDAY"))?}
         else{Calendar::new(first,text(input,"endDate")?,month)?};
     let days=calendar.labels.len();
     let labels=Arc::new(calendar.labels.clone());
@@ -411,20 +411,32 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     for k in input.as_object().unwrap().keys(){check(!k.starts_with('_')||["_coverageServiceProtection","_initialAssignments","_coverageComparison","_coverageProtection"].contains(&k.as_str()),"PRIVATE_FIELD_UNSUPPORTED")?;}
     check(input.get("planningCalendarSource").is_none(),"TEMPORAL_METADATA")?;
     for k in ["calendarProvenance","collectiveAgreement","operationalCertificate","mealIntervalAgreement"]{
-        check(policy.get(k).is_none(),"POLICY_METADATA_UNSUPPORTED")?;
+        check(policy.get(k).is_none_or(|v|service&&(v.is_null()||v.is_object())),"POLICY_METADATA_UNSUPPORTED")?;
     }
     let mode=optional_text(input,"generationMode","DAYS_AND_HOURS")?;
     check(["DAYS_AND_HOURS","REST_ONLY","HOURS_ONLY"].contains(&mode),"MODE")?;
     let calendar_mode=if service{optional_text(policy,"calendarMode","MANUAL")?}else{text(policy,"calendarMode")?};
-    check(calendar_mode=="MANUAL"&&optional_text(policy,"normativeProfile","CUSTOM")?=="CUSTOM","POLICY")?;
+    let profile=optional_text(policy,"normativeProfile","CUSTOM")?;
+    let cct=service&&profile=="SINDECOMU_SUPERMARKETS_2026_2027";
+    check(calendar_mode=="MANUAL"&&(profile=="CUSTOM"||cct),"POLICY")?;
+    // Documentary metadata never grants permission. Explicit configured
+    // operational limits and the original named-profile rest rule still bind.
+    let holiday_rest_allowed=boolean(policy,"holidayRestAllowed",false)?&&!cct;
+    let max_meal=if service{policy.get("mealIntervalAgreement").and_then(|v|v.get("maximumMinutes"))
+        .and_then(V::as_i64).filter(|n|(121..=360).contains(n)).unwrap_or(120) as i32}else{120};
     let default_hours=number(input,"defaultWeeklyHours")?;
     let weekly=number(policy,"weeklyLimit")?;let daily=number(policy,"dailyLimitMinutes")?;
     let meal=number(policy,"minMealMinutes")?;let inter=number(policy,"minInterShiftMinutes")?;
     let weekly_rest=number(policy,"minWeeklyRestMinutes")?;let max_run=number(policy,"maxConsecutiveWorkDays")?;
     // Legacy callers omitted closing; do not invent an earlier cutoff.
     let closing=if service&&input.get("storeClosingMinutes").is_none(){1440}else{number(input,"storeClosingMinutes")?};
+    let people=array(input,"employees")?;
+    let presence_only=service&&people.iter().any(|p|p["planningEnabled"].as_bool()!=Some(false))
+        &&people.iter().all(|p|p["planningEnabled"].as_bool()==Some(false)
+            ||matches!(p["scheduleMode"].as_str(),Some("UNTIMED"|"MISSING")));
     check(matches!(default_hours,40|42|44)&&matches!(weekly,40|42|44)&&range(daily,1,600)
-        &&range(meal,30,180)&&range(inter,660,1440)&&range(weekly_rest,2100,4320)&&range(max_run,1,6)
+        &&range(meal,30,180)&&range(inter,660,if presence_only{i32::MAX}else{1440})
+        &&range(weekly_rest,2100,if presence_only{i32::MAX}else{4320})&&range(max_run,1,6)
         &&range(closing,300,1440),"POLICY_LIMIT")?;
     let limit_blocks=boolean(policy,"limitContinuousWorkBlocks",false)?;
     let mut closed=dates(policy,"closedDates",&calendar)?;let holidays=dates(policy,"holidayDates",&calendar)?;
@@ -437,7 +449,11 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     let holiday_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&holidays.contains(&(d as i32)));
     let mut mixed_sectors=BTreeSet::new();
     if input.get("mixed42Sectors").is_some(){
-        for s in array(input,"mixed42Sectors")?{check(default_hours==42&&mixed_sectors.insert(s.as_str().ok_or("MIXED_SECTOR")?),"MIXED_SECTOR")?;}
+        for s in array(input,"mixed42Sectors")?{
+            let name=s.as_str().ok_or("MIXED_SECTOR")?;
+            if service{if default_hours==42{mixed_sectors.insert(name);}}
+            else{check(default_hours==42&&mixed_sectors.insert(name),"MIXED_SECTOR")?;}
+        }
     }
     let clock_rows=array(input,"shifts")?;
     check(clock_rows.len()<=12,"CLOCK_LIMIT")?;
@@ -459,7 +475,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         }
     }
     let mut witnesses=Vec::new();
-    let people=array(input,"employees")?;
+
     check(!people.is_empty()&&people.len()<=if days==7&&!service{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
     let mut sectors=BTreeMap::<String,usize>::new();let mut roles=BTreeMap::<String,usize>::new();
     let mut rest_roles=BTreeMap::<String,usize>::new();
@@ -468,7 +484,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let n=roles.len();roles.entry(text(row,"role")?.to_string()).or_insert(n);
         let n=rest_roles.len();rest_roles.entry(text(row,"role")?.trim().to_uppercase()).or_insert(n);
     }
-    check(mixed_sectors.iter().all(|s|sectors.contains_key(*s)),"MIXED_SECTOR")?;
+    check(service||mixed_sectors.iter().all(|s|sectors.contains_key(*s)),"MIXED_SECTOR")?;
     type DemandGroups=BTreeMap<(usize,usize,bool),Vec<(i32,i32,i64,Option<usize>)>>;
     let mut demand_groups=DemandGroups::new();let mut demand_ids=BTreeSet::new();
     for d in array(input,"demands")?{
@@ -619,10 +635,10 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             let target=hours.min(calendar::weekly_ceiling(&labels[end-1]))*60;
             if simulation{simulation_daily.map_or(target,|n|target.min(n*5))}else{target}
         }));
-        check(untimed||targets.iter().all(|&target|target<=weekly*60),"WEEKLY_MINUTES")?;
+        check(service||untimed||targets.iter().all(|&target|target<=weekly*60),"WEEKLY_MINUTES")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(p,"weeklyHoursMode","INDIVIDUAL")?),"WEEKLY_MODE")?;
         let mixed:[bool;6]=std::array::from_fn(|w|!untimed&&simulation_daily.is_none()&&mixed_sectors.contains(sector_name)&&hours==42&&targets[w]==2520);
-        let (fixed,personal)=if service{crate::wire::personal_rules_versioned(p,max_run.min(5) as u8,rest_version>=2)?}
+        let (fixed,personal)=if service{crate::wire::personal_rules_service(p,max_run.min(5) as u8,rest_version>=2)?}
             else{personal_rules(p,max_run.min(5) as u8)?};
         let cap=number(p,"maxConsecutiveSundays")?;let rule=optional_text(p,"sundayRestRule","PROTECTIVE")?;
         check(matches!(cap,1|2)&&["PROTECTIVE","UNREVIEWED","CLT_386","COMMERCE"].contains(&rule),"SUNDAY_RULE")?;
@@ -650,7 +666,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let allowed_clock=|s:u8,day:usize|!untimed&&clock(&clocks,s).is_some_and(|c|{
             let ceiling=daily.min(calendar::daily_ceiling(&labels[day]));
             if service{return admissions[usize::from(s-3)].allowed(c,service_clocks::Policy{
-                closing,daily:ceiling,meal,simulation,compensation,short_pause,limit_blocks
+                closing,daily:ceiling,meal,max_meal,simulation,compensation,short_pause,limit_blocks
             },mixed[calendar.week(day)]&&calendar::weekly_ceiling(&labels[day])>=42);}
 
             if mixed[calendar.week(day)]{c.paid==540&&calendar::weekly_ceiling(&labels[day])>=42||c.paid==480&&c.paid<=ceiling}
@@ -692,9 +708,9 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             }else{
                 let weekday=calendar.weekday(day);
                 let force_off=fixed&(1<<weekday)!=0;
-                let off_allowed=(rest_version<2||weekday!=6)&&(!holidays.contains(&date)||weekday==0||boolean(policy,"holidayRestAllowed",false)?);
+                let off_allowed=(rest_version<2||weekday!=6)&&(!holidays.contains(&date)||weekday==0||holiday_rest_allowed);
                 if off_allowed{out.push(OFF);}
-                if !force_off&&!closed.contains(&date)&&(!holidays.contains(&date)||authorized.contains(&date)){
+                if !force_off&&!closed.contains(&date)&&(service||!holidays.contains(&date)||authorized.contains(&date)){
                     if untimed{out.push(DUTY);}
                     else if let Some(&s)=manual.get(&date){
                         if allowed_clock(s,day){out.push(s);}
@@ -719,7 +735,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,active_start,active_end,rest_version,service,
             terminal_fixed_rest_allowed:!service||employed(days as i32)
                 &&(rest_version<2||calendar.weekday(days)!=6)
-                &&(!holidays.contains(&(days as i32))||calendar.weekday(days)==0||boolean(policy,"holidayRestAllowed",false)?),
+                &&(!holidays.contains(&(days as i32))||calendar.weekday(days)==0||holiday_rest_allowed),
             untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,visible:calendar.visible};
         rest_weight+=rules.pair_terms();
         let hint=if hints.is_empty(){None}else{
@@ -847,6 +863,7 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
     };
     let mapped=start.elapsed().as_secs_f64();
     let patterns:usize=plan.employees.iter().map(|p|p.catalog.len()).sum();
+    if service{eprintln!("SOLVERFORGE_PHASE_V1 CONSTRUCTION");}
     let seed_start=Instant::now();
     seed::construct(&mut plan,(seed_start+Duration::from_millis(1500)).min(start+budget-Duration::from_millis(700)));
     let seed_seconds=seed_start.elapsed().as_secs_f64();
@@ -868,6 +885,7 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
         };
         config=config.with_termination_seconds(remaining.min(if initial[0]==0{2}else{remaining})).with_random_seed(37);
         config.move_thread_count=MoveThreadCount::None;
+        if service{eprintln!("SOLVERFORGE_PHASE_V1 REFINEMENT");}
         plan=match plan.solve_with_config(config){Ok(v)=>v,Err(_)=>return super::failure(500,"SPIKE_FAILED","SEARCH","NATIVE_SOLVE")};
         let cost=evaluate(&plan);
         if plan.score!=Some(expected(cost)){return super::failure(500,"SPIKE_FAILED","RESULT","TEMPORAL_SCORE_DRIFT");}
@@ -1450,7 +1468,7 @@ mod tests{
     }
     #[test]
     fn service_rejects_unsupported_policy_and_duplicate_identity_without_rewriting(){
-        let mut data=fixture();data["input"]["policy"]["normativeProfile"]=json!("SINDECOMU_SUPERMARKETS_2026_2027");
+        let mut data=fixture();data["input"]["policy"]["normativeProfile"]=json!("UNMODELED_POLICY");
         let rejected=solve_service(&serde_json::to_vec(&data).unwrap(),Instant::now(),Duration::from_secs(3));
         assert_eq!(rejected["httpStatus"],400);assert!(rejected["body"].get("assignments").is_none());
         let mut data=fixture();let duplicate=data["input"]["employees"][0].clone();

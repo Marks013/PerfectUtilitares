@@ -6,11 +6,12 @@ pub(super) fn metadata(plan:&TemporalPlan,initial:Cost,final_cost:Cost,times:[f6
     let timed=plan.employees.iter().any(|p|!p.untimed);
     let untimed=plan.employees.iter().any(|p|p.untimed);
     let estimated=facts.values().any(|f|f.bands.iter().any(|b|b.estimated));
+    let closing=facts.values().any(|f|f.bands.iter().any(|b|b.estimated&&b.start<f.closing&&b.end>f.closing-60));
     let sunday=facts.values().any(|f|f.bands.iter().any(|b|b.estimated&&f.weekday(b.day)==0));
     let movement=facts.values().any(|f|f.priority.iter().enumerate().take(f.days).any(|(d,w)|!f.closed[d]&&w.is_some()));
     let phases:Vec<_>=OBJECTIVES.iter().enumerate().filter_map(|(i,(name,scope))|{
         let active=match *name{
-            "COVERAGE"|"CLOSING_COVERAGE"=>estimated&&timed,
+            "COVERAGE"=>estimated&&timed,"CLOSING_COVERAGE"=>closing&&timed,
             "SUNDAY_COVERAGE"=>sunday&&timed,
             "SUNDAY_PEAK"=>sunday&&timed&&plan.employees[0].facts.days>7,
             "MOVEMENT_COVERAGE"=>movement&&estimated&&timed,

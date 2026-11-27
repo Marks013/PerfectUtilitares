@@ -217,6 +217,14 @@ def _validate_coverage_comparison(data, roles_by_sector):
         _integer(row["maximum"], prefix + ".maximum", 0, maximum_peak)
 
 
+def _presence_only(people):
+    """No hourly upper-bound semantics when every enabled person has no clock."""
+    return (isinstance(people, list) and bool(people)
+            and any(isinstance(p, dict) and p.get("planningEnabled") is not False for p in people)
+            and all(isinstance(p, dict) and (p.get("planningEnabled") is False
+                    or p.get("scheduleMode") in ("UNTIMED", "MISSING")) for p in people))
+
+
 def validate_model_input(data):
     data = _object(data, "input")
     _date(data.get("startDate"), "startDate")
@@ -233,6 +241,8 @@ def validate_model_input(data):
     for field, lower, upper in (("dailyLimitMinutes", 1, 600), ("minInterShiftMinutes", 660, 1440),
                                 ("minWeeklyRestMinutes", 2100, 4320), ("minMealMinutes", 30, 180),
                                 ("maxConsecutiveWorkDays", 1, 6)):
+        if field in ("minInterShiftMinutes", "minWeeklyRestMinutes") and _presence_only(data.get("employees")):
+            upper = 2147483647
         _integer(policy.get(field), "policy." + field, lower, upper)
     _require(policy.get("weeklyLimit") in (40, 42, 44), "policy.weeklyLimit")
     for field in ("compensationAuthorized", "holidayRestAllowed"):

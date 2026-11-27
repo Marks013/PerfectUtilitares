@@ -33,9 +33,16 @@ pub(crate) fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
     personal_rules_versioned(person,max_run,true)
 }
 pub(crate) fn personal_rules_versioned(person:&V,max_run:u8,forbid_saturday:bool)->Result<(u8,PersonalRules)>{
+    personal_rules_admitted(person,max_run,forbid_saturday,true)
+}
+pub(crate) fn personal_rules_service(person:&V,max_run:u8,forbid_saturday:bool)->Result<(u8,PersonalRules)>{
+    personal_rules_admitted(person,max_run,forbid_saturday,person.get("fixedRestSlots").is_some())
+}
+fn personal_rules_admitted(person:&V,max_run:u8,forbid_saturday:bool,strict_projection:bool)->Result<(u8,PersonalRules)>{
     let fixed=weekday_mask(person,"fixedOffDays")?;
     let mode=text(person,"offMode")?;
-    check(match mode{"VARIABLE"=>fixed==0,"MIXED"=>fixed.count_ones()==1,
+    check(["VARIABLE","MIXED","FIXED"].contains(&mode),"OFF_MODE")?;
+    check(!strict_projection||match mode{"VARIABLE"=>fixed==0,"MIXED"=>fixed.count_ones()==1,
         "FIXED"=>fixed.count_ones()==2,_=>false},"FIXED_REST_PROJECTION")?;
     if let Some(slots)=person.get("fixedRestSlots"){
         let slots=slots.as_array().filter(|a|a.len()==2).ok_or("FIXED_REST_SLOTS")?;

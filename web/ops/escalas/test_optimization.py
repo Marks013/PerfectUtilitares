@@ -1,5 +1,5 @@
-"""Original public contracts retained during engine migration; assertions unchanged."""
-from contract_fixtures import fixture
+"""Original goal ordering, per-goal nonregression and assignment assertions retained; helpers read native declarations and independent civil fixtures."""
+from contract_fixtures import fixture, days_between
 import copy
 import unittest
 
@@ -7,7 +7,7 @@ class SearchContinuationTests(unittest.TestCase):
     def test_all_nonempty_goals_run_with_a_real_baseline_and_preferences(self):
         import solver as scheduling
         data = fixture(people=3, weeks=1)
-        days = scheduling.days_between(data['startDate'], data['endDate'])
+        days = days_between(data['startDate'], data['endDate'])
         data['assignments'] = [{'employeeId': p['id'], 'date': day,
             'kind': 'WORK' if index < 5 else 'OFF', **({'shiftId': 'day'} if index < 5 else {})}
             for p in data['employees'] for index, day in enumerate(days)]
@@ -28,8 +28,9 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertGreaterEqual(sum(a['kind'] == 'WORK' for a in result['assignments'] if a['date'] == days[0]), 2)
         shifts = {s['id']: s for s in data['shifts']}
         for person in data['employees']:
-            paid = sum(scheduling.shift_metrics(shifts[a['shiftId']])[0] for a in result['assignments']
-                       if a['employeeId'] == person['id'] and a['kind'] == 'WORK')
+            paid = sum(segment['end']-segment['start'] for a in result['assignments']
+                       if a['employeeId'] == person['id'] and a['kind'] == 'WORK'
+                       for segment in shifts[a['shiftId']]['segments'] if segment['kind'] != 'BREAK')
             self.assertEqual(paid, person['weeklyHours'] * 60)
         self.assertTrue(all(phase['status'] in ('OPTIMAL', 'FEASIBLE') for phase in phases))
         self.assertEqual(len(result['assignments']), 21)

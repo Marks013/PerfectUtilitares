@@ -1,4 +1,4 @@
-"""Original public contracts retained during engine migration; assertions unchanged."""
+"""Sunday behavioral contracts; expired-budget contract ported to the owned native process boundary."""
 from contract_fixtures import fixture
 from datetime import date
 from datetime import timedelta
@@ -69,9 +69,25 @@ class ProductionSundayTests(unittest.TestCase):
         self.assertLess(names.index('SUNDAY_BALANCE'), names.index('SATURDAY_BALANCE'))
 
     def test_expired_hint_budget_returns_without_a_partial_person(self):
-        from hints import balanced_rest_hints
-        from solver import instant, sunday_limit
+        import copy
+        import threading
+        from unittest.mock import patch
+        from control import SolveControl, SolveTimedOut
         data = fixture()
-        result = balanced_rest_hints(data['employees'], ['2026-11-02'], {}, {}, {}, {},
-                                     data['policy'], instant, sunday_limit, deadline=time.monotonic() - 1)
-        self.assertEqual(result, {})
+        before = copy.deepcopy(data)
+        control = SolveControl(threading.Event(), time.monotonic()-1)
+        with patch('native_runner.subprocess.Popen', side_effect=AssertionError('expired request must never launch')):
+            with self.assertRaises(SolveTimedOut):
+                solve(data, control=control)
+        self.assertEqual(data, before)
+
+
+def production_goal_names():
+    """Read the native declared order; do not invent a smaller oracle list."""
+    import re
+    from pathlib import Path
+    source = Path(__file__).resolve().parents[2] / 'experiments/escalas-solverforge/src/temporal.rs'
+    block = source.read_text().split('const OBJECTIVES:',1)[1].split('];',1)[0]
+    names = re.findall(r'\(\s*"([A-Z_]+)"\s*,', block)
+    assert len(names) == 16 and len(set(names)) == 16
+    return names

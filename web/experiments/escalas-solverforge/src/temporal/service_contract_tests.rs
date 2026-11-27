@@ -257,3 +257,110 @@ fn service_large_untimed_week_shares_its_domain_without_inventing_clocks(){
     assert!(plan.employees.iter().all(|p|Arc::ptr_eq(&p.catalog,&plan.employees[0].catalog)));
     assert!(plan.employees[0].catalog.iter().all(|p|p.states[..7].iter().all(|&s|s==DUTY||s==OFF)));
 }
+
+#[test]
+fn service_informational_documents_never_grant_or_remove_operational_permission(){
+    let mut v=legacy();
+    for document in [V::Null,json!({"reviewed":false,"validUntil":"2020-01-01"}),json!({"source":" ","reviewed":true})]{
+        v["input"]["policy"]["collectiveAgreement"]=document;
+        let before=v.clone();assert!(parse(&v).is_ok());assert_eq!(v,before);
+    }
+    v["input"]["policy"]["operationalCertificate"]=json!({"reviewed":false});
+    assert!(parse(&v).is_ok());
+    v["input"]["policy"]["dailyLimitMinutes"]=json!(300);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");
+}
+#[test]
+fn service_named_profile_keeps_open_holiday_rest_restriction(){
+    let mut v=legacy();v["input"]["policy"]["normativeProfile"]=json!("SINDECOMU_SUPERMARKETS_2026_2027");
+    assert!(parse(&v).is_ok());
+    v["input"]["policy"]["holidayDates"]=json!(["2026-11-02"]);
+    v["input"]["policy"]["holidayRestAllowed"]=json!(true);
+    v["input"]["assignments"]=json!([{"employeeId":"p0","date":"2026-11-02","kind":"OFF","locked":true}]);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");assert_eq!(answer["body"]["assignments"],json!([]));
+    v["input"]["policy"]["normativeProfile"]=json!("UNKNOWN_PROFILE");assert!(parse(&v).is_err());
+}
+#[test]
+fn service_target_above_weekly_limit_is_a_constraint_conflict(){
+    let mut v=legacy();v["input"]["employees"][0]["weeklyHours"]=json!(42);
+    v["input"]["policy"]["weeklyLimit"]=json!(40);
+    v["input"]["shifts"][0]["segments"][2]["end"]=json!(1044);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");assert_eq!(answer["body"]["assignments"],json!([]));
+}
+#[test]
+fn service_mixed_scope_is_exact_and_inactive_outside_branch_target(){
+    let mut v=legacy();v["input"]["mixed42Sectors"]=json!(["reposiçao"]);
+    assert!(parse(&v).is_ok());
+    v["input"]["defaultWeeklyHours"]=json!(44);v["input"]["mixed42Sectors"]=json!(["Reposição"]);
+    assert!(parse(&v).is_ok());
+}
+
+#[test]
+fn service_visible_month_clips_to_real_requested_dates_without_padding(){
+    let c=Calendar::service("2026-12-06","2026-12-12",Some("2026-12"),0).unwrap();
+    assert_eq!(c.labels.len(),7);assert_eq!(c.visible.iter().filter(|&&x|x).count(),7);
+    let c=Calendar::service("2026-11-29","2026-12-05",Some("2026-12"),0).unwrap();
+    assert_eq!(&c.visible[..7],&[false,false,true,true,true,true,true]);
+    assert!(Calendar::service("2026-12-06","2026-12-12",Some("2027-01"),0).is_err());
+    assert!(Calendar::new("2026-12-06","2026-12-12",Some("2026-12")).is_err());
+}
+#[test]
+fn service_legacy_overconstrained_rest_days_have_a_proven_domain_conflict(){
+    let mut v=legacy();v["input"]["employees"][0]["fixedOffDays"]=json!([0,1,2,3,4,5,6]);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");assert_eq!(answer["body"]["assignments"],json!([]));
+    v["input"]["employees"][0]["fixedRestSlots"]=json!([{"enabled":true,"weekday":0},{"enabled":true,"weekday":1}]);
+    assert!(parse(&v).is_err());
+}
+
+#[test]
+fn service_open_holiday_documentation_does_not_create_a_closure(){
+    let mut v=legacy();let person=&mut v["input"]["employees"][0];
+    person["scheduleMode"]=json!("UNTIMED");person["shiftIds"]=json!([]);person["history"]=json!([]);
+    v["input"]["policy"]["normativeProfile"]=json!("SINDECOMU_SUPERMARKETS_2026_2027");
+    v["input"]["policy"]["holidayDates"]=json!(["2026-11-02"]);
+    v["input"]["policy"]["operationalCertificate"]=json!({"holidays":false,"reviewed":false});
+    let before=v.clone();let plan=parse(&v).unwrap();
+    assert!(plan.employees[0].catalog.iter().all(|p|p.states[0]==DUTY));assert_eq!(v,before);
+    v["input"]["policy"]["closedDates"]=json!(["2026-11-02"]);
+    assert!(parse(&v).is_err(),"document cannot reopen a configured closure");
+}
+#[test]
+fn service_meal_extension_uses_numeric_limit_not_document_review_flags(){
+    let mut v=legacy();v["input"]["shifts"][0]["segments"][1]["end"]=json!(900);
+    v["input"]["shifts"][0]["segments"][2]["start"]=json!(900);
+    v["input"]["shifts"][0]["segments"][2]["end"]=json!(1140);
+    assert!(parse(&v).is_err());
+    v["input"]["policy"]["mealIntervalAgreement"]=json!({"maximumMinutes":180,"reviewed":false});
+    assert!(parse(&v).is_ok());
+    v["input"]["policy"]["mealIntervalAgreement"]["maximumMinutes"]=json!(true);
+    assert!(parse(&v).is_err());
+}
+
+#[test]
+fn service_presence_only_preserves_days_without_inventing_hourly_intervals(){
+    let mut v=legacy();let p=&mut v["input"]["employees"][0];
+    p["scheduleMode"]=json!("UNTIMED");p["shiftIds"]=json!([]);p["history"]=json!([]);
+    v["input"]["policy"]["minInterShiftMinutes"]=json!(10000);
+    v["input"]["policy"]["minWeeklyRestMinutes"]=json!(20000);
+    let before=v.clone();let plan=parse(&v).unwrap();
+    assert!(plan.employees[0].catalog.iter().all(|p|p.states[..7].iter().all(|&s|s==DUTY||s==OFF)));
+    assert_eq!(v,before);v["input"]["employees"][0]["scheduleMode"]=json!("TIMED");
+    assert!(matches!(parse(&v),Err("POLICY_LIMIT")));
+}
+#[test]
+fn service_metadata_excludes_closing_without_overlapping_estimated_service(){
+    let mut v=legacy();v["input"]["demands"]=json!([{"date":"2026-11-03","sector":"Reposição","start":480,"end":720,"minimum":1,"estimated":true}]);
+    let mut p=parse(&v).unwrap();seed::construct(&mut p,Instant::now()+Duration::from_secs(1));
+    let cost=evaluate(&p);let metadata=report::metadata(&p,cost,cost,[0.0;3],false,false);
+    let names:Vec<_>=metadata["phases"].as_array().unwrap().iter().map(|p|p["objective"].as_str().unwrap()).collect();
+    assert!(names.contains(&"COVERAGE"));assert!(!names.contains(&"CLOSING_COVERAGE"));
+    v["input"]["storeClosingMinutes"]=json!(1020);
+    v["input"]["demands"][0]["start"]=json!(960);v["input"]["demands"][0]["end"]=json!(1020);
+    let mut p=parse(&v).unwrap();seed::construct(&mut p,Instant::now()+Duration::from_secs(1));let cost=evaluate(&p);
+    let metadata=report::metadata(&p,cost,cost,[0.0;3],false,false);
+    assert!(metadata["phases"].as_array().unwrap().iter().any(|p|p["objective"]=="CLOSING_COVERAGE"));
+}
