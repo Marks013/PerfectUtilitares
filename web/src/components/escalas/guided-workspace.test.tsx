@@ -156,4 +156,26 @@ describe("guided scheduling workspace", () => {
     expect(html).not.toContain("Relatórios e gráficos PDF");
     expect(model.generate).not.toHaveBeenCalled();
   });
+  it("places the active branch and daily tasks before global administration in DOM order", () => {
+    vi.mocked(useEscalasWorkspace).mockReturnValue(state(plan()));
+    const html = renderToStaticMarkup(<EscalasWorkspace />);
+    const context = html.indexOf('aria-labelledby="escala-scenario-title"');
+    const navigation = html.indexOf('aria-label="Etapas do planejamento"');
+    const team = html.indexOf('id="escala-area-team"');
+    expect(context).toBeGreaterThan(-1);
+    expect(navigation).toBeGreaterThan(context);
+    expect(team).toBeGreaterThan(navigation);
+    for (const label of ["Base global de equipes e afastamentos", "Administrar operadores e filiais", 'aria-label="Catálogo administrativo de turnos"']) {
+      expect(html.indexOf(label)).toBeGreaterThan(team);
+    }
+  });
+
+  it("keeps global administration available before a plan is selected", () => {
+    const html = renderToStaticMarkup(<EscalasWorkspace />);
+    expect(html).toContain("Base global de equipes e afastamentos");
+    expect(html).toContain("Administrar operadores e filiais");
+    expect(html).toContain('aria-label="Catálogo administrativo de turnos"');
+    expect(html).not.toContain('aria-labelledby="escala-scenario-title"');
+  });
+
 });
