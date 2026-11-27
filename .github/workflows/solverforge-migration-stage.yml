@@ -1,0 +1,143 @@
+name: SolverForge migration staging - not release qualification
+on:
+  push:
+    branches: [experiment/solverforge-consolidado-2026-11-26]
+    paths: [.github/workflows/solverforge-migration-stage.yml]
+permissions:
+  contents: write
+concurrency:
+  group: solverforge-migration-object-staging
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: github.repository == 'Marks013/PerfectUtilitares' && github.ref == 'refs/heads/experiment/solverforge-consolidado-2026-11-26'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/forge-target
+      RAYON_NUM_THREADS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.13'
+      - name: Reconstruct exact tested source, without executing capsule contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip,hashlib,json,os,subprocess,urllib.request
+          from pathlib import Path,PurePosixPath
+          base='5732c4e21d793a0e22149907cd3e78e563a1ed05'
+          expected='6038129cb5f28f70019064e61800404ca84f9510'
+          digest='0fb7b55a1ba1ff5d962d6c42754f6a06f6c2e0dd45aa068a1db7d0bae4818da2'
+          assert subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()==base
+          url='https://sb-5a65yacf76ta.vercel.run/'+digest+'.json.gz'
+          with urllib.request.urlopen(url,timeout=30) as response:
+              data=response.read(100001)
+          assert len(data)==40276 and hashlib.sha256(data).hexdigest()==digest
+          capsule=json.loads(gzip.decompress(data))
+          assert capsule['base']==base and capsule['tree']==expected
+          assert capsule['baseTree']=='937be14c7fe2567ac8de07c34903bdd710f651b7'
+          assert len(capsule['items'])==84
+          allowed=('web/ops/escalas/','web/experiments/escalas-solverforge/','web/scripts/','docs/superpowers/plans/')
+          extra={'web/docker-compose.yml','.github/workflows/ci.yml','.github/workflows/escalas-synthetic-benchmark.yml','web/src/lib/escalas/roster-refinement.ts'}
+          blob=lambda b:hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
+          env={**os.environ,'GIT_INDEX_FILE':os.environ['RUNNER_TEMP']+'/migration.index'}
+          subprocess.run(['git','read-tree',base],env=env,check=True)
+          seen=set()
+          for item in capsule['items']:
+              name=item['path'];path=PurePosixPath(name)
+              assert not path.is_absolute() and '..' not in path.parts and name not in seen
+              assert name.startswith(allowed) or name in extra
+              seen.add(name);target=Path(name)
+              assert not target.is_symlink() and item['mode'] in ('100644','100755')
+              old=subprocess.run(['git','show',base+':'+name],capture_output=True)
+              original=old.stdout if old.returncode==0 else b''
+              assert (blob(original) if old.returncode==0 else None)==item['old']
+              if item['new'] is None:
+                  assert item['old'] is not None
+                  target.unlink();subprocess.run(['git','update-index','--force-remove','--',name],env=env,check=True)
+                  continue
+              lines=original.decode('utf-8').splitlines(keepends=True)
+              pieces=[]
+              for part in item['parts']:
+                  if isinstance(part,list):
+                      assert len(part)==2 and all(type(v) is int for v in part) and 0<=part[0]<=part[1]<=len(lines)
+                      pieces.append(''.join(lines[part[0]:part[1]]))
+                  else:
+                      assert isinstance(part,str)
+                      pieces.append(part)
+              result=''.join(pieces).encode('utf-8');assert blob(result)==item['new']
+              target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(result);target.chmod(int(item['mode'],8))
+              written=subprocess.check_output(['git','hash-object','-w','--stdin'],input=result).decode().strip()
+              assert written==item['new']
+              subprocess.run(['git','update-index','--add','--cacheinfo',item['mode'],written,name],env=env,check=True)
+          actual=subprocess.check_output(['git','write-tree'],env=env,text=True).strip()
+          assert actual==expected
+          Path(os.environ['RUNNER_TEMP']+'/migration-capsule.json').write_text(json.dumps(capsule))
+          print('VERIFIED_SOURCE_TREE='+actual)
+          PY
+      - name: Native tests, strict Clippy and release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.100.0 --profile minimal --component clippy
+          git clone --depth 1 --branch v0.31.2 https://github.com/SolverForge/solverforge.git "$RUNNER_TEMP/upstream"
+          test "$(git -C "$RUNNER_TEMP/upstream" rev-parse HEAD)" = 78889c3ff9fda158c70e6a1f67f8c7f0fdae922e
+          python3 web/experiments/escalas-solverforge/prepare_workspace.py "$RUNNER_TEMP/upstream"
+          cargo +1.100.0 test --locked --release --manifest-path "$RUNNER_TEMP/upstream/Cargo.toml" -p perfectutilitares-solverforge-spike
+          cargo +1.100.0 clippy --locked --release --manifest-path "$RUNNER_TEMP/upstream/Cargo.toml" -p perfectutilitares-solverforge-spike --no-deps --all-targets -- -D warnings
+          cargo +1.100.0 build --locked --release --manifest-path "$RUNNER_TEMP/upstream/Cargo.toml" -p perfectutilitares-solverforge-spike
+          cmp web/experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/upstream/Cargo.lock"
+          git diff --check
+      - name: Runtime integrity and actual HTTP boundary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ESCALAS_SOLVER_BINARY="$CARGO_TARGET_DIR/release/perfectutilitares-solverforge-spike"
+          python3 -m unittest discover -s web/experiments/escalas-solverforge -p 'test_*.py'
+          cd web/ops/escalas
+          python3 -m unittest test_native_runner test_runtime_migration test_service test_transport test_service_startup test_service_security_contracts
+      - name: Store verified Git objects only - no branch update, merge or deployment
+        env:
+          GH_OBJECT_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64,hashlib,json,os,urllib.request
+          from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor
+          root='https://api.github.com/repos/Marks013/PerfectUtilitares/'
+          capsule=json.loads(Path(os.environ['RUNNER_TEMP']+'/migration-capsule.json').read_text())
+          assert os.environ['GITHUB_REPOSITORY']=='Marks013/PerfectUtilitares'
+          assert os.environ['GITHUB_REF']=='refs/heads/experiment/solverforge-consolidado-2026-11-26'
+          token=os.environ.pop('GH_OBJECT_TOKEN')
+          def api(path,data=None):
+              request=urllib.request.Request(root+path,data=None if data is None else json.dumps(data).encode(),headers={'Authorization':'Bearer '+token,'Accept':'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(request,timeout=30) as response:return json.load(response)
+          head=api('git/ref/heads/experiment/solverforge-consolidado-2026-11-26')['object']['sha']
+          assert head==os.environ['GITHUB_SHA'],'Branch changed during verification'
+          def store(item):
+              entry={'path':item['path'],'mode':item['mode'],'type':'blob','sha':item['new']}
+              if item['new'] is not None:
+                  data=Path(item['path']).read_bytes()
+                  assert hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()==item['new']
+                  actual=api('git/blobs',{'encoding':'base64','content':base64.b64encode(data).decode()})['sha']
+                  assert actual==item['new']
+              return entry
+          with ThreadPoolExecutor(max_workers=4) as workers:entries=list(workers.map(store,capsule['items']))
+          tree=api('git/trees',{'base_tree':capsule['baseTree'],'tree':entries})['sha']
+          assert tree==capsule['tree']
+          print('STAGED_TREE='+tree)
+          print('FILES=84; RELEASE_APPROVAL=false; NO_REF_UPDATED=true')
+          PY
+      - name: Full compatibility remains a mandatory failing gate until implemented
+        shell: bash
+        run: |
+          export ESCALAS_SOLVER_BINARY="$CARGO_TARGET_DIR/release/perfectutilitares-solverforge-spike"
+          cd web/ops/escalas
+          python3 -m unittest discover -s . -p 'test_*.py'
