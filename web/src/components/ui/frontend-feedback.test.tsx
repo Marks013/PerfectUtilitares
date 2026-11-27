@@ -9,7 +9,8 @@ const utilities = read("../../app/styles/theme-utilities.css");
 
 function contrast(first: string, second: string) {
   const luminance = (hex: string) => {
-    const channels = hex.slice(1).match(/.{2}/g)!.map(value => Number.parseInt(value, 16) / 255)
+    if (!/^#[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`Expected a six-digit hex color, received ${hex}`);
+    const channels = [1, 3, 5].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
       .map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
     return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
   };
@@ -20,9 +21,14 @@ function contrast(first: string, second: string) {
 describe("shared frontend contracts", () => {
   it.each(["dark", "light"])("keeps solid danger text above 4.5:1, including hover, in %s", theme => {
     const block = foundation.match(new RegExp(`html\\[data-theme="${theme}"\\]\\s*\\{([^}]+)`))?.[1];
-    expect(block).toBeTruthy();
-    const token = (name: string) => block!.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))![1];
-    const fill = utilities.match(/\.app-bg-danger\s*\{([^}]+)\}/)![1];
+    if (!block) throw new Error(`Missing ${theme} theme block`);
+    const token = (name: string) => {
+      const value = block.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1];
+      if (!value) throw new Error(`Missing ${name} hex token in ${theme} theme`);
+      return value;
+    };
+    const fill = utilities.match(/\.app-bg-danger\s*\{([^}]+)\}/)?.[1];
+    if (!fill) throw new Error("Missing shared danger fill rule");
     expect(fill).toMatch(/(?:^|\s)color:\s*var\(--app-action-text\)/);
     expect(contrast(token("--app-action-text"), token("--app-danger"))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(token("--app-action-text"), token("--app-danger-hover"))).toBeGreaterThanOrEqual(4.5);
