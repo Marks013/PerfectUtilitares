@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts
+          node --conditions=react-server --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts scripts/escalas/cross-engine/verify-reply.test.ts
           test "$(git rev-parse HEAD)" = "$ESCALAS_FORGE_CANDIDATE_REVISION"
           if ! git cat-file -e "$TIMEFOLD_CONTROL^{commit}"; then
             git fetch --no-tags origin "$TIMEFOLD_CONTROL"

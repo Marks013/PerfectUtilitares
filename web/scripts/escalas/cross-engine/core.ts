@@ -59,7 +59,7 @@ export function verifyReply(value: unknown): WireReply {
   const record = asRecord(value);
   const httpStatus = record?.httpStatus;
   const rss = record?.maxRssKiB;
-  if (typeof httpStatus !== "number" || !Number.isInteger(httpStatus) || ![200, 400, 409, 413, 429, 500, 503, 504].includes(httpStatus)
+  if (typeof httpStatus !== "number" || !Number.isInteger(httpStatus) || ![200, 400, 409, 413, 422, 429, 500, 502, 503, 504].includes(httpStatus)
     || (rss !== null && (typeof rss !== "number" || !Number.isFinite(rss) || rss < 0)) || !asRecord(record?.body))
     throw new Error("CROSS_ENGINE_REPLY_INVALID");
   if (httpStatus === 200 && !knownStatus(asRecord(record?.body)?.status)) throw new Error("CROSS_ENGINE_STATUS_INVALID");

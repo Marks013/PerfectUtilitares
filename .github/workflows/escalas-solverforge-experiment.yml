@@ -57,7 +57,7 @@ jobs:
           test "$(git hash-object experiments/escalas-solverforge/src/e2-wire-contract.json)" = "6f0f97b8aaadfe1c94034937ff4f134fb4f388a5"
           test "$(git hash-object experiments/escalas-solverforge/src/e3a-fixed-clock-contract.json)" = "2972584ac91979b65bb7782aa8374fcbb86f7b90"
           node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
-          node --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts
+          node --conditions=react-server --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts scripts/escalas/cross-engine/verify-reply.test.ts
           test "$(git rev-parse HEAD)" = "$ESCALAS_FORGE_CANDIDATE_REVISION"
           if ! git cat-file -e "$TIMEFOLD_CONTROL^{commit}"; then
             git fetch --no-tags origin "$TIMEFOLD_CONTROL"

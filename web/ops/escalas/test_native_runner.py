@@ -161,9 +161,14 @@ class NativeProcessTests(unittest.TestCase):
         with self.assertRaises(SolveTimedOut):
             self.run_code(code,seconds=0.25)
         pid=pidfile.read_text()
+        stat=Path("/proc/"+pid+"/stat")
         for _ in range(50):
-            stat=Path("/proc/"+pid+"/stat")
-            if not stat.exists() or stat.read_text().split()[2]=="Z":break
+            try:
+                state=stat.read_text().rpartition(") ")[2].split()[0]
+            except (FileNotFoundError, ProcessLookupError):
+                # The kernel may finish reaping the child while /proc is read.
+                break
+            if state=="Z":break
             time.sleep(0.01)
         else:self.fail("owned descendant is still running")
 
