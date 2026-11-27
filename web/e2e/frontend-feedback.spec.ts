@@ -10,14 +10,14 @@ test("login identifies invalid fields and preserves entered values", async ({ pa
   await expect(email).toBeFocused();
   await expect(email).toHaveAttribute("aria-invalid", "true");
   await expect(email).toHaveAttribute("aria-describedby", "login-email-error");
-  await expect(page.getByRole("alert")).toContainText("Confira os campos");
+  await expect(page.locator("form").getByRole("alert")).toContainText("Confira os campos");
   await expect(password).toHaveValue("valor-sintetico-nao-enviado");
 });
 
 test("login focuses a generic server failure without identifying a credential", async ({ page }) => {
   await page.goto("/login?error=credentials");
-  await expect(page.getByRole("alert")).toBeFocused();
-  await expect(page.getByRole("alert")).toContainText("E-mail ou senha não conferem");
+  await expect(page.locator("form").getByRole("alert")).toBeFocused();
+  await expect(page.locator("form").getByRole("alert")).toContainText("E-mail ou senha não conferem");
   await expect(page.locator('input[aria-invalid="true"]')).toHaveCount(0);
 });
 
@@ -48,7 +48,7 @@ test("login exposes pending state and keeps one in-flight submission", async ({ 
     expect(during?.width).toBe(before?.width);
     expect(during?.height).toBe(before?.height);
   } finally { release(); }
-  await expect(page.getByRole("alert")).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator("form").getByRole("alert")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Entrar", exact: true })).toBeEnabled();
 });
 
