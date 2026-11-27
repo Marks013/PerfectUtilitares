@@ -225,6 +225,44 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(all(a.get("shiftId") != "night" for a in result["assignments"]))
         self.assertEqual(data, original)
 
+    def test_real_http_closed_estimate_keeps_private_comparison_and_real_cost(self):
+        data = fixture(40)
+        data["storeClosingMinutes"] = 1080
+        for key in ("closedDates", "holidayDates", "paidHolidayDates"):
+            data["policy"][key] = ["2026-11-02"]
+        data["demands"] = [{"date":"2026-11-02", "sector":"Reposição", "start":1020,
+                            "end":1080, "minimum":1, "estimated":True}]
+        cap = {"sector":"Reposição", "horizon":60, "month":60, "sundays":0,
+               "monthSundays":0, "closing":0, "peak":1}
+        data["_coverageComparison"] = {"sectors":[cap], "bands":[
+            {"scope":scope, "sector":"Reposição", "role":None, "start":1020,
+             "end":1080, "maximum":1, "peak":1} for scope in ("HORIZON", "MONTH")]}
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "INFEASIBLE", result)
+        self.assertEqual(result["assignments"], [])
+        self.assertEqual(data, before)
+        cap["closing"] = 60
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        phases = {p["objective"]:p for p in result["optimization"]["phases"]}
+        self.assertEqual(phases["COVERAGE"]["incumbentValue"], 60)
+        self.assertEqual(phases["CLOSING_COVERAGE"]["incumbentValue"], 60)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-02")["kind"], "HOLIDAY")
+
+    def test_real_http_empty_demand_role_is_general_without_changing_registered_roles(self):
+        data = fixture(40)
+        data["demands"] = [{"date":"2026-11-04", "sector":"Reposição", "role":"",
+                            "start":480, "end":540, "minimum":1}]
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-04")["kind"], "WORK")
+        self.assertEqual(data, before)
+
     def test_authentication_precedes_parsing_and_slot_allocation(self):
         status, result = self.request(
             "/solve", {"bad": "input"}, self.identity(), auth=False

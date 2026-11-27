@@ -107,6 +107,7 @@ pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rate
 struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16,previous_mask:u16}
+#[cfg_attr(test,derive(Clone))]
 #[derive(Debug,PartialEq,Eq,Hash)]
 pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,week_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
     priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64,
@@ -497,10 +498,15 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let sector=*sectors.get(text(d,"sector")?).ok_or("DEMAND_SECTOR")?;
         let role=match d.get("role"){None=>None,Some(v) if v.is_null()=>None,Some(v)=>{
             let r=v.as_str().ok_or("ROLE")?;
-            let next=roles.len();Some(*roles.entry(r.to_string()).or_insert(next))
+            // The public demand contract uses an empty role as a general floor.
+            // Private role-specific service bounds retain exact registered keys.
+            if service&&r.is_empty(){None}else{let next=roles.len();Some(*roles.entry(r.to_string()).or_insert(next))}
         }};
         let estimated=boolean(d,"estimated",false)?;
-        if estimated&&(paid.contains(&day)||branch_two&&calendar.weekday(day as usize)==0){continue;}
+        // A private comparison accounts for closed-day deficits as constants;
+        // dropping those references would silently loosen its frozen bounds.
+        if estimated&&input.get("_coverageComparison").is_none()
+            &&(paid.contains(&day)||branch_two&&calendar.weekday(day as usize)==0){continue;}
         demand_groups.entry((sector,day as usize,estimated)).or_default().push((a,b,i64::from(n),role));
     }
     // Legacy private coverage floors are additional mandatory minima,
@@ -1491,3 +1497,6 @@ mod service_contract_tests;
 
 #[cfg(test)]
 mod boundary_tests;
+
+#[cfg(test)]
+mod historical_coverage_tests;

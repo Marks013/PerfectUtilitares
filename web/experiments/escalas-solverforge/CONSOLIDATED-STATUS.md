@@ -1,75 +1,82 @@
-# SolverForge — objetivos e fronteiras noturnas corrigidos; main bloqueada
+# SolverForge — contratos de cobertura recuperados; main bloqueada
 
 Atualização: 27/11/2026. Branch: `experiment/solverforge-consolidado-2026-11-26`.
-Base: `d445f7f7f9a9c8208049ef0c8cd16f2fd3be0fc9`.
-Árvore de código compilada e testada antes deste relatório: `55f754f067bdca5b7b9c22685de66aeaf0d84e08`.
+Base: `2d547d092f67289354c9f5bd22bec7c71ed40724`.
+Árvore de código efetivamente compilada e verificada: `d10941c086ca1f425d8a6282fe4924f9831708ca`.
 
-## Escopo preservado
+## Escopo e limites preservados
 
-O runtime continua exclusivamente SolverForge, com Python para transporte, autenticação, validação e supervisão. O controle histórico OR-Tools permanece somente no benchmark externo. Rust 1.100.0, upstream fixado, dependências e Cargo.lock não foram alterados.
+O runtime continua exclusivamente SolverForge, com Python para autenticação, transporte, validação e supervisão. OR-Tools permanece somente como controle histórico externo do benchmark. Rust 1.100.0, upstream fixado, dependências e Cargo.lock não foram alterados. O componente rustfmt da mesma versão foi instalado apenas no laboratório e aplicado somente ao novo módulo de testes.
 
-Mudanças em quatorze arquivos de código/testes e neste relatório. Comparador externo, fixtures, asserções públicas anteriores, inventário, workflows de qualificação e limites existentes foram preservados. Não houve merge, deploy, build Docker ou atualização da main, Timefold #74 ou branch original do PR #75.
+Foram alterados seis arquivos de código/testes/inventário e este relatório. O comparador externo, os cenários, as asserções públicas anteriores de qualidade e os workflows permanentes de qualificação permanecem iguais à base. Não houve merge, deploy, build Docker nem alteração na main, Timefold #74 ou branch original do PR #75. O workflow temporário usado exclusivamente para transportar objetos Git com hash verificado é removido da árvore final; seu sucesso não representa qualificação.
 
-## Correções
+## Dois defeitos reproduzidos e corrigidos
 
-### Não piora por componente e recuperação
+### Déficit de referência fechada não pode desaparecer dos limites privados
 
-O teste público reproduziu a aceitação de uma melhora lexicográfica com PEOPLE_CHANGED de 0 para 3 e STABILITY de 0 para 12. A aceitação final agora exige que nenhum componente piore em relação ao incumbente viável produzido pela construção, além das proteções existentes de setor, serviço, liderança e folgas. A recuperação de um incumbente inicialmente inviável continua possível.
+A leitura descartava a estimativa de uma data fechada/feriado pago antes de compilar `_coverageComparison`. Isso permitia aceitar uma escala sem contabilizar o déficit constante que o limite privado exigia preservar. A fonte histórica `5732c4e21d793a0e22149907cd3e78e563a1ed05`, em `_coverage`, mantém essas referências quando há comparação privada.
 
-Custos do candidato nativo e do resultado devolvido permanecem reais. `componentGuardPreserved` registra a checagem adicional. Uma rejeição restaura a escolha anterior, sem fabricar telemetria, prova de ótimo ou melhoria que não ocorreu.
+Agora, a referência permanece no cálculo quando `_coverageComparison` está presente. Sem essa comparação, a exclusão preexistente das estimativas de feriados pagos e dos domingos fechados configurados continua preservada. Nenhuma data é reaberta, nenhum limite é ampliado e nenhum turno é inventado.
 
-A primeira versão expôs três regressões nos casos públicos de recuperação de setor vazio. Foram corrigidas antes da publicação: uma sugestão completa com déficit estimado passa pelo reparo existente durante a construção, dentro do mesmo prazo, antes de definir a referência do refinamento. Uma grade completa já coberta permanece preservada. Sugestões não viram bloqueios; bloqueios reais continuam obrigatórios. Os quatro subcasos originais de recuperação passaram junto com a asserção original de não piora por componente.
+A regressão nativa e a chamada HTTP real mostraram a falha antes da correção. Depois, um déficit fechado de 60 minutos-pessoa com margem de fechamento zero é rejeitado; com margem explicitamente fornecida de 60, a proposta é aceita e informa os 60 reais em COVERAGE e CLOSING_COVERAGE. O contrato de uma data técnica fora do mês visível também verifica que a data continua no horizonte e no fechamento, sem ser acrescentada ao total mensal.
 
-### Histórico noturno e datas civis
+### Cargo vazio em demanda geral
 
-A estrutura de um turno histórico deixa de ser confundida com sua autorização como alternativa atual. Fechamento explícito continua limitando novos turnos; um registro histórico não reabre a operação. A entrada legada sem fechamento informado conserva a possibilidade de turnos que cruzam a meia-noite. A admissão sintética permanece separada.
+A demanda pública com `role: ""` era convertida em uma exigência para um cargo vazio, causando uma prova incorreta de falta de capacidade quando o contrato histórico a trata como demanda geral. A leitura pública agora conserva esse significado. Metadados dos colaboradores não são reescritos; nomes de cargos não vazios continuam exatos.
 
-O trabalho da noite imediatamente anterior ao horizonte possui uma posição imutável própria no registro de presença, separada dos 42 dias solicitados. Seu serviço real pode atender a primeira manhã, sem criar uma atribuição nova. A recomputação integral, o acumulador incremental, a prova otimista de capacidade, as proteções privadas e a construção contabilizam essa fronteira civil. Cada pessoa é contada uma vez por intervalo.
+Essa correção não generaliza o campo de cargo dos limites privados de serviço. Um cargo efetivamente registrado como vazio continua sendo uma chave específica nesses limites. Há testes separados para a demanda geral e para essa proteção privada. O caso de sucesso foi executado por HTTP autenticado real, preservando a entrada.
 
-Refeição não conta como trabalho. Pausa remunerada conta na ocupação civil paga, mas não fornece cobertura horária. DUTY e pessoas excluídas não recebem crédito de serviço com horário. Os testes verificam que trabalho anterior não invade afastamento ou folga atual e que trabalho atual não invade folga futura publicada. Uma data futura desconhecida não é inventada como trabalho.
+## Portabilidade com rastreabilidade
 
-A distribuição dominical contabiliza a data civil ocupada por trabalho iniciado no sábado anterior, sem duplicar o domingo. Uma rejeição por sequência de domingos inteiramente passada também foi reproduzida e corrigida: o histórico continua limitando janelas que alcançam o horizonte atual, mas uma violação imutável anterior não torna impossível uma escala corretiva atual.
+Foram reabertas as fontes históricas exatas e portados 18 contratos do inventário:
 
-A interface pública `occupied_dates` foi restaurada como cálculo puro de datas civis, sem dependência de otimizador. Testes independentes verificam pausa paga, refeição, término exclusivo à meia-noite e mudança de ano. Essas correções não constituem certificação jurídica nem implementação integral de hora noturna reduzida ou de toda combinação temporal possível.
+- Seis de cálculo diário: deduplicação, sobreposição, máximos por cargo, déficit de função não compensado por excedente de outra, separação de confirmado/estimado e obrigatoriedade por cargo.
+- Quatro de presença: WORK real não substituído por DUTY, ausência de piso inventado a partir de DUTY, preservação de presença diante de alvo zero e compatibilidade com afastamento/folga bloqueada.
+- Oito de proteção/comparação: cobertura do setor de origem e de domingo na primeira construção, redistribuição de déficit entre domingos, limites setoriais e dominicais, pico simultâneo, divisão por cortes de horário, margem implícita zero por cargo, fechamento fora do mês e contagem única da pessoa na passagem entre datas.
 
-## Testes e revisão
+Cada registro mantém sua identidade histórica, revisão de origem, SHA-256 do corpo original, justificativa da portabilidade, destino Rust, nome qualificado do teste e SHA-256 do arquivo de destino. A baixa só foi aplicada depois de verificar esses nomes na execução nativa completa aprovada. Os 481 identificadores históricos foram preservados; 337 continuam pendentes. `readyForMain` permanece false.
 
-Foram acrescentados dez testes Rust e quatro testes Python, incluindo dois caminhos HTTP autenticados reais. As quatro regressões nativas iniciais falharam antes da implementação. A regra de domingos inteiramente passados também teve falha reproduzida. O acumulador com trabalho anterior foi confrontado com a recomputação integral ao alterar escolhas, retirar atribuições, retrair entidades e reiniciar o acumulador.
+Os contratos originalmente isolados de cobertura continuam testes de componente: usam o decodificador, o cálculo integral e as proteções reais do SolverForge com atribuições controladas, assim como os modelos CP antigos isolavam essa álgebra. Eles não são apresentados como escalas semanais completas legalmente válidas. Os testes de primeira construção e os testes HTTP exercitam também o fluxo completo. Não foram recriados CpModel, variáveis CP ou auxiliares falsos apenas para satisfazer mocks.
 
-Há testes de preservação de serviço, pausas, ausência, folga, fechamento explícito e sugestões com déficit recuperável. Dois avisos de Clippy nos testes novos foram corrigidos sem supressões ou redução de asserções. Não houve revisão por subagente autônomo nesta rodada.
+Algumas verificações adicionais têm escopo parcial e não receberam baixa no inventário: por exemplo, a preservação numérica dos domingos mensais não é apresentada como substituição integral do diagnóstico textual histórico, nem a aceitação de candidatos pela proteção como prova de equivalência de toda a busca antiga. A contagem das pendências não foi reduzida por esses casos.
+
+A verificação do inventário agora admite destinos Rust explicitamente registrados, mantendo a exigência de zero pendências para release. Ela rejeita arquivos cujo hash mudou, funções ausentes, testes ignorados ou condicionais, módulos desabilitados, caminhos externos e identidades incompatíveis. Esses testes estruturais não substituem a execução obrigatória do cargo test na CI.
 
 ## Validação executada
 
-Laboratório isolado Linux x86_64/GNU, Rust 1.100.0. Os quatorze blobs de publicação foram conferidos por hash; as fontes Rust são idênticas à cópia compilada.
+Ambiente isolado Linux x86_64/GNU, Rust 1.100.0. As fontes foram comparadas byte a byte com a cópia compilada e os seis blobs de publicação foram conferidos por hash.
 
-| Verificação | Base d445f7f | Candidato desta rodada |
+| Verificação | Base 2d547d0 | Candidato desta rodada |
 |---|---:|---:|
-| Testes Rust completos aprovados | 126 | 136 |
+| Testes Rust completos aprovados | 136 | 162 |
 | Testes Python do experimento aprovados | 45 | 45 |
-| Transporte, fases, HTTP, presença e ocupação civil | 65 | 69 |
-| Suíte pública completa: testes executados | 246 | 250 |
-| Suíte pública: falhas | 2 | 1 |
-| Suíte pública: erros | 3 | 0 |
-| Suíte pública: ignorados | 0 | 0 |
+| Testes de transporte, fases, HTTP, presença e ocupação civil | 69 | 71 |
+| Testes da suíte pública completa | 250 | 257 |
+| Falhas da suíte pública | 1 | 1 |
+| Erros da suíte pública | 0 | 0 |
+| Testes ignorados da suíte pública | 0 | 0 |
+| Contratos históricos pendentes | 355 | 337 |
 
-Clippy all-targets com -D warnings, build release, Ruff, Cargo.lock e git diff --check passaram. Os 69 testes de fronteira integram a suíte pública, não são cobertura independente adicional. As asserções originais de objetivos, jornadas noturnas e recuperação de setores vazios permanecem inalteradas.
+Clippy all-targets com -D warnings, build release, Ruff, conferência do Cargo.lock e git diff --check passaram. Foram acrescentados 26 testes Rust e sete testes Python, incluindo dois caminhos HTTP reais e cinco verificações de integridade dos destinos nativos. Os 71 testes de fronteira fazem parte da suíte maior, não são cobertura adicional independente.
 
-A suíte completa sem filtro terminou com `FAILED (failures=1)`, em 250 testes. Sua única falha é `test_every_retired_test_has_a_reviewed_migration_disposition`: 355 contratos históricos ainda exigem portabilidade ou revisão explícita. A execução continua reprovada e não autoriza main. A ausência de outras falhas nesta suíte não prova a implementação dos contratos ainda ausentes.
+Uma verificação nativa adicional confrontou a cobertura e o fechamento com um cálculo independente minuto a minuto em 256 combinações de demanda, duplicação, ordem de entrada e equipes. Os valores coincidiram. Não é benchmark nem demonstração de ótimo global.
 
-## Bloqueios restantes
+A suíte pública sem filtro terminou com 257 testes, uma falha, zero erros e zero ignorados, em 259,049 segundos. A única falha é `test_every_retired_test_has_a_reviewed_migration_disposition`, por 337 contratos ainda pendentes. O código de saída permanece 1. Não há aprovação integral para main.
 
-Os 481 registros históricos e as 355 pendências permanecem intactos. Nenhum item foi marcado revisado nesta rodada. A próxima etapa é recuperar e revisar esses contratos, priorizando cobertura, domingos, refinamento por cargo e reparos setoriais, com rastreabilidade para as fontes históricas.
+## Pendências de homologação
 
-Permanecem obrigatórias a não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, a validação ARM64/musl do novo commit, contêiner/segurança/E2E e as 32 repetições de desempenho e estabilidade. O benchmark ampliado e a medição de estabilidade não foram executados nesta rodada. Não há declaração de ganho geral de desempenho ou prontidão para main.
+Continuam necessárias a portabilidade ou revisão explícita dos 337 contratos, a não inferioridade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, ARM64/musl do novo commit, contêiner/segurança/E2E e as 32 repetições de desempenho e estabilidade. A equivalência integral dos objetivos e dos contratos temporais ainda não está certificada. Hora noturna reduzida e outros limites já documentados não são declarados implementados por esta rodada.
 
-Publicação somente na branch consolidada, sem força ou reescrita de histórico. O workflow temporário de transporte de objetos Git verificados por hash é removido da árvore final; seu sucesso não é qualificação do motor.
+O benchmark ampliado e a medição de estabilidade não foram executados neste candidato. Não houve revisão por subagente autônomo. As verificações de álgebra, os testes negativos, a conferência das fontes históricas e a revisão do diff não são apresentadas como revisão independente nem como ganho geral de desempenho.
 
-## Evidências
+## Evidências e retomada
 
-Diretório: `/vercel/lab/contracts-round6`. SHA-256 dos logs finais:
+Laboratório: `/vercel/lab/contracts-round7`. Workspace: `/vercel/solverforge-round7`, baseado em `2d547d0`; retomar o próximo bloco em uma worktree limpa do commit publicado. SHA-256 dos logs finais:
 
-- Rust: `18e81eb80bc1079ff2d0ecc9c29a8e4ad3a811813ef5e1fb116e8fd173df8cda`.
-- Clippy: `f5c6bed8d6655a375ad74428515ae758a523d3197712506f603c38a3dbad56dc`.
-- Build: `aaa4004ddcd17ea4c0ce9855320e756dd6aa1f0058bf6152469961ca0af2b939`.
-- Fronteiras: `c3f0fc6683258f1ba0b87aefc579e246f67a3953cc975f05d2f233b432d77d1b`.
-- Suíte pública completa: `ab7c7a19b297849d4161edc832135ac2256e5c29f5772dad5da8643877ab1589`.
+- Rust: `2b0a4c7b24c8a77c5aecc1411bc7da261e3638e843130926c5940e94b1f5c9f0`.
+- Clippy: `59c151386e03247033ff283b096b54e8da17fe39927caa2ee70b0152bb6c7ca2`.
+- Build: `c3ca109861d7426819db9e118e38eefd785f84203eecdca51f6fd4921d74f3b7`.
+- Fronteiras: `096c3d062bd968ad56ab48be55c9fc3de5e6e3d37ca90ea97c6f0302e40fc101`.
+- Suíte pública: `26a8952c4adcf9bb49146b30c1ffebbe59e3aea85c164fa0c5beb1e0c03cb322`.
+
+O checkpoint publicado preserva os resultados, a árvore verificada, os hashes e as pendências; não autoriza merge ou deploy.
