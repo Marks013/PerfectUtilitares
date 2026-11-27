@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { Camera, Clock3, KeyRound, Sparkles } from "lucide-react";
-import Link from "next/link";
+import { Camera, Clock3, Sparkles } from "lucide-react";
+import { LoginForm } from "@/components/login-form";
 import { auth } from "@/auth";
 import { BCRYPT_PASSWORD_MAX_LENGTH } from "@/lib/auth/password";
 import { parseRetryAfterSeconds, retryAfterInstruction } from "@/lib/api/retry-after";
@@ -71,70 +71,13 @@ export default async function LoginPage({
           </span>
         </div>
       </section>
-      <form
+      <LoginForm
         action={loginAction}
-        className="login-gateway__form w-full max-w-sm app-radius-lg border app-border app-bg-card p-6 app-shadow"
-      >
-        <div className="flex items-center gap-2">
-          <KeyRound className="size-5 app-text-muted" aria-hidden="true" />
-          <h2 className="text-xl font-semibold app-text">Entrar</h2>
-        </div>
-        <p className="mt-1 text-sm app-text-muted">
-          Use seu e-mail e senha para acessar seu histórico.
-        </p>
-        <input type="hidden" name="callbackUrl" value={callbackUrl} />
-
-        {errorMessage ? (
-          <div className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft px-3 py-2 text-sm app-text-danger">
-            {errorMessage}
-          </div>
-        ) : null}
-
-        <label className="mt-5 block text-sm font-medium app-text">
-          E-mail
-          <input
-            name="email"
-            type="email"
-            autoComplete="username"
-            maxLength={254}
-            required
-            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none focus:border-neutral-900"
-            placeholder="nome@empresa.com"
-          />
-        </label>
-
-        <label className="mt-4 block text-sm font-medium app-text">
-          Senha
-          <input
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            maxLength={BCRYPT_PASSWORD_MAX_LENGTH}
-            required
-            className="mt-1 w-full app-radius-md border app-border px-3 py-2 text-base sm:text-sm outline-none focus:border-neutral-900"
-            placeholder="Digite sua senha"
-          />
-        </label>
-
-        <button
-          type="submit"
-          className="app-primary-button mt-5 w-full app-radius-md px-3 py-2 text-sm font-medium"
-        >
-          Entrar
-        </button>
-        <Link
-          href="/esqueci-senha"
-          className="mt-3 inline-flex w-full justify-center app-radius-md border app-border px-3 py-2 text-sm font-medium app-text-muted app-hover-surface"
-        >
-          Esqueci minha senha
-        </Link>
-        <Link
-          href="/dashboard"
-          className="mt-3 inline-flex w-full justify-center app-radius-md border border-emerald-300 px-3 py-2 text-sm font-medium app-text-success hover:bg-emerald-50"
-        >
-          Continuar sem entrar
-        </Link>
-      </form>
+        callbackUrl={callbackUrl}
+        passwordMaxLength={BCRYPT_PASSWORD_MAX_LENGTH}
+        errorMessage={errorMessage}
+        errorCode={params.error}
+      />
     </main>
   );
 }

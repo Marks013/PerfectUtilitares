@@ -2,17 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 
 type ApiErrorBody = {
   error?: string | { message?: string };
@@ -48,43 +38,21 @@ export function AccountDeletePanel({ email }: { email: string }) {
         Esta ação remove seu usuário e encerra o acesso ao sistema.
       </p>
 
-      {mutation.isError ? (
-        <p className="mt-4 app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
-          {mutation.error.message}
-        </p>
-      ) : null}
-
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <button
-            type="button"
-            disabled={mutation.isPending}
-            className="mt-4 inline-flex items-center gap-2 app-radius-md app-bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-60"
-          >
-            <Trash2 className="size-4" aria-hidden="true" />
-            {mutation.isPending ? "Excluindo..." : "Excluir minha conta"}
-          </button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir sua conta?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação remove definitivamente a conta {email} e encerra seu acesso.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="app-radius-md border app-border px-4 py-2 text-sm font-medium app-text app-hover-surface">
-              Cancelar
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => mutation.mutate()}
-              className="app-radius-md app-bg-danger px-4 py-2 text-sm font-medium text-white hover:bg-red-600"
-            >
-              Excluir conta
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmAction
+        title="Excluir sua conta?"
+        description={`Esta ação remove definitivamente a conta ${email} e encerra seu acesso.`}
+        confirmLabel="Excluir conta"
+        onConfirm={() => mutation.mutateAsync()}
+      >
+        <button
+          type="button"
+          disabled={mutation.isPending}
+          className="mt-4 inline-flex min-h-11 items-center gap-2 app-radius-md border app-border-danger app-bg-danger-soft px-4 py-2 text-sm font-medium app-text-danger app-hover-surface disabled:opacity-60"
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+          Excluir minha conta
+        </button>
+      </ConfirmAction>
     </section>
   );
 }

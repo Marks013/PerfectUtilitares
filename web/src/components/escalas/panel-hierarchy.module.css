@@ -1,0 +1,31 @@
+@layer components {
+  /* Closed administrative disclosures are quiet rows; their controls stay reachable. */
+  details.workspacePanel:not([open]) {
+    padding-block: 0;
+    background: transparent;
+    border-color: transparent;
+    border-block-end-color: var(--app-border);
+    border-radius: 0;
+  }
+
+  details.workspacePanel > summary {
+    min-block-size: 2.75rem;
+    color: var(--app-muted);
+  }
+
+  details.workspacePanel > summary:hover,
+  details.workspacePanel[open] > summary {
+    color: var(--app-fg);
+  }
+
+  @media (max-width: 39.999rem) {
+    /* Do not spend a second panel's border/padding inside the working form. */
+    .workspacePanel .workspacePanel {
+      padding-inline: 0;
+      border-inline: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+  }
+}

@@ -1,10 +1,11 @@
 import { cloneElement, isValidElement, useId, type AriaAttributes, type ReactNode } from "react";
 import styles from "./escalas.module.css";
+import hierarchy from "./panel-hierarchy.module.css";
 
 export const controlClass = styles.control;
 export const buttonClass = styles.button;
 export const primaryClass = `${styles.button} ${styles.primaryAction}`;
-export const panelClass = styles.panel;
+export const panelClass = `${styles.panel} ${hierarchy.workspacePanel}`;
 
 export function Field({
   label,

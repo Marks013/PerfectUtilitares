@@ -1,4 +1,4 @@
-/* Explicit theme classes. Tailwind color and sizing utilities keep their own meaning. */
+/* Explicit theme classes. Solid semantic actions own their foreground/background pair. */
 .app-radius-md {
   border-radius: var(--app-radius-md);
 }
@@ -50,6 +50,11 @@
 
 .app-bg-danger {
   background-color: var(--app-danger);
+  color: var(--app-action-text);
+}
+
+.app-bg-danger:hover:not(:disabled) {
+  background-color: var(--app-danger-hover);
 }
 
 .app-bg-success-soft {
