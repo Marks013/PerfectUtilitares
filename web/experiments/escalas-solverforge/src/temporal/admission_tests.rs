@@ -103,3 +103,64 @@ fn service_manual_period_rejects_inconsistent_base_map_and_geometry(){
     v["input"]["employees"][0]["manualShiftOverrides"][0]["markings"][0]=json!("08:00");
     assert_eq!(admitted(&v).err(),Some("MANUAL_SHIFT_GEOMETRY"));
 }
+
+fn resolved_local_calendar()->V{
+    let mut v=legacy();
+    let input=&mut v["input"];
+    input["startDate"]=json!("2026-12-21");
+    input["endDate"]=json!("2026-12-27");
+    input["employees"][0]["history"]=json!([]);
+    input["employees"][0]["historyKnown"]=json!(false);
+    let policy=&mut input["policy"];
+    policy["calendarMode"]=json!("LOCAL");
+    policy["holidayDates"]=json!(["2026-12-22","2026-12-25"]);
+    policy["authorizedHolidayDates"]=json!(["2026-12-22"]);
+    policy["closedDates"]=json!(["2026-12-24","2026-12-25"]);
+    policy["paidHolidayDates"]=json!(["2026-12-25"]);
+    v
+}
+
+#[test]
+fn service_local_uses_resolved_dates_without_expanding_paid_closures(){
+    let v=resolved_local_calendar();
+    let mut explicit=v.clone();
+    explicit["input"]["policy"]["calendarMode"]=json!("MANUAL");
+    let local=admitted(&v).unwrap();
+    let manual=admitted(&explicit).unwrap();
+    let person=&local.employees[0];
+    assert_eq!(person.catalog,manual.employees[0].catalog);
+    assert!(!person.catalog.is_empty());
+    assert!(person.catalog.iter().all(|p|work(p.states[1])&&p.states[3]==OFF&&p.states[4]==HOL));
+}
+
+#[test]
+fn service_local_refuses_missing_lists_unknown_modes_and_incoherent_dates(){
+    let mut v=resolved_local_calendar();
+    v["input"]["policy"].as_object_mut().unwrap().remove("paidHolidayDates");
+    assert_eq!(admitted(&v).err(),Some("LOCAL_CALENDAR_UNRESOLVED"));
+    let mut v=resolved_local_calendar();
+    v["input"]["policy"]["authorizedHolidayDates"]=json!(["2026-12-23"]);
+    assert_eq!(admitted(&v).err(),Some("HOLIDAY_POLICY"));
+    let mut v=resolved_local_calendar();
+    v["input"]["policy"]["closedDates"]=json!(["2026-12-24"]);
+    assert_eq!(admitted(&v).err(),Some("HOLIDAY_POLICY"));
+    let mut v=resolved_local_calendar();
+    v["input"]["policy"]["paidHolidayDates"]=json!(["2026-12-24"]);
+    assert_eq!(admitted(&v).err(),Some("PAID_HOLIDAY_DATE"));
+    let mut v=resolved_local_calendar();
+    v["input"]["policy"]["calendarMode"]=json!("UNKNOWN");
+    assert_eq!(admitted(&v).err(),Some("POLICY"));
+}
+
+#[test]
+fn local_calendar_is_not_admitted_on_the_synthetic_path(){
+    let mut v=resolved_local_calendar();
+    let input=&mut v["input"];
+    input["branchCode"]=json!("SYNTH");
+    input["simulation"]=json!(true);
+    input["planningWeekStartsOn"]=json!("SUNDAY");
+    input["restRulesVersion"]=json!(3);
+    input["startDate"]=json!("2026-12-20");
+    input["endDate"]=json!("2026-12-26");
+    assert_eq!(read(&v,Instant::now()+Duration::from_secs(5)).err(),Some("POLICY"));
+}

@@ -117,6 +117,32 @@ class LegacyServiceTests(unittest.TestCase):
             time.sleep(0.01)
         self.assertIsNotNone(self.server.operations.active_id)
 
+    def test_native_local_calendar_preserves_resolved_christmas_and_open_day(self):
+        data = fixture(42, start_date="2026-12-21")
+        data["simulation"] = True
+        data["generationMode"] = "DAYS_AND_HOURS"
+        data["policy"].update(
+            calendarMode="LOCAL",
+            holidayDates=["2026-12-22", "2026-12-25"],
+            authorizedHolidayDates=["2026-12-22"],
+            closedDates=["2026-12-24", "2026-12-25"],
+            paidHolidayDates=["2026-12-25"],
+        )
+        status, result = self.solve(data)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        by_date = {row["date"]: row for row in result["assignments"]}
+        self.assertEqual(by_date["2026-12-22"]["kind"], "WORK")
+        self.assertEqual(by_date["2026-12-24"]["kind"], "OFF")
+        self.assertEqual(by_date["2026-12-25"]["kind"], "HOLIDAY")
+        self.assertNotIn("shiftId", by_date["2026-12-25"])
+        self.assertEqual(sum(row["kind"] == "WORK" for row in by_date.values()), 4)
+
+        data["policy"]["paidHolidayDates"] = ["2026-12-24"]
+        status, result = self.solve(data)
+        self.assertEqual(status, 422, result)
+        self.assertEqual(result["error"], "SOLVER_UNSUPPORTED_INPUT")
+
     def test_native_catalog_at_and_beyond_old_limits_can_use_the_last_choice(self):
         for clocks, options in ((13, 5), (120, 12)):
             with self.subTest(clocks=clocks, options=options):

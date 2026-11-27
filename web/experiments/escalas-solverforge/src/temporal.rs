@@ -445,9 +445,17 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     let mode=optional_text(input,"generationMode","DAYS_AND_HOURS")?;
     check(["DAYS_AND_HOURS","REST_ONLY","HOURS_ONLY"].contains(&mode),"MODE")?;
     let calendar_mode=if service{optional_text(policy,"calendarMode","MANUAL")?}else{text(policy,"calendarMode")?};
+    let local_calendar=service&&calendar_mode=="LOCAL";
     let profile=optional_text(policy,"normativeProfile","CUSTOM")?;
     let cct=service&&profile=="SINDECOMU_SUPERMARKETS_2026_2027";
-    check(calendar_mode=="MANUAL"&&(profile=="CUSTOM"||cct),"POLICY")?;
+    check((calendar_mode=="MANUAL"||local_calendar)&&(profile=="CUSTOM"||cct),"POLICY")?;
+    // LOCAL is prepared by the application. Consume its explicit date lists
+    // without deriving any holiday, closure, authorization or paid credit here.
+    if local_calendar{
+        for key in ["closedDates","holidayDates","authorizedHolidayDates","paidHolidayDates"]{
+            check(policy.get(key).is_some_and(V::is_array),"LOCAL_CALENDAR_UNRESOLVED")?;
+        }
+    }
     // Documentary metadata never grants permission. Explicit configured
     // operational limits and the original named-profile rest rule still bind.
     let holiday_rest_allowed=boolean(policy,"holidayRestAllowed",false)?&&!cct;
@@ -472,7 +480,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     if branch_two{
         for d in -1..=days as i32{if (calendar.offset as i32+d).rem_euclid(7)==0{closed.insert(d);}}
     }
-    let paid=dates_admitted(policy,"paidHolidayDates",&calendar,service)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
+    let paid=dates_admitted(policy,"paidHolidayDates",&calendar,service&&!local_calendar)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
     check(paid.is_subset(&closed)&&paid.is_subset(&holidays)&&authorized.is_subset(&holidays),"HOLIDAY_POLICY")?;
     let closed_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&closed.contains(&(d as i32)));
     let holiday_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&holidays.contains(&(d as i32)));
