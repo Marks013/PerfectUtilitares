@@ -9,6 +9,10 @@ use super::super::coverage::{Cost,Member,Sector,group_cost};
 use super::super::patterns::{SCALE_DOMAIN_LIMIT,legal_profile,worked};
 use super::super::presence::Presence;
 
+mod paired;
+#[cfg(test)]
+mod regression;
+
 const MAX_TRIALS:usize=100_000;
 type Attendance=[Presence;42];
 fn apply(att:&mut Attendance,person:&Employee,old:u64,new:u64){
@@ -57,7 +61,10 @@ fn changed_cost(rows:&[Member],first:(usize,u64),second:Option<(usize,u64)>)->Co
     group_cost(candidate.iter())
 }
 fn acceptable(before:Cost,after:Cost)->bool{
-    after[1]<before[1]&&after.iter().zip(before).all(|(a,b)|*a<=b)
+    // Operational recovery follows the original client: preserve the entire
+    // coverage prefix, but do not freeze later fairness/rest tie-breaks.
+    // Legal profiles, protected dates, role bands and personal guards still apply.
+    after[1]<before[1]&&after[..5].iter().zip(before).all(|(a,b)|*a<=b)
 }
 fn admit(person:&mut Employee,mask:u64){
     assert!(legal(person,mask),"unchecked exact witness");
@@ -163,6 +170,7 @@ pub(super) fn improve(plan:&mut Plan,deadline:Instant)->usize{
             }
             if !changed{break;}
         }
+        accepted+=paired::improve(plan,&group,&mut att,until,&mut trials);
     }
     accepted
 }
@@ -243,5 +251,47 @@ mod tests{
             plan.employees[0].locked_work);
         assert_eq!((plan.employees[0].mask().unwrap()&sundays).count_ones(),3);
         assert_eq!(plan.employees[1].mask(),Some(old));
+    }
+
+    #[test]
+    fn sunday_recovery_does_not_freeze_lower_priority_fairness(){
+        let mut plan=fixture();plan.employees.truncate(2);
+        let old=4_190_533_238_396u64;
+        let sundays=(0..42).step_by(7).fold(0u64,|m,d|m|(1u64<<d));
+        let eligible=Presence::one(0)|Presence::one(1);
+        let facts=Arc::new(Sector{days:42,members:2,bands:vec![Band{
+            day:0,start:480,minutes:60,estimated:true,minimum:1,eligible,
+            role_floors:vec![(eligible,1)]}]});
+        for p in &mut plan.employees{
+            p.facts=Arc::clone(&facts);p.cohort=0;
+            p.catalog=Arc::new(vec![old]);p.allowed=Arc::from(vec![0usize]);
+            p.pattern=Some(0);p.pinned=p.id!=0;p.locked_work=old&sundays;
+            assert!(legal(p,old));
+        }
+        let before=model::evaluate(&plan);assert_eq!(before[1],60);
+        assert!(improve(&mut plan,Instant::now()+Duration::from_secs(1))>0);
+        let after=model::evaluate(&plan);
+        assert!(model::validate_complete(&plan));assert_eq!(after[1],0);
+        assert!(after[..5].iter().zip(before).all(|(a,b)|*a<=b));
+        assert!(after[9]>before[9]); // Deliberate tradeoff allowed only for operational recovery.
+        assert_eq!(plan.employees[0].mask().unwrap()&plan.employees[0].locked_work,plan.employees[0].locked_work);
+        assert_eq!(plan.employees[1].mask(),Some(old));
+    }
+
+    #[test]
+    fn real_six_week_sector_recovers_residual_sunday_with_weekday_compensation(){
+        let value=super::regression::sector();
+        let envelope=json!({"input":value["input"].clone()});
+        let mut plan=wire::read(&envelope,Instant::now()+Duration::from_secs(5)).unwrap();
+        let masks=value["constructorMasks"].as_array().unwrap();assert_eq!(plan.employees.len(),masks.len());
+        for (p,m) in plan.employees.iter_mut().zip(masks){
+            let mask=m.as_u64().unwrap();assert!(legal(p,mask));
+            p.pattern=Some(p.allowed[0]);admit(p,mask);
+        }
+        let before=model::evaluate(&plan);assert_eq!(before[1],504);
+        let accepted=improve(&mut plan,Instant::now()+Duration::from_millis(450));
+        let after=model::evaluate(&plan);eprintln!("sector accepted={accepted}, before={before:?}, after={after:?}");
+        assert!(model::validate_complete(&plan));assert_eq!(after[1],0);
+        assert!(after[..5].iter().zip(before).all(|(a,b)|*a<=b));
     }
 }
