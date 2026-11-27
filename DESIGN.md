@@ -38,3 +38,9 @@ O refinamento de 27/11/2026 preserva a paleta e a ordem de leitura. A fonte dos 
 Confirmações assíncronas de exclusão de conta e histórico usam `ConfirmAction`, sobre o `AlertDialog` existente. O painel de trabalho de Escalas recebe uma variante compartilhada de densidade: áreas administrativas recolhidas são linhas discretas e painéis internos perdem bordas e espaçamento lateral redundantes no celular, sem reordenar o DOM nem recortar formulários.
 
 Contratos e limites da verificação desta alteração: [feedback do frontend](docs/design/frontend-feedback-2026-11-27.md). As verificações descritas acima não constituem evidência automática para alterações posteriores.
+
+## Prioridade das tarefas e edições locais
+
+A continuação de 27/11/2026 altera a ordem real de leitura: seleção do planejamento, avisos relevantes, contexto de filial/período, etapas e conteúdo da tarefa vêm antes da base global, operadores e catálogo administrativo. Não usar `order` de CSS para divergir da navegação por teclado. A administração continua disponível quando nenhum planejamento está aberto e mantém as mesmas permissões.
+
+O cadastro local do colaborador só entra no salvamento automático depois de Aplicar cadastro à proposta. Trocar de pessoa, adicionar outro cadastro ou cancelar com alterações pendentes exige confirmação pelo AlertDialog compartilhado; continuar editando preserva os campos e devolve o foco ao editor. Reverter os campos remove o aviso. Não armazenar estes rascunhos pessoais em localStorage. A proteção cobre as transições do editor e o aviso nativo de saída/recarregamento; não substitui o fluxo de conflito e salvamento do planejamento.
