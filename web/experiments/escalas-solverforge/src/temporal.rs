@@ -641,7 +641,10 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let mixed:[bool;6]=std::array::from_fn(|w|!untimed&&simulation_daily.is_none()&&mixed_sectors.contains(sector_name)&&hours==42&&targets[w]==2520);
         let (fixed,personal)=if service{crate::wire::personal_rules_service(p,max_run.min(5) as u8,rest_version>=2)?}
             else{personal_rules(p,max_run.min(5) as u8)?};
-        let cap=number(p,"maxConsecutiveSundays")?;let rule=optional_text(p,"sundayRestRule","PROTECTIVE")?;
+        let cap=number(p,"maxConsecutiveSundays")?;
+        // Legacy optional null means no reviewed Sunday exception, never commerce.
+        let rule=if service&&p.get("sundayRestRule").is_some_and(V::is_null){"PROTECTIVE"}
+            else{optional_text(p,"sundayRestRule","PROTECTIVE")?};
         check(matches!(cap,1|2)&&["PROTECTIVE","UNREVIEWED","CLT_386","COMMERCE"].contains(&rule),"SUNDAY_RULE")?;
         let cap=if rule=="COMMERCE"{cap}else{1};
         let mut options=Vec::new();let mut unique=BTreeSet::new();
@@ -1506,3 +1509,6 @@ mod historical_coverage_tests;
 mod hint_contract_tests;
 
 mod initial_hint;
+
+#[cfg(test)]
+mod historical_policy_tests;

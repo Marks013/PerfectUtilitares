@@ -16,6 +16,12 @@ from service_operations import OperationError, Operations
 from solver import solve
 
 
+def stalled_native(data, control):
+    # Actual uncooperative child, not a fabricated solver response.
+    return run_native(data, control, binary=sys.executable,
+                      prefix=("-c", "import time;time.sleep(10)"))
+
+
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.secret = secrets.token_hex(32).encode()
@@ -51,6 +57,117 @@ class ServiceTests(unittest.TestCase):
             return res.status, json.loads(res.read())
         finally:
             conn.close()
+
+    def solve(self, data=None, identity=None):
+        return self.request("/solve", {"input": fixture() if data is None else data}, identity or self.identity())
+
+    def cancel(self, identity):
+        return self.request("/cancel", {"requestId":identity[0], "cancelToken":identity[1]})
+
+    def wait_active(self):
+        until = time.monotonic() + 3
+        while self.server.operations.active_id is None and time.monotonic() < until:
+            time.sleep(0.01)
+        self.assertIsNotNone(self.server.operations.active_id)
+
+    def test_authenticated_real_model_and_replay(self):
+            identity = self.identity()
+            status, result = self.solve(identity=identity)
+            self.assertEqual(status, 200)
+            self.assertIn(result["status"], {"FEASIBLE", "OPTIMAL"})
+            self.assertEqual(len(result["assignments"]), 7)
+            self.assertEqual(sum(x["kind"] == "WORK" for x in result["assignments"]), 5)
+            self.assertIsNone(self.server.operations.active_id)
+            self.assertEqual(self.cancel(identity), (200, {"state": "COMPLETED"}))
+            replay_status, replay = self.solve(identity=identity)
+            self.assertEqual(replay_status, 409)
+            self.assertEqual(replay["error"], "SOLVER_OPERATION_FINISHED")
+
+    def test_cancel_before_start_is_idempotent_and_never_runs(self):
+            identity = self.identity()
+            self.assertEqual(self.cancel(identity), (200, {"state": "CANCELLED"}))
+            self.assertEqual(self.cancel(identity), (200, {"state": "CANCELLED"}))
+            status, result = self.solve(identity=identity)
+            self.assertEqual(status, 409)
+            self.assertEqual(result["state"], "CANCELLED")
+            self.assertIsNone(self.server.operations.active_id)
+
+    def test_wrong_capability_cannot_cancel_or_reuse_operation(self):
+            identity = self.identity()
+            self.cancel(identity)
+            wrong = (identity[0], secrets.token_hex(32))
+            self.assertEqual(self.cancel(wrong), (404, {"error": "SOLVER_OPERATION_NOT_FOUND"}))
+            self.assertEqual(self.solve(identity=wrong), (404, {"error": "SOLVER_OPERATION_NOT_FOUND"}))
+
+    def test_real_large_model_cancel_frees_slot_then_next_solve_succeeds(self):
+            for _ in range(2):
+                identity = self.identity()
+                result = []
+                data = fixture(people=120, weeks=6)
+                thread = threading.Thread(target=lambda: result.append(self.solve(data, identity)))
+                thread.start()
+                self.wait_active()
+                time.sleep(0.15)
+                started = time.monotonic()
+                status, response = self.cancel(identity)
+                self.assertEqual(status, 200)
+                self.assertIn(response["state"], {"CANCEL_REQUESTED", "CANCELLED"})
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.assertLess(time.monotonic() - started, 2)
+                self.assertEqual(result[0][0], 409)
+                self.assertEqual(result[0][1]["state"], "CANCELLED")
+                self.assertIsNone(self.server.operations.active_id)
+                self.assertEqual(self.solve()[0], 200)
+
+    def test_busy_and_other_cancellation_do_not_interrupt_active_job(self):
+            self.server.solver_target = stalled_native
+            identity = self.identity()
+            results = []
+            thread = threading.Thread(target=lambda: results.append(self.solve(identity=identity)))
+            thread.start()
+            self.wait_active()
+            self.assertEqual(self.solve()[0], 429)
+            other = self.identity()
+            self.assertEqual(self.cancel(other), (200, {"state": "CANCELLED"}))
+            self.assertEqual(self.server.operations.active_id, identity[0])
+            self.assertEqual(self.server.operations.records[identity[0]].state, "RUNNING")
+            started = time.monotonic()
+            self.cancel(identity)
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertEqual(results[0][1]["state"], "CANCELLED")
+
+    def test_uncooperative_timeout_is_cleaned_and_next_request_works(self):
+            self.server.solver_target = stalled_native
+            self.server.operation_timeout = 0.2
+            started = time.monotonic()
+            status, result = self.solve()
+            self.assertEqual((status, result["state"]), (504, "TIMED_OUT"))
+            self.assertLess(time.monotonic() - started, 2)
+            self.assertIsNone(self.server.operations.active_id)
+            self.server.solver_target = solve
+            self.server.operation_timeout = 18
+            self.assertEqual(self.solve()[0], 200)
+
+    def test_null_sunday_rule_succeeds_over_http_without_relaxing_protection(self):
+        data = fixture(40)
+        data["employees"][0]["sundayRestRule"] = None
+        data["employees"][0]["history"][-1].update(kind="WORK", shiftId="day")
+        before = copy.deepcopy(data)
+        status, result = self.solve(data)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertEqual(next(a["kind"] for a in result["assignments"] if a["date"] == "2026-11-08"), "OFF")
+        self.assertEqual(sum(a["kind"] == "WORK" for a in result["assignments"]), 5)
+        self.assertEqual(data, before)
+        data["assignments"] = [{"employeeId":"p0", "date":"2026-11-08", "kind":"WORK", "shiftId":"day", "locked":True}]
+        status, result = self.solve(data)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "INFEASIBLE")
+        self.assertEqual(result["assignments"], [])
 
     def test_actual_native_success_is_complete_and_preserves_input(self):
         data = supported_fixture()
@@ -429,3 +546,52 @@ class RegistryTests(unittest.TestCase):
         ops.cancel_all()
         with self.assertRaises(OperationError):
             ops.start("third", b"a" * 32)
+
+
+class ControlTests(unittest.TestCase):
+    def test_real_native_search_stops_from_another_thread(self):
+        from pathlib import Path
+        import subprocess
+        from unittest.mock import patch
+        from control import SolveControl, SolveCancelled
+
+        ready = threading.Event()
+        cancelled = threading.Event()
+        class ObservedControl(SolveControl):
+            def on_phase(self, phase):
+                if phase == "REFINEMENT":
+                    ready.set()
+        control = ObservedControl(cancelled, time.monotonic() + 20)
+        results = []
+        children = []
+        actual_popen = subprocess.Popen
+        def tracked(*args, **kwargs):
+            child = actual_popen(*args, **kwargs)
+            children.append(child)
+            return child
+        def run():
+            try:
+                solve(fixture(40, people=14, weeks=6), control)
+                results.append("COMPLETED")
+            except SolveCancelled:
+                results.append("CANCELLED")
+            except Exception as error:
+                results.append(type(error).__name__)
+        with patch("native_runner.subprocess.Popen", side_effect=tracked):
+            worker = threading.Thread(target=run)
+            worker.start()
+            try:
+                self.assertTrue(ready.wait(10), results)
+                time.sleep(0.05)
+                started = time.monotonic()
+                cancelled.set()
+                worker.join(2)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(results, ["CANCELLED"])
+                self.assertLess(time.monotonic() - started, 2)
+            finally:
+                cancelled.set()
+                worker.join(3)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+        self.assertFalse(Path(f"/proc/{children[0].pid}").exists())
