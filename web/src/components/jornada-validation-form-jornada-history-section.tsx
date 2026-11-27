@@ -1,5 +1,6 @@
 "use client";
 
+import { ConfirmAction } from "@/components/ui/confirm-action";
 import type { useJornadaValidationFormController } from "./jornada-validation-form";
 
 type Model = ReturnType<typeof useJornadaValidationFormController>;
@@ -63,31 +64,21 @@ export function JornadaHistorySection({ model }: { model: Model }) {
             )}
             Gerar PDF
           </button>
+          <ConfirmAction
+            title={selectedHistoryIds.length > 0
+              ? `Excluir ${selectedHistoryIds.length} ${selectedHistoryIds.length === 1 ? "validação selecionada" : "validações selecionadas"}?`
+              : "Limpar todo o seu histórico?"}
+            description={selectedHistoryIds.length > 0
+              ? "Somente as validações selecionadas serão excluídas. Esta ação não pode ser desfeita."
+              : "Todas as suas validações salvas serão excluídas, inclusive as de outras páginas e as ocultas pelo filtro. Esta ação não pode ser desfeita."}
+            confirmLabel={selectedHistoryIds.length > 0 ? "Excluir selecionados" : "Limpar meu histórico"}
+            onConfirm={() => selectedHistoryIds.length > 0
+              ? selectedDeleteMutation.mutateAsync([...selectedHistoryIds])
+              : clearHistoryMutation.mutateAsync()}
+          >
           <button
             hidden={!hasAccount}
             type="button"
-            onClick={() => {
-              if (selectedHistoryIds.length > 0) {
-                if (
-                  window.confirm(
-                    selectedHistoryIds.length === 1
-                      ? "Excluir 1 validação selecionada? Esta ação não pode ser desfeita."
-                      : `Excluir ${selectedHistoryIds.length} validações selecionadas? Esta ação não pode ser desfeita.`,
-                  )
-                ) {
-                  selectedDeleteMutation.mutate(selectedHistoryIds);
-                }
-                return;
-              }
-
-              if (
-                window.confirm(
-                  "Limpar todo o seu histórico de validações? Esta ação não pode ser desfeita.",
-                )
-              ) {
-                clearHistoryMutation.mutate();
-              }
-            }}
             disabled={
               (historico.length === 0 && selectedHistoryIds.length === 0) ||
               clearHistoryMutation.isPending ||
@@ -106,6 +97,7 @@ export function JornadaHistorySection({ model }: { model: Model }) {
               ? "Excluir selecionados"
               : "Limpar meu histórico"}
           </button>
+          </ConfirmAction>
         </div>
         {!hasAccount ? (
           <div className="jornada-alert jornada-alert--success">
@@ -139,24 +131,14 @@ export function JornadaHistorySection({ model }: { model: Model }) {
             adicionadas até a seleção atual ser limpa.
           </div>
         ) : null}
-        {clearHistoryMutation.isError ? (
-          <div className="jornada-alert jornada-alert--danger">
-            {clearHistoryMutation.error.message}
-          </div>
-        ) : null}
-        {selectedDeleteMutation.isError ? (
-          <div className="jornada-alert jornada-alert--danger">
-            {selectedDeleteMutation.error.message}
-          </div>
-        ) : null}
         {clearHistoryMutation.isSuccess ? (
-          <div className="jornada-alert jornada-alert--success">
+          <div role="status" className="jornada-alert jornada-alert--success">
             Histórico limpo. Registros removidos:{" "}
             {clearHistoryMutation.data.deletedCount}.
           </div>
         ) : null}
         {selectedDeleteMutation.isSuccess ? (
-          <div className="jornada-alert jornada-alert--success">
+          <div role="status" className="jornada-alert jornada-alert--success">
             Registros selecionados removidos:{" "}
             {selectedDeleteMutation.data.deletedCount}.
           </div>

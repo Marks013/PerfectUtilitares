@@ -248,36 +248,6 @@ export function EscalasWorkspace() {
       </div>
       </details>
     </section>
-    {(unrestricted || workforceBranches.length > 0) && <details className={panelClass} onToggle={event => setWorkforceOpen(event.currentTarget.open)}>
-      <summary className={styles.disclosureTrigger}>Base global de equipes e afastamentos</summary>
-      {workforceOpen && <div className={styles.stackSmall}>
-        <Field label="Filial para consultar na base global">
-          {id => unrestricted
-            ? <input id={id} className={controlClass} list="escala-workforce-branches" value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)} />
-            : <select id={id} className={controlClass} value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)}>
-              {workforceBranches.map(code => <option key={code} value={code}>{code}</option>)}
-            </select>}
-        </Field>
-        <datalist id="escala-workforce-branches">{workforceBranches.map(code => <option key={code} value={code} />)}</datalist>
-        {Boolean(effectiveWorkforceBranch.trim()) && <EscalaWorkforcePanel key={effectiveWorkforceBranch} branchCode={effectiveWorkforceBranch} canImport={unrestricted && importTeam}
-          onChanged={() => {
-            const latest = latestModel.current;
-            if (workspace?.status === "DRAFT" && latest.workspace?.id === workspace.id && latest.resetKey === model.resetKey && latest.isCurrentRevision(workspace)
-              && !latest.busy && !latest.dirty && !latest.generated && !latest.recovery && !latest.conflict && !latest.pendingOpen
-              && latest.saveState === "saved" && latest.workspace?.status === "DRAFT") latest.open(workspace.id);
-          }} />}
-      </div>}
-    </details>}
-    {unrestricted && <OperatorAdministration />}
-    {unrestricted && can("export.integration") && <section className={styles.stackSmall} aria-label="Catálogo administrativo de turnos">
-      <TurnoExport key={catalogContext} plans={allowedPlans} disabled={Boolean(model.busy || model.dirty || model.recovery || model.generated || workspace && model.saveState !== "saved")} />
-      <details className={styles.disclosure}>
-        <summary className={styles.disclosureTrigger}>Criar ou alterar definições de turnos</summary>
-        <p className={styles.muted}>As definições são editadas pelo administrador em um planejamento autorizado. Consultar ou exportar o catálogo não altera horários. O cadastro no catálogo exige confirmação explícita das referências salvas.</p>
-        {readable && manageSettings && workspace ? <button type="button" className={buttonClass} onClick={() => { setDefinitionTarget(workspace.id); setArea("adjustments"); }}>Abrir definições deste planejamento</button>
-          : <button type="button" className={buttonClass} onClick={() => { const picker = planPicker.current; if (picker) { picker.open = true; picker.querySelector<HTMLElement>("summary")?.focus(); picker.scrollIntoView({ block: "start" }); } }}>{canCreate ? "Escolher ou criar planejamento para editar definições" : "Escolher planejamento para editar definições"}</button>}
-      </details>
-    </section>}
     {readable && <>
     {model.pendingOpen && <div className={`${panelClass} border-[color:var(--app-coral)]`} role="alert">
       <p>{model.dirty ? "Há alterações não salvas neste planejamento." : "Há uma proposta calculada que ainda não foi aplicada."} {model.generated && "Abrir outro planejamento descarta a candidata. Salvar o rascunho não aplica essa proposta."}</p>
@@ -425,5 +395,36 @@ export function EscalasWorkspace() {
         <DeletePlan workspace={workspace} dirty={model.dirty} busy={Boolean(model.busy)} onDelete={model.deleteWorkspace} />
       </section>}
     </div>}
+    {(unrestricted || workforceBranches.length > 0) && <details className={panelClass} onToggle={event => setWorkforceOpen(event.currentTarget.open)}>
+      <summary className={styles.disclosureTrigger}>Base global de equipes e afastamentos</summary>
+      {workforceOpen && <div className={styles.stackSmall}>
+        <Field label="Filial para consultar na base global">
+          {id => unrestricted
+            ? <input id={id} className={controlClass} list="escala-workforce-branches" value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)} />
+            : <select id={id} className={controlClass} value={effectiveWorkforceBranch} onChange={event => setWorkforceBranch(event.target.value)}>
+              {workforceBranches.map(code => <option key={code} value={code}>{code}</option>)}
+            </select>}
+        </Field>
+        <datalist id="escala-workforce-branches">{workforceBranches.map(code => <option key={code} value={code} />)}</datalist>
+        {Boolean(effectiveWorkforceBranch.trim()) && <EscalaWorkforcePanel key={effectiveWorkforceBranch} branchCode={effectiveWorkforceBranch} canImport={unrestricted && importTeam}
+          onChanged={() => {
+            const latest = latestModel.current;
+            if (workspace?.status === "DRAFT" && latest.workspace?.id === workspace.id && latest.resetKey === model.resetKey && latest.isCurrentRevision(workspace)
+              && !latest.busy && !latest.dirty && !latest.generated && !latest.recovery && !latest.conflict && !latest.pendingOpen
+              && latest.saveState === "saved" && latest.workspace?.status === "DRAFT") latest.open(workspace.id);
+          }} />}
+      </div>}
+    </details>}
+    {unrestricted && <OperatorAdministration />}
+    {unrestricted && can("export.integration") && <section className={styles.stackSmall} aria-label="Catálogo administrativo de turnos">
+      <TurnoExport key={catalogContext} plans={allowedPlans} disabled={Boolean(model.busy || model.dirty || model.recovery || model.generated || workspace && model.saveState !== "saved")} />
+      <details className={styles.disclosure}>
+        <summary className={styles.disclosureTrigger}>Criar ou alterar definições de turnos</summary>
+        <p className={styles.muted}>As definições são editadas pelo administrador em um planejamento autorizado. Consultar ou exportar o catálogo não altera horários. O cadastro no catálogo exige confirmação explícita das referências salvas.</p>
+        {readable && manageSettings && workspace ? <button type="button" className={buttonClass} onClick={() => { setDefinitionTarget(workspace.id); setArea("adjustments"); }}>Abrir definições deste planejamento</button>
+          : <button type="button" className={buttonClass} onClick={() => { const picker = planPicker.current; if (picker) { picker.open = true; picker.querySelector<HTMLElement>("summary")?.focus(); picker.scrollIntoView({ block: "start" }); } }}>{canCreate ? "Escolher ou criar planejamento para editar definições" : "Escolher planejamento para editar definições"}</button>}
+      </details>
+    </section>}
   </div>;
 }
+

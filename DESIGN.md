@@ -30,3 +30,17 @@ Escopo: componentes do módulo Escalas. Preservar os tokens, a fonte, os control
 O cadastro de novos colaboradores depende de modelos de jornada aprovados. O início de uma escala por operador depende do snapshot aprovado do período; esses contratos não são inventados pela interface. A entrada por nome só deve ser ativada depois do fechamento dessas proteções.
 
 Esta entrega foi conferida por testes de componentes e lint. Revisão visual em navegador, teclado, 200% de zoom e telas de computador/celular continua necessária na integração; renderização estática não comprova esses comportamentos.
+
+## Contraste, feedback e densidade dos painéis
+
+O refinamento de 27/11/2026 preserva a paleta e a ordem de leitura. A fonte dos tokens continua em `web/src/app/styles/foundation.css`; ações destrutivas sólidas combinam `--app-danger`/`--app-danger-hover` com `--app-action-text`, por meio de `theme-utilities.css`. Não usar texto branco fixo como contrato dos dois temas. O texto de erro sobre superfícies suaves continua usando `--app-danger-text`.
+
+Confirmações assíncronas de exclusão de conta e histórico usam `ConfirmAction`, sobre o `AlertDialog` existente. O painel de trabalho de Escalas recebe uma variante compartilhada de densidade: áreas administrativas recolhidas são linhas discretas e painéis internos perdem bordas e espaçamento lateral redundantes no celular, sem reordenar o DOM nem recortar formulários.
+
+Contratos e limites da verificação desta alteração: [feedback do frontend](docs/design/frontend-feedback-2026-11-27.md). As verificações descritas acima não constituem evidência automática para alterações posteriores.
+
+## Prioridade das tarefas e edições locais
+
+A continuação de 27/11/2026 altera a ordem real de leitura: seleção do planejamento, avisos relevantes, contexto de filial/período, etapas e conteúdo da tarefa vêm antes da base global, operadores e catálogo administrativo. Não usar `order` de CSS para divergir da navegação por teclado. A administração continua disponível quando nenhum planejamento está aberto e mantém as mesmas permissões.
+
+O cadastro local do colaborador só entra no salvamento automático depois de Aplicar cadastro à proposta. Trocar de pessoa, adicionar outro cadastro ou cancelar com alterações pendentes exige confirmação pelo AlertDialog compartilhado; continuar editando preserva os campos e devolve o foco ao editor. Reverter os campos remove o aviso. Não armazenar estes rascunhos pessoais em localStorage. A proteção cobre as transições do editor e o aviso nativo de saída/recarregamento; não substitui o fluxo de conflito e salvamento do planejamento.

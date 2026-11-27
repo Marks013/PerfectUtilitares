@@ -3,6 +3,7 @@
 import { Loader2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { ConfirmAction } from "@/components/ui/confirm-action";
 
 type JornadaHistoryItem = {
   id: string;
@@ -47,26 +48,15 @@ async function clearAllHistory() {
 export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
   const router = useRouter();
   const [isClearingAll, setIsClearingAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   async function clearEverything() {
-    const confirmed = window.confirm(
-      "Limpar todo o histórico de validações de todos os usuários? Esta ação não pode ser desfeita.",
-    );
-    if (!confirmed) return;
-
-    setError(null);
     setNotice(null);
     setIsClearingAll(true);
     try {
       const result = await clearAllHistory();
       setNotice(`Histórico global limpo. Registros removidos: ${result.deletedCount}.`);
       router.refresh();
-    } catch (exception) {
-      setError(
-        exception instanceof Error ? exception.message : "Falha ao limpar histórico",
-      );
     } finally {
       setIsClearingAll(false);
     }
@@ -79,11 +69,17 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
           {items.length} validação(ões) exibida(s)
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ConfirmAction
+            title="Limpar o histórico de todos os usuários?"
+            description="Todas as validações salvas de todos os usuários serão excluídas, não apenas as exibidas nesta tabela. Esta ação não pode ser desfeita."
+            confirmLabel="Limpar histórico de todos os usuários"
+            pendingLabel="Limpando histórico…"
+            onConfirm={clearEverything}
+          >
           <button
             type="button"
-            onClick={clearEverything}
             disabled={items.length === 0 || isClearingAll}
-            className="inline-flex items-center gap-2 app-radius-md border app-border-danger app-bg-danger-soft px-4 py-2 text-sm font-medium app-text-danger hover:bg-red-50 disabled:opacity-60"
+            className="inline-flex items-center gap-2 app-radius-md border app-border-danger app-bg-danger-soft px-4 py-2 text-sm font-medium app-text-danger app-hover-surface disabled:opacity-60"
           >
             {isClearingAll ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
@@ -92,16 +88,12 @@ export function JornadaHistoryTable({ items }: JornadaHistoryTableProps) {
             )}
             Limpar tudo
           </button>
+          </ConfirmAction>
         </div>
       </div>
 
-      {error ? (
-        <div className="app-radius-md border app-border-danger app-bg-danger-soft p-3 text-sm app-text-danger">
-          {error}
-        </div>
-      ) : null}
       {notice ? (
-        <div className="app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
+        <div role="status" className="app-radius-md border app-border-success app-bg-success-soft p-3 text-sm app-text-success">
           {notice}
         </div>
       ) : null}

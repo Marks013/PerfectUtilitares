@@ -1,0 +1,15 @@
+/* The whole dialog scrolls, so even enlarged copy cannot strand its actions. */
+.content {
+  --dialog-top-gap: max(1rem, env(safe-area-inset-top));
+  --dialog-bottom-gap: max(1rem, env(safe-area-inset-bottom));
+  position: fixed;
+  inset-block-start: calc((100dvh + var(--dialog-top-gap) - var(--dialog-bottom-gap)) / 2);
+  left: calc((100vw + env(safe-area-inset-left) - env(safe-area-inset-right)) / 2);
+  transform: translate(-50%, -50%);
+  inline-size: min(28rem, calc(100vw - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  max-block-size: calc(100dvh - var(--dialog-top-gap) - var(--dialog-bottom-gap));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
+}

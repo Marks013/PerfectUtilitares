@@ -3,6 +3,7 @@
 import * as AlertDialogPrimitive from "@radix-ui/react-alert-dialog";
 import type * as React from "react";
 import { cn } from "@/lib/utils";
+import styles from "./alert-dialog.module.css";
 
 export const AlertDialog = AlertDialogPrimitive.Root;
 export const AlertDialogTrigger = AlertDialogPrimitive.Trigger;
@@ -19,7 +20,8 @@ export function AlertDialogContent({
       <AlertDialogPrimitive.Overlay className="fixed inset-0 z-40 bg-neutral-950/40" />
       <AlertDialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 app-radius-lg border app-border app-bg-card p-5 app-shadow outline-none",
+          "z-50 app-radius-lg border app-border app-bg-card p-5 app-shadow outline-none",
+          styles.content,
           className,
         )}
         {...props}
