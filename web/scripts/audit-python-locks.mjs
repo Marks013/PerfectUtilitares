@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 const lockfiles = [
-  "ops/escalas/requirements.txt",
   "ops/pdf-worker/runtime-requirements.txt",
   "ops/pdf-worker/office-requirements.txt",
 ];

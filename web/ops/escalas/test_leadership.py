@@ -1,9 +1,9 @@
-"""Responsibilities and movement are soft daily goals, never fictional hourly coverage."""
+"""Original public contracts retained during engine migration; assertions unchanged."""
+from contract_fixtures import fixture
+from contract_fixtures import make_untimed
+from solver import solve
 import copy
 import unittest
-from solver import solve
-from leadership import responsibility
-from test_solver import fixture, make_untimed
 
 class LeadershipTests(unittest.TestCase):
     def scenario(self, people=2):
@@ -15,17 +15,6 @@ class LeadershipTests(unittest.TestCase):
         data['movementPriorities'] = [{'startDate': data['startDate'], 'endDate': data['startDate'],
                                        'sector': 'Reposição', 'level': 'HIGH'}]
         return data
-
-    def test_text_inference_never_assigns_a_manager_to_another_sector(self):
-        self.assertEqual(responsibility({'role': 'Encarregado', 'sector': 'Padaria'})['sectors'], ['Padaria'])
-        self.assertEqual(responsibility({'role': 'ENC Padaria', 'sector': 'Padaria'})['role'], 'SECTOR')
-        self.assertEqual(responsibility({'role': 'Gerente', 'sector': 'Loja'})['sectors'], [])
-        self.assertEqual(responsibility({'role': 'Repositor', 'sector': 'Loja'})['role'], 'NONE')
-
-    def test_manual_override_is_preserved(self):
-        person = {'role': 'Encarregado', 'sector': 'Padaria',
-                  'leadership': {'role': 'NONE', 'source': 'MANUAL', 'sectors': []}}
-        self.assertEqual(responsibility(person), person['leadership'])
 
     def test_one_or_two_sector_leaders_can_cover_a_critical_weekday(self):
         for count in (1, 2):

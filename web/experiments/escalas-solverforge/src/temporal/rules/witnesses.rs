@@ -109,7 +109,7 @@ mod tests{
             Clock{id:"early".into(),segments:vec![(420,660),(720,960)],paid:480,start:420,end:960},
             Clock{id:"late".into(),segments:vec![(480,720),(780,1020)],paid:480,start:480,end:1020},
         ];
-        let rules=Rules{days:14,personal:PersonalRules::default(),fixed:0,cap:1,
+        let rules=Rules{days:14,rest_version:3,service:false,terminal_fixed_rest_allowed:true,personal:PersonalRules::default(),fixed:0,cap:1,
             weeks:vec![(0,7),(7,14)],targets:[2400;6],mixed:[false;6],offset:0,cutover:false,
             weekly_limit:2400,inter:660,weekly_rest:2100,untimed:false,
             active_start:i32::MIN,active_end:i32::MAX,hours_only:false,

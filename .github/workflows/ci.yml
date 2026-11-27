@@ -146,13 +146,13 @@ jobs:
         run: npm ci
       - name: Build production and development processors
         run: |
-          docker build --target runtime -t web-escalas-solver ops/escalas
-          docker build --target development -t web-escalas-solver-development ops/escalas
-      - name: Run production solver regressions
+          docker build --target runtime -t web-escalas-solver -f ops/escalas/Dockerfile .
+          docker build --target development -t web-escalas-solver-development -f ops/escalas/Dockerfile .
+      - name: Run solver contracts (must pass before release)
         run: npm run test:escalas:python
       - name: Check Python code
         run: docker run --rm --read-only --network none --cpus 1 --memory 1536m --volume "$PWD/ops/escalas:/model:ro" --workdir /model --entrypoint /opt/solver/bin/ruff web-escalas-solver-development check --no-cache .
-      - name: Verify Python results independently in TypeScript
+      - name: Verify SolverForge results independently in TypeScript
         run: npm run test:escalas:model
       - name: Verify generated property cases independently in TypeScript
         run: npm run test:escalas:properties
@@ -211,7 +211,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y poppler-utils
       - name: Prepare production runtimes
         run: |
-          docker build -t web-escalas-solver ops/escalas
+          docker build -t web-escalas-solver -f ops/escalas/Dockerfile .
           docker build --target pdf-worker --build-arg SOURCE_REVISION="$SOURCE_REVISION" --tag "$E2E_PDF_WORKER_IMAGE" .
       - name: Build web application
         run: npm run build

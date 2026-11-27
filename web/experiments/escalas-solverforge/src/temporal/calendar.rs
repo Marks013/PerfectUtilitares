@@ -27,11 +27,16 @@ pub(super) struct Calendar{
 }
 impl Calendar{
     pub fn new(first:&str,last:&str,month:Option<&str>)->Result<Self>{
+        Self::aligned(first,last,month,0)
+    }
+    // Week grouping changes; civil weekday numbers and input dates never do.
+    pub fn aligned(first:&str,last:&str,month:Option<&str>,week_start:usize)->Result<Self>{
+        check(week_start<=1,"PLANNING_WEEK")?;
         let start=ordinal(first)?;let end=ordinal(last)?;
         let days=end-start+1;
-        let cutover=first=="2026-12-01"&&last=="2026-12-31";
+        let cutover=week_start==0&&first=="2026-12-01"&&last=="2026-12-31";
         check(first>="2026-01-01"&&last<="2027-12-31"&&(7..=MAX_DAYS as i32).contains(&days)
-            &&(cutover||start.rem_euclid(7)==0&&days%7==0),"TEMPORAL_HORIZON")?;
+            &&(cutover||start.rem_euclid(7)==week_start as i32&&days%7==0),"TEMPORAL_HORIZON")?;
         let mut year=first[..4].parse::<i32>().map_err(|_|"DATE")?;
         let mut january=ordinal(&format!("{year}-01-01"))?;
         let mut labels=Vec::with_capacity(days as usize);
@@ -47,7 +52,7 @@ impl Calendar{
         let mut weeks=Vec::new();
         let mut a=0;
         while a<labels.len(){
-            let b=(a+7-(offset+a)%7).min(labels.len());
+            let b=(a+7-(offset+a+7-week_start)%7).min(labels.len());
             weeks.push((a,b));a=b;
         }
         check(weeks.len()<=6,"TEMPORAL_WEEK_COUNT")?;
@@ -64,8 +69,8 @@ impl Calendar{
             check(a>=start&&b<=end,"VISIBLE_MONTH")?;Some((a,b))
         }else{
             let (a,b)=month_range(&labels[labels.len()/2][..7])?;
-            let technical_start=a-a.rem_euclid(7);
-            let technical_end=b+(6-b.rem_euclid(7));
+            let technical_start=a-(a-week_start as i32).rem_euclid(7);
+            let technical_end=b+6-(b-week_start as i32).rem_euclid(7);
             if start==technical_start&&end==technical_end{Some((a,b))}else{None}
         };
         for (i,flag) in visible.iter_mut().enumerate().take(labels.len()){

@@ -17,7 +17,7 @@ pub(super) struct Rules{
     pub days:usize,pub personal:PersonalRules,pub fixed:u8,pub cap:i32,
     pub weeks:Vec<(usize,usize)>,pub targets:[i32;6],pub mixed:[bool;6],pub offset:usize,pub cutover:bool,
     pub weekly_limit:i32,pub inter:i32,pub weekly_rest:i32,pub untimed:bool,
-    pub active_start:i32,pub active_end:i32,
+    pub active_start:i32,pub active_end:i32,pub rest_version:i32,pub service:bool,pub terminal_fixed_rest_allowed:bool,
     pub hours_only:bool,pub closed:[bool;MAX_DAYS],pub holiday:[bool;MAX_DAYS],
     pub old:[Option<Record>;MAX_DAYS],pub context:BTreeMap<i32,u8>,pub visible:[bool;MAX_DAYS],
 }
@@ -77,7 +77,7 @@ impl Rules{
             let rest=|d:i32|state(d)==Some(OFF)||self.weekday(d)==0&&state(d)==Some(HOL);
             for d in 0..len{
                 if d==len-1&&!full{continue;}
-                let fixed_next=full&&d==len-1&&self.fixed&(1<<self.weekday(len))!=0&&state(len).is_none();
+                let fixed_next=self.terminal_fixed_rest_allowed&&full&&d==len-1&&self.fixed&(1<<self.weekday(len))!=0&&state(len).is_none();
                 if rest(d)&&!rest(d-1)&&!rest(d+1)&&!fixed_next{return false;}
             }
             if full&&state(len)==Some(OFF)&&state(len+1).is_some_and(|s|work(s)||s==ABS)&&state(len-1)!=Some(OFF){return false;}
@@ -92,15 +92,15 @@ impl Rules{
                 if (a+1..b).any(|d|matches!(state(d),Some(OFF|HOL)))&&gap<self.weekly_rest{return false;}
             }
         }
-        if full&&!self.hours_only&&!self.personal.consecutive&&self.fixed.count_ones()<2{
+        if self.rest_version>=3&&full&&!self.hours_only&&!self.personal.consecutive&&self.fixed.count_ones()<2{
             let mut groups=BTreeMap::<u8,(usize,u8)>::new();
             for &(a,b) in &self.weeks{
                 if b-a!=7||states[a..b].contains(&INACTIVE){continue;}
                 let part=&states[a..b];
                 if self.holiday[a..b].iter().any(|&x|x)||self.old[a..b].iter().flatten().any(|r|r.locked==Some(true)||matches!(r.state,ABS|HOL)){continue;}
-                let imposed=self.closed[a..b].iter().enumerate().fold(self.fixed,|m,(d,c)|if *c{m|1<<d}else{m});
+                let imposed=self.closed[a..b].iter().enumerate().fold(self.fixed,|m,(d,c)|if *c{m|1<<self.weekday((a+d) as i32)}else{m});
                 if imposed.count_ones()>=2{continue;}
-                let off=part.iter().enumerate().fold(0u8,|m,(d,s)|if *s==OFF{m|1<<d}else{m});
+                let off=part.iter().enumerate().fold(0u8,|m,(d,s)|if *s==OFF{m|1<<self.weekday((a+d) as i32)}else{m});
                 let entry=groups.entry(imposed).or_insert((0,127));entry.0+=1;entry.1&=off;
             }
             if groups.values().any(|&(n,off)|n>=2&&off.count_ones()>=2){return false;}
@@ -196,15 +196,30 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
         let values=if let Some(v)=cache.get(&key){v.clone()}else{
             let v=weekly(part,rules,clocks,week,deadline)?;cache.insert(key,v.clone());v
         };
-        check(!values.is_empty(),"NO_PERSONAL_PATTERN")?;weeks.push(values);
+        check(!values.is_empty(),if rules.service{"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;weeks.push(values);
     }
     let mut paths=BTreeSet::new();
+    let small_exact=rules.service&&weeks.iter().try_fold(1usize,|n,w|
+        n.checked_mul(w.len()).filter(|&next|next<=PATH_LIMIT)).is_some();
     if rules.days==7{
         for week in &weeks[0]{
             check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
             if rules.legal_prefix(week,clocks){
                 let mut path=[OFF;MAX_DAYS];path[..7].copy_from_slice(week);paths.insert(path);
             }
+        }
+    }else if small_exact{
+        // Exhaust only a provably small Cartesian domain. A sampled miss is
+        // never converted into infeasibility; deadlines remain authoritative.
+        paths.insert([OFF;MAX_DAYS]);
+        for (week,values) in weeks.iter().enumerate(){
+            let (a,b)=rules.weeks[week];let mut next=BTreeSet::new();
+            for prefix in paths{for value in values{
+                check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
+                let mut path=prefix;path[a..b].copy_from_slice(&value[..b-a]);
+                if rules.legal_prefix(&path[..b],clocks){next.insert(path);}
+            }}
+            paths=next;
         }
     }else{
         // Bounded deterministic independent paths; no external engine seed.
@@ -226,6 +241,6 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
         }
     }
     paths=witnesses::enrich(paths,options,rules,clocks,deadline);
-    check(!paths.is_empty(),"NO_PERSONAL_PATTERN")?;
+    check(!paths.is_empty(),if rules.service&&(rules.days==7||small_exact){"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;
     Ok(paths.into_iter().map(|p|rules.pattern(p,clocks)).collect())
 }

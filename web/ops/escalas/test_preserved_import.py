@@ -2,7 +2,7 @@
 import copy
 import unittest
 from solver import solve
-from test_solver import fixture
+from contract_fixtures import fixture
 
 
 def imported_data():

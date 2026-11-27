@@ -9,7 +9,8 @@ from model_input import ModelInputError, validate_model_input
 from runtime_settings import REST_PAIR_PROCESS_TIMEOUT_SECONDS
 from service_operations import OperationError, Operations, PROCESS_TIMEOUT_SECONDS, run_operation
 from service_security import authorized, load_secret, operation_identity
-from worker import run_worker
+from solver import solve
+from native_runner import executable, NativeError
 
 # Match the app's UTF-8 limit. Published continuity is added after the smaller
 # public SAVE request; scoped history omits its redundant employee identifiers.
@@ -18,11 +19,15 @@ MAX_THREADS = 16
 
 
 class SolverHTTPServer(ThreadingHTTPServer):
-    def __init__(self, address, secret, timeout=PROCESS_TIMEOUT_SECONDS, worker_target=run_worker):
+    # Join handlers on shutdown so cancellation reaps native children first.
+    daemon_threads = False
+    block_on_close = True
+
+    def __init__(self, address, secret, timeout=PROCESS_TIMEOUT_SECONDS, solver_target=solve):
         self.secret = secret
         self.operations = Operations()
         self.operation_timeout = timeout
-        self.worker_target = worker_target
+        self.solver_target = solver_target
         self.handlers = threading.BoundedSemaphore(MAX_THREADS)
         super().__init__(address, Handler)
 
@@ -129,7 +134,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 timeout = (REST_PAIR_PROCESS_TIMEOUT_SECONDS if "_restPairTarget" in payload["input"]
                            else self.server.operation_timeout)
-                outcome = run_operation(payload["input"], operation, timeout, self.server.worker_target)
+                outcome = run_operation(payload["input"], operation, timeout, self.server.solver_target)
             except Exception:
                 outcome = {"state": "FAILED", "error": "SOLVER_FAILED"}
             state = self.server.operations.finish(operation, outcome["state"])
@@ -139,7 +144,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(504, {"error": "SOLVER_TIMED_OUT", "state": state})
             if state == "FAILED":
                 code = outcome.get("error", "SOLVER_FAILED")
-                return self.reply(400 if code == "INVALID_MODEL_INPUT" else 500, {"error": code, "state": state})
+                return self.reply(outcome.get("httpStatus", 400 if code == "INVALID_MODEL_INPUT" else 500), {"error": code, "state": state})
             self.reply(200, outcome["result"])
         except ModelInputError as error:
             self.reply(400, {"error": "INVALID_MODEL_INPUT", "fields": error.fields})
@@ -158,7 +163,8 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     try:
         secret = load_secret()
-    except (OSError, ValueError):
+        executable()
+    except (OSError, ValueError, NativeError):
         raise SystemExit("SOLVER_CONFIG_INVALID") from None
     server = SolverHTTPServer(("0.0.0.0", 8080), secret)
     def stop(_signum, _frame):

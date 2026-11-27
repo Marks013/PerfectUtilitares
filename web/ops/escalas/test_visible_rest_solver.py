@@ -4,7 +4,7 @@ import unittest
 from datetime import date
 
 from solver import solve
-from test_solver import fixture, make_untimed
+from contract_fixtures import fixture, make_untimed
 
 
 class VisibleRestSolverTests(unittest.TestCase):

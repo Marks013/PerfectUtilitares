@@ -1,3 +1,4 @@
+from contract_fixtures import days_between
 """Dated local-shift choices enter the model before hours and coverage calculation."""
 import copy
 import unittest
@@ -6,7 +7,7 @@ from unittest.mock import patch
 
 import solver
 from model_input import ModelInputError, validate_model_input
-from test_solver import fixture, make_untimed
+from contract_fixtures import fixture, make_untimed
 
 
 def manual_fixture(people=1):
@@ -20,7 +21,7 @@ def manual_fixture(people=1):
     data['shifts'].append(early)
     for person in data['employees']:
         person.update(shiftIds=['day'], fixedImportedShiftId='day')
-        for day in solver.days_between(data['startDate'], data['endDate']):
+        for day in days_between(data['startDate'], data['endDate']):
             rest = date.fromisoformat(day).weekday() in (2, 6)
             data['assignments'].append({'employeeId': person['id'], 'date': day,
                 'kind': 'OFF' if rest else 'WORK', **({} if rest else {'shiftId': 'day'})})

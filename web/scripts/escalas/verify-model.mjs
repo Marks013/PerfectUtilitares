@@ -10,7 +10,7 @@ const runtime = process.argv[2];
 const image = process.argv[3];
 const properties = process.argv.includes("--properties");
 if (!runtime || (runtime === "--docker" && !image)) {
-  throw new Error("Informe o Python com OR-Tools instalado ou --docker <imagem local>.");
+  throw new Error("Informe o Python com o executável SolverForge configurado ou --docker <imagem local>.");
 }
 
 function saturdayParityInput() {
@@ -56,8 +56,8 @@ const directory = fileURLToPath(new URL("../../ops/escalas/", import.meta.url));
 const source = `
 import json, calendar, copy
 from datetime import date, timedelta
-from test_solver import fixture, make_untimed
-from solver import solve, days_between
+from contract_fixtures import fixture, make_untimed, days_between
+from solver import solve
 
 scenarios = []
 data = fixture(42, people=4, weeks=2)
@@ -203,9 +203,9 @@ for index, generated_input in enumerate(generated):
     scenarios.append((f"generated-property-{index}", generated_input, {}))
 ` : ""}
 
-${properties ? "" : "from test_sunday_week_integration import locked_roster\ndata = fixture(40, weeks=2, start_date=\"2026-11-01\")\ndata[\"planningWeekStartsOn\"] = \"SUNDAY\"\nlocked_roster(data, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-timed-no-previous-week-credit\", data, {\"sundayWeeks\": True}))\nuntimed = copy.deepcopy(data)\nmake_untimed(untimed[\"employees\"][0])\nlocked_roster(untimed, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-untimed-no-fictitious-hours\", untimed, {\"sundayWeeks\": True}))\ninvalid = copy.deepcopy(data)\nlocked_roster(invalid, {\"2026-11-01\", \"2026-11-02\", \"2026-11-05\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-rejects-borrowed-sunday\", invalid, {\"infeasible\": \"FIVE_BY_TWO\"}))\n\n"}
+${properties ? "" : "from contract_fixtures import locked_roster\ndata = fixture(40, weeks=2, start_date=\"2026-11-01\")\ndata[\"planningWeekStartsOn\"] = \"SUNDAY\"\nlocked_roster(data, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-timed-no-previous-week-credit\", data, {\"sundayWeeks\": True}))\nuntimed = copy.deepcopy(data)\nmake_untimed(untimed[\"employees\"][0])\nlocked_roster(untimed, {\"2026-11-02\", \"2026-11-05\", \"2026-11-08\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-untimed-no-fictitious-hours\", untimed, {\"sundayWeeks\": True}))\ninvalid = copy.deepcopy(data)\nlocked_roster(invalid, {\"2026-11-01\", \"2026-11-02\", \"2026-11-05\", \"2026-11-11\"})\nscenarios.append((\"sunday-week-rejects-borrowed-sunday\", invalid, {\"infeasible\": \"FIVE_BY_TWO\"}))\n\n"}
 
-${properties ? "" : `from test_explicit_rest_solver import scenario as explicit_rest_scenario
+${properties ? "" : `from contract_fixtures import scenario as explicit_rest_scenario
 
 data = explicit_rest_scenario()
 make_untimed(data["employees"][1])
@@ -330,4 +330,4 @@ for (const line of result.stdout.trim().split("\n")) {
   console.log(JSON.stringify({ scenario: name, verified: true, status: solved.status, seconds: solved.wallTimeSeconds }));
 }
 assert.equal(passed, properties ? 30 : 29, "Todos os cenários devem ter sido executados.");
-console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "CP-SAT", verifier: "TypeScript independent" }));
+console.log(JSON.stringify({ verified: true, scenarios: passed, processor: "SolverForge", verifier: "TypeScript independent" }));

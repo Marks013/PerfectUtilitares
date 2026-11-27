@@ -73,7 +73,7 @@ jobs:
       - name: Verify synthetic calendar and cross-role Sunday concentration
         run: npm exec -- vitest run src/lib/escalas/benchmark-synthetic-input.test.ts src/lib/escalas/sunday-sector-observations.test.ts
       - name: Build isolated solver only
-        run: docker build --target runtime -t web-escalas-solver:latest ops/escalas
+        run: docker build --target runtime -t web-escalas-solver:latest -f ops/escalas/Dockerfile .
       - name: Log hardware and source identity
         run: |
           printf 'revision=%s\n' "$GITHUB_SHA"

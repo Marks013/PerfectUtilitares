@@ -188,7 +188,8 @@ services:
   escalas-solver:
     <<: *runtime-hardening
     build:
-      context: ./ops/escalas
+      context: .
+      dockerfile: ops/escalas/Dockerfile
       args:
         SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
         BUILD_DATE: ${BUILD_DATE:-unknown}

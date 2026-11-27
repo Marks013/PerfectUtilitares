@@ -11,7 +11,7 @@ import time
 import unittest
 from uuid import uuid4
 
-from test_solver import fixture
+from contract_fixtures import supported_fixture as fixture
 
 ROOT = pathlib.Path(__file__).parent
 
@@ -60,7 +60,7 @@ class StartupTests(unittest.TestCase):
                             self.fail("Protected service did not become ready")
                         time.sleep(0.02)
                 connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=20)
-                connection.request("POST", "/solve", json.dumps({"input": fixture()}), {
+                connection.request("POST", "/solve", json.dumps({"input": fixture(people=1)}), {
                     "Authorization": "Bearer " + secret,
                     "X-Request-ID": str(uuid4()), "X-Cancel-Token": secrets.token_hex(32),
                     "Content-Type": "application/json",

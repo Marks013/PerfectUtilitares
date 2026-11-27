@@ -2,7 +2,7 @@
 import copy
 import unittest
 from model_input import ModelInputError, validate_model_input
-from test_solver import fixture
+from contract_fixtures import fixture
 
 
 class ModelInputTests(unittest.TestCase):

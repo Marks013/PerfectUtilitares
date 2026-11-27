@@ -1,18 +1,16 @@
 """Bounded operation control. Records contain capabilities' hashes, never models."""
 from dataclasses import dataclass
 import hmac
-import multiprocessing
 import threading
 import time
 
-from worker import run_worker
+from control import SolveCancelled, SolveControl, SolveTimedOut
+from native_runner import NativeError
+from solver import solve
 
-CONTEXT = multiprocessing.get_context("spawn")
 MAX_RECORDS = 256
 RECORD_TTL_SECONDS = 120
 PROCESS_TIMEOUT_SECONDS = 18.0
-CANCEL_GRACE_SECONDS = 0.5
-EXIT_GRACE_SECONDS = 0.25
 TERMINAL = {"COMPLETED", "CANCELLED", "FAILED", "TIMED_OUT"}
 
 
@@ -67,7 +65,7 @@ class Operations:
             if len(self.records) >= self.max_records:
                 raise OperationError(503, "SOLVER_CONTROL_CAPACITY")
             operation = Operation(request_id, token_hash, "RUNNING", time.monotonic() + self.ttl,
-                                  CONTEXT.Event())
+                                  threading.Event())
             self.records[request_id] = operation
             self.active_id = request_id
             return operation
@@ -89,7 +87,7 @@ class Operations:
 
     def finish(self, operation, state):
         with self.lock:
-            # Only call after the exact owned child has exited and has been joined.
+            # Only call after the native runner has reaped its exact owned process group.
             operation.state = "CANCELLED" if operation.state == "CANCEL_REQUESTED" else state
             operation.expires = time.monotonic() + self.ttl
             operation.event = None
@@ -106,56 +104,21 @@ class Operations:
                     current.event.set()
 
 
-def _stop_owned_child(process, cancel_event):
-    if process.pid is None:
-        return
-    process.join(EXIT_GRACE_SECONDS)
-    if process.is_alive():
-        cancel_event.set()
-        process.terminate()
-        process.join(EXIT_GRACE_SECONDS)
-    if process.is_alive():
-        process.kill()
-        process.join()
-    process.close()
-
-
-def run_operation(payload, operation, timeout=PROCESS_TIMEOUT_SECONDS, target=run_worker):
-    deadline = time.monotonic() + timeout
-    receive, send = CONTEXT.Pipe(duplex=False)
-    process = CONTEXT.Process(target=target, args=(payload, operation.event, deadline, send))
-    interrupted_at = None
-    timed_out = False
-    outcome = {"state": "FAILED", "error": "SOLVER_FAILED"}
+def run_operation(payload, operation, timeout=PROCESS_TIMEOUT_SECONDS, target=solve):
+    """The native runner owns cleanup before finish releases the computation slot."""
+    control = SolveControl(operation.event, time.monotonic() + timeout)
     try:
-        if operation.event.is_set():
-            return {"state": "CANCELLED"}
-        process.start()
-        send.close()
-        while True:
-            now = time.monotonic()
-            if now >= deadline:
-                timed_out = True
-                operation.event.set()
-            if operation.event.is_set() and interrupted_at is None:
-                interrupted_at = now
-            if receive.poll(0.02):
-                try:
-                    outcome = receive.recv()
-                except (EOFError, OSError):
-                    pass
-                break
-            if not process.is_alive():
-                break
-            if interrupted_at is not None and now - interrupted_at >= CANCEL_GRACE_SECONDS:
-                break
-        if operation.state == "CANCEL_REQUESTED":
-            return {"state": "CANCELLED"}
-        if timed_out:
-            return {"state": "TIMED_OUT"}
-        return outcome
-    finally:
-        # The slot is released by finish only after this cleanup, never on HTTP abort.
-        _stop_owned_child(process, operation.event)
-        receive.close()
-        send.close()
+        control.checkpoint()
+        result = target(payload, control=control)
+        control.checkpoint()
+        return {"state": "COMPLETED", "result": result}
+    except SolveCancelled:
+        return {"state": "CANCELLED"}
+    except SolveTimedOut:
+        return {"state": "TIMED_OUT"}
+    except NativeError as error:
+        return {"state": "FAILED", "error": error.code, "httpStatus": error.status}
+    except (ValueError, KeyError, TypeError, OverflowError):
+        return {"state": "FAILED", "error": "INVALID_MODEL_INPUT", "httpStatus": 400}
+    except Exception:
+        return {"state": "FAILED", "error": "SOLVER_FAILED", "httpStatus": 500}

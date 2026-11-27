@@ -375,14 +375,25 @@ fn configure_peak(facts:&mut [TemporalFacts])->Result<()>{
 }
 fn read(root:&V,deadline:Instant)->Result<TemporalPlan>{read_mode(root,deadline,false)}
 fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
+    read_admitted(root,deadline,civil_night,false)
+}
+fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result<TemporalPlan>{
     check(root.as_object().is_some_and(|o|o.len()==1)&&root["input"].is_object(),"ENVELOPE")?;
     let input=&root["input"];let policy=&input["policy"];
-    check(number(input,"schemaVersion")?==1&&text(input,"branchCode")?=="SYNTH"&&boolean(input,"simulation",false)?
-        &&text(input,"timeZone")?=="America/Sao_Paulo"&&text(input,"planningWeekStartsOn")?=="SUNDAY"
-        &&number(input,"restRulesVersion")?==3,"TEMPORAL_HORIZON")?;
+    let branch=identifier(input,"branchCode")?;let simulation=boolean(input,"simulation",false)?;
+    let convention=if service{optional_text(input,"planningWeekStartsOn","MONDAY")?}
+        else{text(input,"planningWeekStartsOn")?};
+    let rest_version=if service&&input.get("restRulesVersion").is_none(){1}else{number(input,"restRulesVersion")?};
+    check(number(input,"schemaVersion")?==1&&(service||branch=="SYNTH"&&simulation)
+        &&text(input,"timeZone")?=="America/Sao_Paulo"
+        &&if service{["MONDAY","SUNDAY"].contains(&convention)&&(1..=3).contains(&rest_version)}
+            else{convention=="SUNDAY"&&rest_version==3},"TEMPORAL_HORIZON")?;
+    let branch_two=service&&rest_version>=3&&!branch.trim().is_empty()
+        &&branch.trim().bytes().all(|c|c.is_ascii_digit())&&branch.trim().trim_start_matches('0')=="2";
     let first=text(input,"startDate")?;
     let month=input.get("visibleMonth").map(|m|m.as_str().ok_or("VISIBLE_MONTH")).transpose()?;
-    let calendar=Calendar::new(first,text(input,"endDate")?,month)?;
+    let calendar=if service{Calendar::aligned(first,text(input,"endDate")?,month,usize::from(convention=="MONDAY"))?}
+        else{Calendar::new(first,text(input,"endDate")?,month)?};
     let days=calendar.labels.len();
     let labels=Arc::new(calendar.labels.clone());
     let relative=|date:&str|calendar.relative(date);
@@ -393,17 +404,22 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
     }
     let mode=optional_text(input,"generationMode","DAYS_AND_HOURS")?;
     check(["DAYS_AND_HOURS","REST_ONLY","HOURS_ONLY"].contains(&mode),"MODE")?;
-    check(text(policy,"calendarMode")?=="MANUAL"&&optional_text(policy,"normativeProfile","CUSTOM")?=="CUSTOM","POLICY")?;
+    let calendar_mode=if service{optional_text(policy,"calendarMode","MANUAL")?}else{text(policy,"calendarMode")?};
+    check(calendar_mode=="MANUAL"&&optional_text(policy,"normativeProfile","CUSTOM")?=="CUSTOM","POLICY")?;
     let default_hours=number(input,"defaultWeeklyHours")?;
     let weekly=number(policy,"weeklyLimit")?;let daily=number(policy,"dailyLimitMinutes")?;
     let meal=number(policy,"minMealMinutes")?;let inter=number(policy,"minInterShiftMinutes")?;
     let weekly_rest=number(policy,"minWeeklyRestMinutes")?;let max_run=number(policy,"maxConsecutiveWorkDays")?;
-    let closing=number(input,"storeClosingMinutes")?;
+    // Legacy callers omitted closing; do not invent an earlier cutoff.
+    let closing=if service&&input.get("storeClosingMinutes").is_none(){1440}else{number(input,"storeClosingMinutes")?};
     check(matches!(default_hours,40|42|44)&&matches!(weekly,40|42|44)&&range(daily,1,600)
         &&range(meal,30,180)&&range(inter,660,1440)&&range(weekly_rest,2100,4320)&&range(max_run,1,6)
         &&range(closing,300,1440),"POLICY_LIMIT")?;
     let limit_blocks=boolean(policy,"limitContinuousWorkBlocks",false)?;
-    let closed=dates(policy,"closedDates",&calendar)?;let holidays=dates(policy,"holidayDates",&calendar)?;
+    let mut closed=dates(policy,"closedDates",&calendar)?;let holidays=dates(policy,"holidayDates",&calendar)?;
+    if branch_two{
+        for d in -1..=days as i32{if (calendar.offset as i32+d).rem_euclid(7)==0{closed.insert(d);}}
+    }
     let paid=dates(policy,"paidHolidayDates",&calendar)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
     check(paid.is_subset(&closed)&&paid.is_subset(&holidays)&&authorized.is_subset(&holidays),"HOLIDAY_POLICY")?;
     let closed_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&closed.contains(&(d as i32)));
@@ -453,7 +469,7 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
             let next=roles.len();Some(*roles.entry(r.to_string()).or_insert(next))
         }};
         let estimated=boolean(d,"estimated",false)?;
-        if estimated&&paid.contains(&day){continue;}
+        if estimated&&(paid.contains(&day)||branch_two&&calendar.weekday(day as usize)==0){continue;}
         demand_groups.entry((sector,day as usize,estimated)).or_default().push((a,b,i64::from(n),role));
     }
     // Legacy private coverage floors are additional mandatory minima,
@@ -527,10 +543,11 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
     for p in people{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
         let pid=identifier(p,"id")?;
-        check(pid.strip_prefix("person-").is_some_and(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit()))
-            &&text(p,"name")?.starts_with("Synthetic person ")&&seen.insert(pid),"SYNTHETIC_ID")?;
+        let name=identifier(p,"name")?;
+        check((service||pid.strip_prefix("person-").is_some_and(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit()))
+            &&name.starts_with("Synthetic person "))&&seen.insert(pid),"PERSON_IDENTITY")?;
         let active=text(p,"activeFrom")?;
-        let schedule=text(p,"scheduleMode")?;
+        let schedule=if service{optional_text(p,"scheduleMode","TIMED")?}else{text(p,"scheduleMode")?};
         let untimed=matches!(schedule,"UNTIMED"|"MISSING");
         check((active.is_empty()||civil_date(active))
             &&boolean(p,"planningEnabled",true)?&&(untimed||schedule=="TIMED")&&p.get("simulationDailyMinutes").is_none(),"PERSON_PROFILE")?;
@@ -576,7 +593,8 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         check(untimed||targets.iter().all(|&target|target<=weekly*60),"WEEKLY_MINUTES")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(p,"weeklyHoursMode","INDIVIDUAL")?),"WEEKLY_MODE")?;
         let mixed:[bool;6]=std::array::from_fn(|w|!untimed&&mixed_sectors.contains(sector_name)&&hours==42&&targets[w]==2520);
-        let (fixed,personal)=personal_rules(p,max_run.min(5) as u8)?;
+        let (fixed,personal)=if service{crate::wire::personal_rules_versioned(p,max_run.min(5) as u8,rest_version>=2)?}
+            else{personal_rules(p,max_run.min(5) as u8)?};
         let cap=number(p,"maxConsecutiveSundays")?;let rule=optional_text(p,"sundayRestRule","PROTECTIVE")?;
         check(matches!(cap,1|2)&&["PROTECTIVE","UNREVIEWED","CLT_386","COMMERCE"].contains(&rule),"SUNDAY_RULE")?;
         let cap=if rule=="COMMERCE"{cap}else{1};
@@ -598,7 +616,9 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
         for &state in &options{
             if duration_seen.insert(clock(&clocks,state).unwrap().paid){preferred_clock[usize::from(state)]=true;}
         }
+        let compensation=boolean(policy,"compensationAuthorized",false)?;
         let allowed_clock=|s:u8,day:usize|!untimed&&clock(&clocks,s).is_some_and(|c|{
+            if service&&!simulation&&!compensation&&c.paid>480{return false;}
             let ceiling=daily.min(calendar::daily_ceiling(&labels[day]));
             if mixed[calendar.week(day)]{c.paid==540&&calendar::weekly_ceiling(&labels[day])>=42||c.paid==480&&c.paid<=ceiling}
             else{c.paid!=540&&c.paid<=ceiling}
@@ -639,7 +659,7 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
             }else{
                 let weekday=calendar.weekday(day);
                 let force_off=fixed&(1<<weekday)!=0;
-                let off_allowed=weekday!=6&&(!holidays.contains(&date)||weekday==0||boolean(policy,"holidayRestAllowed",false)?);
+                let off_allowed=(rest_version<2||weekday!=6)&&(!holidays.contains(&date)||weekday==0||boolean(policy,"holidayRestAllowed",false)?);
                 if off_allowed{out.push(OFF);}
                 if !force_off&&!closed.contains(&date)&&(!holidays.contains(&date)||authorized.contains(&date)){
                     if untimed{out.push(DUTY);}
@@ -663,7 +683,10 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
             }
         }
         let profile:Vec<_>=daily_options.iter().flatten().filter_map(|&s|clock(&clocks,s).map(|c|c.segments.clone())).collect::<BTreeSet<_>>().into_iter().collect();
-        let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,active_start,active_end,
+        let rules=Rules{days,personal,fixed,cap,weeks:calendar.weeks.clone(),targets,offset:calendar.offset,cutover:calendar.cutover,weekly_limit:weekly*60,inter,weekly_rest,mixed,active_start,active_end,rest_version,service,
+            terminal_fixed_rest_allowed:!service||employed(days as i32)
+                &&(rest_version<2||calendar.weekday(days)!=6)
+                &&(!holidays.contains(&(days as i32))||calendar.weekday(days)==0||boolean(policy,"holidayRestAllowed",false)?),
             untimed,hours_only:mode=="HOURS_ONLY",closed:closed_days,holiday:holiday_days,old,context,visible:calendar.visible};
         rest_weight+=rules.pair_terms();
         let hint=if hints.is_empty(){None}else{
@@ -735,13 +758,22 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
 fn unknown(start:Instant)->V{
     json!({"httpStatus":200,"body":{"status":"UNKNOWN","message":"No validated temporal candidate","assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null})
 }
+/// Private service entry: original identifiers, unchanged bounded policy model.
+pub(crate) fn solve_service(bytes:&[u8],start:Instant,budget:Duration)->V{solve_admitted(bytes,start,budget,false,true)}
 pub fn solve(bytes:&[u8],start:Instant,budget:Duration)->V{solve_mode(bytes,start,budget,false)}
 pub(crate) fn solve_civil_night(bytes:&[u8],start:Instant,budget:Duration)->V{solve_mode(bytes,start,budget,true)}
 fn solve_mode(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool)->V{
+    solve_admitted(bytes,start,budget,civil_night,false)
+}
+fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,service:bool)->V{
     let root:V=match serde_json::from_slice(bytes){Ok(v)=>v,Err(_)=>return super::failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","JSON")};
     let deadline=start+budget-Duration::from_secs(1);
-    let mut plan=match if civil_night{read_mode(&root,deadline,true)}else{read(&root,deadline)}{
-        Ok(v)=>v,Err("NO_PERSONAL_PATTERN")=>return unknown(start),Err("MAPPING_TIMEOUT")=>return super::failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
+    let mut plan=match if service{read_admitted(&root,deadline,false,true)}else if civil_night{read_mode(&root,deadline,true)}else{read(&root,deadline)}{
+        Ok(v)=>v,
+        Err("INFEASIBLE_PERSONAL_DOMAIN") if service=>return json!({"httpStatus":200,"body":{
+            "status":"INFEASIBLE","message":"Exhaustive personal constraints admit no legal path",
+            "assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null}),
+        Err("NO_PERSONAL_PATTERN")=>return unknown(start),Err("MAPPING_TIMEOUT")=>return super::failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
         Err(e)=>return super::failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING",e)
     };
     let mapped=start.elapsed().as_secs_f64();
@@ -815,9 +847,9 @@ fn solve_mode(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool)->V{
         };
         json!({"name":name,"status":status,"cost":if status.starts_with("SCOPED")||status.starts_with("PARTIAL"){Some(cost[i+1])}else{None}})
     }).collect();
-    json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":"Synthetic bounded temporal candidate; independent validation required",
+    json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":if service{"Bounded SolverForge candidate; independent validation required"}else{"Synthetic bounded temporal candidate; independent validation required"},
         "assignments":assignments,"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null,
-        "temporal":{"version":2,"scope":if civil_night{"SYNTHETIC_CIVIL_NIGHT"}else{"SYNTHETIC_TEMPORAL"},"days":days,"untimed":untimed,"activePositions":active_positions,"untimedPositions":untimed_positions,
+        "temporal":{"version":2,"scope":if service{"SERVICE_TEMPORAL"}else if civil_night{"SYNTHETIC_CIVIL_NIGHT"}else{"SYNTHETIC_TEMPORAL"},"days":days,"untimed":untimed,"activePositions":active_positions,"untimedPositions":untimed_positions,
             "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,"visibleDays":plan.employees[0].facts.visible.iter().filter(|&&v|v).count(),"seedSeconds":seed_seconds,
             "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
             "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,
@@ -1305,4 +1337,35 @@ mod tests{
         assert!(answer["body"]["assignments"].as_array().unwrap().iter().any(|r|r["date"]=="2026-11-04"&&r["shiftId"]=="nine"));
         assert_eq!(answer["temporal"]["objectives"].as_array().unwrap().len(),16);
     }
+
+    #[test]
+    fn service_keeps_original_identifiers_and_does_not_require_synthetic_names(){
+        let mut data=fixture();data["input"]["branchCode"]=json!("branch-02");
+        data["input"]["simulation"]=json!(false);
+        // Identity success requires a legally authorized non-simulation 42h profile.
+        data["input"]["policy"]["compensationAuthorized"]=json!(true);
+        data["input"]["employees"][0]["id"]=json!("employee:abc-ç");
+        data["input"]["employees"][0]["name"]=json!("Contract test employee");
+        data["input"]["employees"][0]["history"][0]["employeeId"]=json!("employee:abc-ç");
+        let original=data.clone();let bytes=serde_json::to_vec(&data).unwrap();
+        let result=solve_service(&bytes,Instant::now(),Duration::from_secs(4));
+        assert_eq!(result["httpStatus"],200,"{result}");
+        assert_eq!(result["body"]["status"],"FEASIBLE","{result}");
+        let rows=result["body"]["assignments"].as_array().unwrap();assert_eq!(rows.len(),7);
+        assert!(rows.iter().all(|row|row["employeeId"]=="employee:abc-ç"));
+        assert_eq!(data,original);assert!(read(&data,Instant::now()+Duration::from_secs(1)).is_err());
+    }
+    #[test]
+    fn service_rejects_unsupported_policy_and_duplicate_identity_without_rewriting(){
+        let mut data=fixture();data["input"]["policy"]["normativeProfile"]=json!("SINDECOMU_SUPERMARKETS_2026_2027");
+        let rejected=solve_service(&serde_json::to_vec(&data).unwrap(),Instant::now(),Duration::from_secs(3));
+        assert_eq!(rejected["httpStatus"],400);assert!(rejected["body"].get("assignments").is_none());
+        let mut data=fixture();let duplicate=data["input"]["employees"][0].clone();
+        data["input"]["employees"].as_array_mut().unwrap().push(duplicate);
+        let rejected=solve_service(&serde_json::to_vec(&data).unwrap(),Instant::now(),Duration::from_secs(3));
+        assert_eq!(rejected["httpStatus"],400);
+    }
 }
+
+#[cfg(test)]
+mod service_contract_tests;

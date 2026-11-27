@@ -30,6 +30,9 @@ fn weekday_mask(person:&V,key:&str)->Result<u8>{
     Ok(mask)
 }
 pub(crate) fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
+    personal_rules_versioned(person,max_run,true)
+}
+pub(crate) fn personal_rules_versioned(person:&V,max_run:u8,forbid_saturday:bool)->Result<(u8,PersonalRules)>{
     let fixed=weekday_mask(person,"fixedOffDays")?;
     let mode=text(person,"offMode")?;
     check(match mode{"VARIABLE"=>fixed==0,"MIXED"=>fixed.count_ones()==1,
@@ -49,7 +52,7 @@ pub(crate) fn personal_rules(person:&V,max_run:u8)->Result<(u8,PersonalRules)>{
         }
         check(projected==fixed,"FIXED_REST_PROJECTION")?;
     }
-    check(fixed&64==0,"FIXED_SATURDAY")?;
+    check(!forbid_saturday||fixed&64==0,"FIXED_SATURDAY")?;
     let pattern=text(person,"offPattern")?;
     check(["ANY","CONSECUTIVE","PREFER_CONSECUTIVE"].contains(&pattern),"OFF_PATTERN")?;
     Ok((fixed,PersonalRules{max_run,variable:mode=="VARIABLE",consecutive:pattern=="CONSECUTIVE",

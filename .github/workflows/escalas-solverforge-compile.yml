@@ -4,6 +4,13 @@ on:
   pull_request:
     paths:
       - 'web/experiments/escalas-solverforge/**'
+      - 'web/ops/escalas/**'
+      - '.github/workflows/escalas-solverforge-compile.yml'
+  push:
+    branches: [experiment/solverforge-consolidado-2026-11-26]
+    paths:
+      - 'web/experiments/escalas-solverforge/**'
+      - 'web/ops/escalas/**'
       - '.github/workflows/escalas-solverforge-compile.yml'
 
 permissions:
@@ -80,6 +87,20 @@ jobs:
         run: |
           set -euo pipefail
           python3 experiments/escalas-solverforge/audit_dependencies.py "$RUNNER_TEMP/forge-metadata.json" experiments/escalas-solverforge/Cargo.lock "$RUNNER_TEMP/forge-evidence/dependency-audit.json"
+      - name: Native service HTTP and process-boundary contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ESCALAS_SOLVER_BINARY="$RUNNER_TEMP/solverforge-target/$RUST_TARGET/release/perfectutilitares-solverforge-spike"
+          cd ops/escalas
+          python3 -m unittest test_native_runner test_runtime_migration test_service test_transport test_service_startup test_service_security_contracts 2>&1 | tee "$RUNNER_TEMP/forge-evidence/service-contracts.log"
+      - name: Complete public compatibility and migration-readiness gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ESCALAS_SOLVER_BINARY="$RUNNER_TEMP/solverforge-target/$RUST_TARGET/release/perfectutilitares-solverforge-spike"
+          cd ops/escalas
+          python3 -m unittest discover -s . -p 'test_*.py' 2>&1 | tee "$RUNNER_TEMP/forge-evidence/full-compatibility.log"
       - name: Retain public per-toolchain qualification evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

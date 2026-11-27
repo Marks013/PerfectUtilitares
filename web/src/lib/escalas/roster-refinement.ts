@@ -25,7 +25,7 @@ const repairableRestIssue = (code: string) => code === "CONSECUTIVE_REST_LIMIT" 
 /** A bounded batch of independent sector improvements, never a substitute for the solver or its verifier. */
 export function refineRoster(input: EscalaInput, budgetMs?: number): EscalaInput {
   // Existing drafts may need several local exchanges before any complete seed is valid.
-  // This bounded preparation is separate from CP-SAT's unchanged 12-second search.
+  // This bounded preparation is separate from the private engine's unchanged 12-second search.
   const repairRequired = input.employees.some(person => regularRestQuality(input, person).longWindows.length > 0);
   const allotted = budgetMs ?? (repairRequired ? 2500 : 1500);
   if (!Number.isFinite(allotted) || allotted <= 0) return input;

@@ -2,7 +2,7 @@
 import copy
 
 from hypothesis import given, settings, strategies as st
-from test_solver import fixture, make_untimed
+from contract_fixtures import fixture, make_untimed
 
 
 def cases():

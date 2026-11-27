@@ -1,0 +1,198 @@
+{
+  "input": {
+    "schemaVersion": 1,
+    "branchCode": "01",
+    "branchName": "Filial de teste",
+    "startDate": "2026-11-02",
+    "endDate": "2026-11-08",
+    "defaultWeeklyHours": 40,
+    "timeZone": "America/Sao_Paulo",
+    "policy": {
+      "source": "Norma de teste",
+      "validFrom": "2026-01-01",
+      "validUntil": "2026-12-31",
+      "reviewed": true,
+      "reviewedBy": "Teste",
+      "weeklyLimit": 44,
+      "dailyLimitMinutes": 600,
+      "compensationAuthorized": true,
+      "minInterShiftMinutes": 660,
+      "minWeeklyRestMinutes": 2100,
+      "minMealMinutes": 60,
+      "maxConsecutiveWorkDays": 6,
+      "closedDates": [],
+      "holidayDates": [],
+      "authorizedHolidayDates": [],
+      "holidayRestAllowed": false,
+      "nightWorkReviewed": false
+    },
+    "shifts": [
+      {
+        "id": "day",
+        "name": "Diurno",
+        "segments": [
+          {
+            "start": 480,
+            "end": 720,
+            "kind": "WORK"
+          },
+          {
+            "start": 720,
+            "end": 780,
+            "kind": "BREAK"
+          },
+          {
+            "start": 780,
+            "end": 1020,
+            "kind": "WORK"
+          }
+        ]
+      }
+    ],
+    "employees": [
+      {
+        "id": "p0",
+        "registration": "000",
+        "name": "Colaborador 0",
+        "sector": "Reposição",
+        "role": "Repositor",
+        "weeklyHours": 40,
+        "shiftIds": [
+          "day"
+        ],
+        "activeFrom": "2020-01-01",
+        "offMode": "VARIABLE",
+        "fixedOffDays": [],
+        "offPattern": "ANY",
+        "maxConsecutiveSundays": 2,
+        "sundayRestRule": "COMMERCE",
+        "preferredOffDays": [],
+        "historyKnown": true,
+        "history": [
+          {
+            "employeeId": "p0",
+            "date": "2026-10-12",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-13",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-14",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-15",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-16",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-17",
+            "kind": "OFF"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-18",
+            "kind": "OFF"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-19",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-20",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-21",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-22",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-23",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-24",
+            "kind": "OFF"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-25",
+            "kind": "OFF"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-26",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-27",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-28",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-29",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-30",
+            "kind": "WORK",
+            "shiftId": "day"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-10-31",
+            "kind": "OFF"
+          },
+          {
+            "employeeId": "p0",
+            "date": "2026-11-01",
+            "kind": "OFF"
+          }
+        ]
+      }
+    ],
+    "demands": [],
+    "assignments": []
+  }
+}
