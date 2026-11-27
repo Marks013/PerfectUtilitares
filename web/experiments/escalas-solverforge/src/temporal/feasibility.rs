@@ -49,7 +49,8 @@ impl Upper{
     pub(super) fn verify(&self,facts:&[std::sync::Arc<TemporalFacts>],calendar:&Calendar,deadline:Instant,detail:&mut Option<BandConflict>)->Result<()>{
         for (id,f) in facts.iter().enumerate(){
             check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
-            let Some(s)=self.sectors.get(&id)else{continue;};
+            let empty=Sector::default();
+            let s=self.sectors.get(&id).unwrap_or(&empty);
             let mut required=[0i64;MAX_DAYS];let mut role_required=BTreeMap::<usize,[i64;MAX_DAYS]>::new();
             for b in &f.bands{
                 check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;

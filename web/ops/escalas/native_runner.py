@@ -195,12 +195,21 @@ def _corresponds(body, payload):
         people = {p["id"]:p for p in payload["employees"] if p.get("planningEnabled", True)}
         expected = {(pid, day) for pid,p in people.items() for day in dates
                     if day >= p.get("activeFrom", "") and (not p.get("activeUntil") or day <= p["activeUntil"])}
+        excluded = {p["id"] for p in payload["employees"] if p.get("planningEnabled") is False}
+        preserve_all = payload.get("generationMode") == "HOURS_ONLY"
+        retained = {(r["employeeId"], r["date"]): r for r in payload["assignments"]
+                    if r["employeeId"] in excluded and (preserve_all or r.get("locked")
+                                                         or r["kind"] in ("ABSENCE", "HOLIDAY"))}
         rows = body["assignments"]
         actual = {(r["employeeId"], r["date"]): r for r in rows}
-        if set(actual) != expected:
+        if set(actual) != expected | set(retained) or len(actual) != len(rows):
             raise ValueError("POSITIONS")
         shifts = {s["id"] for s in payload["shifts"]}
         for row in rows:
+            if row["employeeId"] in excluded:
+                if row != retained.get((row["employeeId"], row["date"])):
+                    raise ValueError("RETAINED_DISABLED")
+                continue
             person = people[row["employeeId"]]
             untimed = person.get("scheduleMode") in ("UNTIMED", "MISSING")
             if row["kind"] == "WORK" and (untimed or row["shiftId"] not in shifts):
@@ -211,6 +220,11 @@ def _corresponds(body, payload):
             if old["employeeId"] not in people:
                 continue
             key = old["employeeId"], old["date"]
+            if preserve_all:
+                new = actual.get(key)
+                if not new or any(field not in new or new[field] != value for field, value in old.items()
+                                  if field != "shiftId" or old["kind"] != "WORK"):
+                    raise ValueError("HOURS_ONLY_RECORD")
             if old.get("locked") or old["kind"] in ("ABSENCE", "HOLIDAY"):
                 new = actual.get(key)
                 if (not new or new["kind"] != old["kind"]

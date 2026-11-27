@@ -169,3 +169,91 @@ fn service_certificate_identifies_the_actual_uncovered_meal_interval(){
     assert!(message.contains("2026-11-02"));assert!(message.contains("12:00"));
     assert!(message.contains("13:00"));assert!(message.contains("intervalos de refeição"));
 }
+
+#[test]
+fn service_untimed_distinct_roles_do_not_empty_a_shared_sector(){
+    let mut v=legacy();v["input"]["endDate"]=json!("2026-11-29");
+    let template=v["input"]["employees"][0].clone();
+    v["input"]["employees"]=json!((0..4).map(|i|{
+        let mut p=template.clone();p["id"]=json!(format!("p{i}"));p["role"]=json!(format!("Responsabilidade {i}"));
+        p["scheduleMode"]=json!("UNTIMED");p["shiftIds"]=json!([]);p["history"]=json!([]);p["historyKnown"]=json!(false);
+        p["sundayRestRule"]=json!("PROTECTIVE");p
+    }).collect::<Vec<_>>());
+    let plan=parse(&v).unwrap();let p=&plan.employees[0];let best=p.catalog.iter().map(|p|p.personal[6]).min().unwrap();
+    let masks:BTreeSet<_>=p.catalog.iter().filter(|p|p.personal[6]==best).map(|p|(0..4).fold(0u8,|m,w|m|if work(p.states[w*7+6]){1<<w}else{0})).collect();
+    println!("best rotation cost={best}; available Sunday masks={masks:?}");
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(4));
+    assert_eq!(answer["body"]["status"],"FEASIBLE","{answer}");
+    let rows=answer["body"]["assignments"].as_array().unwrap();
+    for d in 2..=29{
+        let date=format!("2026-11-{d:02}");
+        assert!(rows.iter().filter(|r|r["date"]==date&&r["kind"]=="DUTY").count()>=2,"{date}");
+    }
+    assert!(rows.iter().all(|r|r.get("shiftId").is_none()));
+}
+
+#[test]
+fn service_disallowed_manual_clock_can_be_off_but_cannot_supply_required_coverage(){
+    let mut v=legacy();let mut bad=v["input"]["shifts"][0].clone();bad["id"]=json!("too-long");bad["segments"][2]["end"]=json!(1080);
+    v["input"]["policy"]["dailyLimitMinutes"]=json!(480);v["input"]["shifts"].as_array_mut().unwrap().push(bad);
+    v["input"]["employees"][0]["manualShiftByDate"]=json!({"2026-11-04":"too-long"});
+    let original=v.clone();let plan=parse(&v).unwrap();let p=&plan.employees[0];
+    assert!(p.catalog.iter().all(|x|x.states[2]==OFF));assert_eq!(v,original);
+    v["input"]["demands"]=json!([{ "date":"2026-11-04","sector":"Reposição","start":480,"end":540,"minimum":1 }]);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");assert!(answer["body"]["assignments"].as_array().unwrap().is_empty());
+}
+#[test]
+fn service_paid_pause_is_neither_a_meal_nor_hourly_service(){
+    let mut v=legacy();v["input"]["shifts"][0]["segments"][1]["kind"]=json!("PAID_BREAK");
+    v["input"]["shifts"][0]["segments"][2]["end"]=json!(960);
+    let answer=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(answer["body"]["status"],"INFEASIBLE");
+}
+#[test]
+fn service_short_simulation_still_requires_the_explicit_meal_opt_in(){
+    let mut v=legacy();v["input"]["simulation"]=json!(true);v["input"]["employees"][0]["simulationDailyMinutes"]=json!(300);
+    v["input"]["shifts"][0]["segments"]=json!([{ "kind":"WORK","start":480,"end":780 }]);
+    assert!(parse(&v).is_err());v["input"]["policy"]["allowShortMealSimulation"]=json!(true);
+    let plan=parse(&v).unwrap();let p=&plan.employees[0];assert!(p.catalog.iter().all(|x|x.states[..7].iter().filter(|&&s|work(s)).count()==5));
+    v["input"]["simulation"]=json!(false);assert!(parse(&v).is_err());
+}
+
+#[test]
+fn service_disabled_records_are_preserved_but_never_supply_coverage(){
+    let mut v=legacy();let mut disabled=v["input"]["employees"][0].clone();
+    disabled["id"]=json!("disabled");disabled["planningEnabled"]=json!(false);disabled["sector"]=json!("Excluded");
+    v["input"]["employees"].as_array_mut().unwrap().push(disabled);
+    let saved=json!({"employeeId":"disabled","date":"2026-11-03","kind":"WORK","shiftId":"day","locked":true,"note":"untouched"});
+    v["input"]["assignments"]=json!([saved.clone(),{"employeeId":"disabled","date":"2026-11-04","kind":"OFF"}]);
+    let response=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(4));
+    assert_eq!(response["body"]["status"],"FEASIBLE","{response}");
+    let rows=response["body"]["assignments"].as_array().unwrap();
+    assert_eq!(rows.len(),8);assert_eq!(rows.iter().find(|r|r["employeeId"]=="disabled"),Some(&saved));
+    v["input"]["demands"]=json!([{ "date":"2026-11-03","sector":"Excluded","start":480,"end":540,"minimum":1 }]);
+    let response=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(response["body"]["status"],"INFEASIBLE");assert_eq!(response["body"]["assignments"],json!([]));
+}
+
+#[test]
+fn service_configured_closed_holiday_is_not_an_ordinary_rest_or_a_schema_error(){
+    let mut v=legacy();
+    for key in ["closedDates","holidayDates","paidHolidayDates"]{v["input"]["policy"][key]=json!(["2026-11-04"]);}
+    let plan=parse(&v).expect("explicit closed paid holiday in original public contract");
+    assert!(plan.employees[0].catalog.iter().all(|p|p.states[2]==HOL));
+    v["input"]["assignments"]=json!([{ "employeeId":"p0","date":"2026-11-04","kind":"WORK","shiftId":"day","locked":true }]);
+    let response=solve_service(&serde_json::to_vec(&v).unwrap(),Instant::now(),Duration::from_secs(3));
+    assert_eq!(response["body"]["status"],"INFEASIBLE");assert_eq!(response["body"]["assignments"],json!([]));
+    v["input"]["policy"]["closedDates"]=json!([]);assert!(parse(&v).is_err());
+}
+#[test]
+fn service_large_untimed_week_shares_its_domain_without_inventing_clocks(){
+    let mut v=legacy();let template=v["input"]["employees"][0].clone();
+    v["input"]["employees"]=json!((0..76).map(|i|{
+        let mut p=template.clone();p["id"]=json!(format!("p{i}"));p["scheduleMode"]=json!("UNTIMED");
+        p["shiftIds"]=json!([]);p["history"]=json!([]);p["historyKnown"]=json!(false);p
+    }).collect::<Vec<_>>());v["input"]["shifts"]=json!([]);
+    let plan=parse(&v).unwrap();assert_eq!(plan.employees.len(),76);
+    assert!(plan.employees.iter().all(|p|Arc::ptr_eq(&p.catalog,&plan.employees[0].catalog)));
+    assert!(plan.employees[0].catalog.iter().all(|p|p.states[..7].iter().all(|&s|s==DUTY||s==OFF)));
+}

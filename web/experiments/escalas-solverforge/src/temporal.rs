@@ -17,6 +17,7 @@ mod comparison;
 mod rest_guard;
 mod feasibility;
 mod report;
+mod service_clocks;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
 use crate::model::Presence;
@@ -317,11 +318,14 @@ fn prefix_preserved(before:&BTreeMap<usize,[i64;5]>,after:&BTreeMap<usize,[i64;5
 }
 fn expected(cost:Cost)->TemporalScore{TemporalScore::of([-cost[0]],std::array::from_fn(|i|-cost[i+1]))}
 fn dates(policy:&V,key:&str,calendar:&Calendar)->Result<BTreeSet<i32>>{
+    dates_admitted(policy,key,calendar,false)
+}
+fn dates_admitted(policy:&V,key:&str,calendar:&Calendar,service:bool)->Result<BTreeSet<i32>>{
     let mut out=BTreeSet::new();
     if policy.get(key).is_none(){return Ok(out);}
     for item in array(policy,key)?{
         let date=item.as_str().ok_or("DATE")?;
-        if key=="paidHolidayDates"{check(calendar::paid_date(date),"PAID_HOLIDAY_DATE")?;}
+        if key=="paidHolidayDates"&&!service{check(calendar::paid_date(date),"PAID_HOLIDAY_DATE")?;}
         let d=calendar.relative(date)?;
         check(out.insert(d),"DUPLICATE_DATE")?;
     }
@@ -427,7 +431,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     if branch_two{
         for d in -1..=days as i32{if (calendar.offset as i32+d).rem_euclid(7)==0{closed.insert(d);}}
     }
-    let paid=dates(policy,"paidHolidayDates",&calendar)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
+    let paid=dates_admitted(policy,"paidHolidayDates",&calendar,service)?;let authorized=dates(policy,"authorizedHolidayDates",&calendar)?;
     check(paid.is_subset(&closed)&&paid.is_subset(&holidays)&&authorized.is_subset(&holidays),"HOLIDAY_POLICY")?;
     let closed_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&closed.contains(&(d as i32)));
     let holiday_days:[bool;MAX_DAYS]=std::array::from_fn(|d|d<days&&holidays.contains(&(d as i32)));
@@ -437,9 +441,10 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     }
     let clock_rows=array(input,"shifts")?;
     check(clock_rows.len()<=12,"CLOCK_LIMIT")?;
-    let mut clocks=Vec::new();let mut ids=BTreeMap::new();
+    let mut clocks=Vec::new();let mut ids=BTreeMap::new();let mut admissions=Vec::new();
     for row in clock_rows{
-        let c=read_clock(row,closing,daily,meal,limit_blocks,civil_night)?;
+        let c=if service{let (c,admission)=service_clocks::read(row)?;admissions.push(admission);c}
+            else{read_clock(row,closing,daily,meal,limit_blocks,civil_night)?};
         check(ids.insert(c.id.clone(),(clocks.len()+3) as u8).is_none(),"DUPLICATE_CLOCK")?;
         clocks.push(c);
     }
@@ -455,7 +460,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     }
     let mut witnesses=Vec::new();
     let people=array(input,"employees")?;
-    check(!people.is_empty()&&people.len()<=if days==7{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
+    check(!people.is_empty()&&people.len()<=if days==7&&!service{12}else{250},"TEMPORAL_PEOPLE_LIMIT")?;
     let mut sectors=BTreeMap::<String,usize>::new();let mut roles=BTreeMap::<String,usize>::new();
     let mut rest_roles=BTreeMap::<String,usize>::new();
     for row in people{
@@ -547,6 +552,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
     for row in assignment_rows{assignments_by_person.entry(text(row,"employeeId")?).or_default().push(row);}
     type CachedDomain=(Arc<Vec<Pattern>>,Arc<[usize]>);
     let mut domains=BTreeMap::<(Rules,Vec<Vec<u8>>),CachedDomain>::new();
+    let mut cached_patterns=0usize;
     let mut rest_weight=1i64;
     for p in people{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
@@ -554,11 +560,21 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let name=if service&&p.get("name").is_none(){""}else{identifier(p,"name")?};
         check((service||pid.strip_prefix("person-").is_some_and(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit()))
             &&name.starts_with("Synthetic person "))&&seen.insert(pid),"PERSON_IDENTITY")?;
+        if service&&!boolean(p,"planningEnabled",true)?{
+            // Excluded rows are retained records, never optimization entities.
+            let mut dates=BTreeSet::new();
+            for &row in assignments_by_person.get(pid).into_iter().flatten(){
+                let d=relative(text(row,"date")?)?;
+                check((0..days as i32).contains(&d)&&dates.insert(d),"DUPLICATE_ASSIGNMENT")?;
+                code(row,&ids,pid,false)?;
+            }
+            continue;
+        }
         let active=text(p,"activeFrom")?;
         let schedule=if service{optional_text(p,"scheduleMode","TIMED")?}else{text(p,"scheduleMode")?};
         let untimed=matches!(schedule,"UNTIMED"|"MISSING");
         check((active.is_empty()||civil_date(active))
-            &&boolean(p,"planningEnabled",true)?&&(untimed||schedule=="TIMED")&&p.get("simulationDailyMinutes").is_none(),"PERSON_PROFILE")?;
+            &&boolean(p,"planningEnabled",true)?&&(untimed||schedule=="TIMED")&&(service||p.get("simulationDailyMinutes").is_none()),"PERSON_PROFILE")?;
         let active_start=if active.is_empty(){i32::MIN}else{relative(active)?};
         let active_end=if let Some(end)=p.get("activeUntil"){
             relative(end.as_str().ok_or("EMPLOYMENT_DATE")?)?
@@ -596,11 +612,16 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         }else{Vec::new()};
         let leader_targets=Arc::new(leader_targets);
         let hours=number(p,"weeklyHours")?;check(matches!(hours,40|42|44),"WEEKLY_MINUTES")?;
-        let targets:[i32;6]=std::array::from_fn(|w|calendar.weeks.get(w).map_or(0,|&(_,end)|
-            hours.min(calendar::weekly_ceiling(&labels[end-1]))*60));
+        let simulation_daily=if p.get("simulationDailyMinutes").is_some(){
+            let n=number(p,"simulationDailyMinutes")?;check(range(n,1,600),"SIMULATION_DAILY_MINUTES")?;Some(n)
+        }else{None};
+        let targets:[i32;6]=std::array::from_fn(|w|calendar.weeks.get(w).map_or(0,|&(_,end)|{
+            let target=hours.min(calendar::weekly_ceiling(&labels[end-1]))*60;
+            if simulation{simulation_daily.map_or(target,|n|target.min(n*5))}else{target}
+        }));
         check(untimed||targets.iter().all(|&target|target<=weekly*60),"WEEKLY_MINUTES")?;
         check(["INDIVIDUAL","BRANCH"].contains(&optional_text(p,"weeklyHoursMode","INDIVIDUAL")?),"WEEKLY_MODE")?;
-        let mixed:[bool;6]=std::array::from_fn(|w|!untimed&&mixed_sectors.contains(sector_name)&&hours==42&&targets[w]==2520);
+        let mixed:[bool;6]=std::array::from_fn(|w|!untimed&&simulation_daily.is_none()&&mixed_sectors.contains(sector_name)&&hours==42&&targets[w]==2520);
         let (fixed,personal)=if service{crate::wire::personal_rules_versioned(p,max_run.min(5) as u8,rest_version>=2)?}
             else{personal_rules(p,max_run.min(5) as u8)?};
         let cap=number(p,"maxConsecutiveSundays")?;let rule=optional_text(p,"sundayRestRule","PROTECTIVE")?;
@@ -625,9 +646,13 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             if duration_seen.insert(clock(&clocks,state).unwrap().paid){preferred_clock[usize::from(state)]=true;}
         }
         let compensation=boolean(policy,"compensationAuthorized",false)?;
+        let short_pause=boolean(policy,"allowShortMealSimulation",false)?;
         let allowed_clock=|s:u8,day:usize|!untimed&&clock(&clocks,s).is_some_and(|c|{
-            if service&&!simulation&&!compensation&&c.paid>480{return false;}
             let ceiling=daily.min(calendar::daily_ceiling(&labels[day]));
+            if service{return admissions[usize::from(s-3)].allowed(c,service_clocks::Policy{
+                closing,daily:ceiling,meal,simulation,compensation,short_pause,limit_blocks
+            },mixed[calendar.week(day)]&&calendar::weekly_ceiling(&labels[day])>=42);}
+
             if mixed[calendar.week(day)]{c.paid==540&&calendar::weekly_ceiling(&labels[day])>=42||c.paid==480&&c.paid<=ceiling}
             else{c.paid!=540&&c.paid<=ceiling}
         });
@@ -661,8 +686,8 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             let absence=saved.is_some_and(|r|r.state==ABS);
             let holiday=mode!="HOURS_ONLY"&&paid.contains(&date)||saved.is_some_and(|r|r.state==HOL);
             if absence{out.push(ABS);}else if holiday{
-                check(paid.contains(&date),"HOLIDAY_POLICY")?;
-                check(saved.is_none_or(|r|r.locked!=Some(true)||r.state==HOL),"LOCKED_HOLIDAY")?;
+                check(paid.contains(&date)||service&&saved.is_some_and(|r|r.state==HOL),"HOLIDAY_POLICY")?;
+                check(saved.is_none_or(|r|r.locked!=Some(true)||r.state==HOL),if service{"INFEASIBLE_PERSONAL_DOMAIN"}else{"LOCKED_HOLIDAY"})?;
                 out.push(HOL);
             }else{
                 let weekday=calendar.weekday(day);
@@ -716,6 +741,10 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             std::collections::btree_map::Entry::Vacant(entry)=>{
                 let (rules,options)=entry.key();
                 let catalog=Arc::new(enumerate(options,rules,&clocks,deadline)?);
+                // Preserve the old twelve-profile worst-case memory envelope
+                // when larger service teams reuse or diversify weekly domains.
+                cached_patterns+=catalog.len();
+                check(cached_patterns<=12*30_000,"TEMPORAL_TOTAL_DOMAIN_LIMIT")?;
                 let allowed:Arc<[usize]>=Arc::from((0..catalog.len()).collect::<Vec<_>>());
                 entry.insert((catalog,allowed)).clone()
             }
@@ -758,7 +787,15 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             person.catalog=Arc::new(catalog);person.pinned=person.allowed.len()==1;person.pattern=Some(index);
         }
     }
-    if service{coverage_upper.verify(&facts,&calendar,deadline,proof_detail)?;}
+    if service{
+        coverage_upper.verify(&facts,&calendar,deadline,proof_detail)?;
+        // Keep unsupported all-disabled/empty estimated sectors explicit rather
+        // than omit a constant demand cost from the published quality vector.
+        check(!employees.is_empty(),"NO_ACTIVE_EMPLOYEES")?;
+        let active:BTreeSet<_>=employees.iter().map(|p|p.sector).collect();
+        check(facts.iter().enumerate().all(|(id,f)|active.contains(&id)||f.bands.iter()
+            .all(|b|!b.estimated||b.general==0&&b.roles.iter().all(|(_,n)|*n==0))),"EMPTY_SECTOR_ESTIMATES_PENDING")?;
+    }
     let mut plan=TemporalPlan{employees,score:None};
     if complete&&evaluate(&plan)[0]!=0{
         // A complete but globally infeasible hint cannot replace construction.
@@ -794,9 +831,17 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
                 "solverDiagnostics":[{"family":"COVERAGE","message":message}],
                 "wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null});
         },
-        Err("INFEASIBLE_PERSONAL_DOMAIN") if service=>return json!({"httpStatus":200,"body":{
-            "status":"INFEASIBLE","message":"Exhaustive personal constraints admit no legal path",
-            "assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null}),
+        Err("INFEASIBLE_PERSONAL_DOMAIN") if service=>{
+            let message="As regras pessoais e os horários permitidos não admitem um padrão completo; nenhum bloqueio foi removido.";
+            let mut diagnostics=vec![json!({"family":"AVAILABILITY","message":message})];
+            let input=&root["input"];
+            if !empty_array(input,"_coverageProtection")||input.get("_coverageServiceProtection").is_some(){
+                diagnostics.push(json!({"family":"COVERAGE","message":"A cobertura solicitada não pode ser satisfeita junto das regras pessoais comprovadamente incompatíveis."}));
+            }
+            return json!({"httpStatus":200,"body":{"status":"INFEASIBLE","message":message,
+                "proofMethod":"EXHAUSTIVE_PERSONAL_DOMAIN","solverDiagnostics":diagnostics,
+                "assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null});
+        },
         Err("NO_PERSONAL_PATTERN")=>return unknown(start),Err("MAPPING_TIMEOUT")=>return super::failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
         Err(e)=>return super::failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING",e)
     };
@@ -852,6 +897,27 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
             if s==ABS&&person.manual_absences[day]{row["absenceSource"]=json!("MANUAL");}
             assignments.push(row);
         }
+    }
+    if service{
+        let input=&root["input"];
+        let disabled:BTreeSet<_>=input["employees"].as_array().unwrap().iter()
+            .filter(|p|p.get("planningEnabled")==Some(&V::Bool(false))).filter_map(|p|p["id"].as_str()).collect();
+        let originals:BTreeMap<_,_>=input["assignments"].as_array().unwrap().iter()
+            .map(|r|((r["employeeId"].as_str().unwrap(),r["date"].as_str().unwrap()),r)).collect();
+        for row in &mut assignments{
+            let key=(row["employeeId"].as_str().unwrap(),row["date"].as_str().unwrap());
+            if let Some(old)=originals.get(&key){
+                let mut merged=(*old).clone();
+                merged.as_object_mut().unwrap().remove("shiftId");
+                if row["kind"]!="ABSENCE"{merged.as_object_mut().unwrap().remove("absenceSource");}
+                for (key,value) in row.as_object().unwrap(){merged[key]=value.clone();}
+                *row=merged;
+            }
+        }
+        let preserve_all=input["generationMode"]=="HOURS_ONLY";
+        assignments.extend(input["assignments"].as_array().unwrap().iter().filter(|row|
+            row["employeeId"].as_str().is_some_and(|id|disabled.contains(id))
+            &&(preserve_all||row["locked"]==true||row["kind"]=="ABSENCE"||row["kind"]=="HOLIDAY")).cloned());
     }
     let rest_weight=plan.employees[0].rest_weight;
     let rest_pairs:i64=plan.employees.iter().map(|p|p.catalog[p.pattern.unwrap()].rest[1]).sum();

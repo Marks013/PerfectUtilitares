@@ -112,6 +112,40 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["error"], "SOLVER_UNSUPPORTED_INPUT")
         self.assertNotIn("assignments", result)
 
+    def test_excluded_records_survive_real_http_without_becoming_staff(self):
+        data = fixture(40, people=2)
+        data["employees"][1].update(planningEnabled=False, sector="Excluded")
+        saved = {"employeeId":"p1", "date":"2026-11-03", "kind":"WORK",
+                 "shiftId":"day", "locked":True, "note":"preserved"}
+        data["assignments"] = [saved, {"employeeId":"p1", "date":"2026-11-04", "kind":"OFF"}]
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertEqual([a for a in result["assignments"] if a["employeeId"] == "p1"], [saved])
+        self.assertEqual(data, before)
+        data["demands"] = [{"date":"2026-11-03", "sector":"Excluded", "start":480, "end":540, "minimum":1}]
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "INFEASIBLE")
+        self.assertEqual(result["assignments"], [])
+
+    def test_disallowed_manual_clock_can_return_a_legal_rest_over_real_http(self):
+        data = fixture(40)
+        shift = copy.deepcopy(data["shifts"][0])
+        shift["id"] = "too-long"
+        shift["segments"][-1]["end"] += 60
+        data["shifts"].append(shift)
+        data["policy"]["dailyLimitMinutes"] = 480
+        data["employees"][0]["manualShiftByDate"] = {"2026-11-04":"too-long"}
+        before = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input":data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertEqual(next(a for a in result["assignments"] if a["date"] == "2026-11-04")["kind"], "OFF")
+        self.assertEqual(data, before)
+
     def test_authentication_precedes_parsing_and_slot_allocation(self):
         status, result = self.request(
             "/solve", {"bad": "input"}, self.identity(), auth=False

@@ -11,9 +11,9 @@ fn admitted(path:&Path,options:&[Vec<u8>],rules:&Rules,clocks:&[Clock])->bool{
     options.len()==rules.days&&options.iter().zip(path).all(|(allowed,state)|allowed.contains(state))
         &&rules.legal_prefix(&path[..rules.days],clocks)
 }
-fn priority(path:&Path,rules:&Rules,clocks:&[Clock])->(i64,i64,i64,i64){
+fn priority(path:&Path,rules:&Rules,clocks:&[Clock])->(i64,i64,i64,i64,i64){
     let p=rules.pattern(*path,clocks);
-    (p.rest[0],p.rest[1],-(path[..rules.days].iter().filter(|&&s|work(s)).count() as i64),p.personal[15])
+    (p.personal[6],p.rest[0],p.rest[1],-(path[..rules.days].iter().filter(|&&s|work(s)).count() as i64),p.personal[15])
 }
 
 pub(super) fn enrich(original:BTreeSet<Path>,options:&[Vec<u8>],rules:&Rules,
@@ -29,6 +29,19 @@ pub(super) fn enrich(original:BTreeSet<Path>,options:&[Vec<u8>],rules:&Rules,
         true
     };
     'sources: for &source in &sources{
+        // Untimed rotation is an operational objective. Whole-week phases
+        // expose equally legal alternatives without changing weekday totals.
+        // Validate against original options, locks, history and future context.
+        if rules.untimed&&rules.weeks.iter().all(|&(a,b)|b-a==7){
+            for offset in 1..rules.weeks.len(){
+                let mut path=source;
+                for (week,&(a,b)) in rules.weeks.iter().enumerate(){
+                    let (from,to)=rules.weeks[(week+offset)%rules.weeks.len()];
+                    path[a..b].copy_from_slice(&source[from..to]);
+                }
+                if !consider(path){break 'sources;}
+            }
+        }
         // Equal credited duration, different actual service intervals. Both
         // extremes are alternatives, never a new lock or invented demand.
         for latest in [false,true]{

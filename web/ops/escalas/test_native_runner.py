@@ -171,3 +171,59 @@ class NativeProcessTests(unittest.TestCase):
         with self.assertRaises(NativeError) as raised:
             self.run_code('print("["*3000+"0"+"]"*3000)')
         self.assertEqual(raised.exception.code,"SOLVER_RESPONSE_INVALID")
+
+
+class DisabledRecordIntegrityTests(unittest.TestCase):
+    def test_preserved_disabled_records_are_exact_and_never_new_allocations(self):
+        from native_runner import _corresponds
+        payload = {"startDate":"2026-11-02", "endDate":"2026-11-02",
+                   "employees":[{"id":"active"}, {"id":"disabled", "planningEnabled":False}],
+                   "shifts":[{"id":"day"}],
+                   "assignments":[{"employeeId":"disabled", "date":"2026-11-02", "kind":"WORK", "shiftId":"day", "locked":True, "note":"preserved"}]}
+        body = {"status":"FEASIBLE", "assignments":[{"employeeId":"active", "date":"2026-11-02", "kind":"OFF"}, *copy.deepcopy(payload["assignments"])]}
+        self.assertEqual(_corresponds(body, payload), body)
+        for change in ({"kind":"OFF"}, {"note":"changed"}, {"date":"2026-11-03"}):
+            broken = copy.deepcopy(body)
+            broken["assignments"][1].update(change)
+            with self.subTest(change=change), self.assertRaises(NativeError):
+                _corresponds(broken, payload)
+        body["assignments"].pop()
+        with self.assertRaises(NativeError):
+            _corresponds(body, payload)
+
+    def test_unlocked_disabled_rest_is_not_a_generated_position(self):
+        from native_runner import _corresponds
+        payload = {"startDate":"2026-11-02", "endDate":"2026-11-02",
+                   "employees":[{"id":"active"}, {"id":"disabled", "planningEnabled":False}],
+                   "shifts":[], "assignments":[{"employeeId":"disabled", "date":"2026-11-02", "kind":"OFF"}]}
+        body = {"status":"FEASIBLE", "assignments":[{"employeeId":"active", "date":"2026-11-02", "kind":"OFF"}]}
+        self.assertEqual(_corresponds(body, payload), body)
+        body["assignments"].extend(copy.deepcopy(payload["assignments"]))
+        with self.assertRaises(NativeError):
+            _corresponds(body, payload)
+        payload["generationMode"] = "HOURS_ONLY"
+        self.assertEqual(_corresponds(body, payload), body)
+
+
+class HoursOnlyIntegrityTests(unittest.TestCase):
+    def test_only_clock_can_change_and_saved_metadata_is_not_discarded(self):
+        from native_runner import _corresponds
+        row = {"employeeId":"active", "date":"2026-11-02", "kind":"WORK", "shiftId":"old", "note":"kept"}
+        payload = {"startDate":"2026-11-02", "endDate":"2026-11-02", "generationMode":"HOURS_ONLY",
+                   "employees":[{"id":"active"}], "shifts":[{"id":"old"},{"id":"new"}], "assignments":[row]}
+        body = {"status":"FEASIBLE", "assignments":[{**row,"shiftId":"new"}]}
+        self.assertEqual(_corresponds(body, payload), body)
+        changed = copy.deepcopy(body)
+        changed["assignments"][0].update(kind="OFF")
+        changed["assignments"][0].pop("shiftId")
+        with self.assertRaises(NativeError):
+            _corresponds(changed, payload)
+        changed = copy.deepcopy(body)
+        changed["assignments"][0].pop("note")
+        with self.assertRaises(NativeError):
+            _corresponds(changed, payload)
+        payload["assignments"][0]["note"] = None
+        changed = copy.deepcopy(body)
+        changed["assignments"][0].pop("note")
+        with self.assertRaises(NativeError):
+            _corresponds(changed, payload)
