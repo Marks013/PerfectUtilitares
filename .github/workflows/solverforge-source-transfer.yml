@@ -1,0 +1,67 @@
+name: SolverForge source object transfer - not release qualification
+on:
+  push:
+    branches: [experiment/solverforge-consolidado-2026-11-26]
+    paths: [.github/workflows/solverforge-source-transfer.yml]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: f8b86eb8be5c98790c892b50d8820b6376bbad82
+          persist-credentials: false
+      - name: Store exact verified blobs without updating refs or qualifying release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          base = 'f8b86eb8be5c98790c892b50d8820b6376bbad82'
+          digest = 'fdfb4df35c6b0289e7972dd00e36101c95928ae86490496e7f21ff9a50c4f523'
+          url = 'https://sb-5a65yacf76ta.vercel.run/' + digest + '.json.gz'
+          data = urllib.request.urlopen(url, timeout=30).read(26928)
+          assert len(data) == 26927 and hashlib.sha256(data).hexdigest() == digest
+          raw = gzip.decompress(data)
+          assert len(raw) < 2000000
+          capsule = json.loads(raw)
+          assert capsule['base'] == base and len(capsule['items']) == 18
+          assert subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip() == base
+          def blob(value):
+              return hashlib.sha1(b'blob ' + str(len(value)).encode() + b'\0' + value).hexdigest()
+          paths = set()
+          for item in capsule['items']:
+              path = item['path']
+              assert path not in paths and '..' not in pathlib.PurePosixPath(path).parts
+              assert path.startswith(('web/experiments/escalas-solverforge/src/','web/ops/escalas/'))
+              assert item['mode'] == '100644'
+              paths.add(path)
+              old = subprocess.run(['git','show',base+':'+path], capture_output=True)
+              if item['old'] is None:
+                  assert old.returncode != 0
+                  lines = []
+              else:
+                  assert old.returncode == 0 and blob(old.stdout) == item['old']
+                  lines = old.stdout.decode('utf-8').splitlines(keepends=True)
+              parts = []
+              for part in item['parts']:
+                  if isinstance(part, str):
+                      parts.append(part)
+                  else:
+                      assert len(part) == 2 and all(type(i) is int for i in part)
+                      a,b = part
+                      assert 0 <= a <= b <= len(lines)
+                      parts.append(''.join(lines[a:b]))
+              content = ''.join(parts).encode('utf-8')
+              assert blob(content) == item['new']
+              body = json.dumps({'content':base64.b64encode(content).decode(),'encoding':'base64'}).encode()
+              request = urllib.request.Request('https://api.github.com/repos/Marks013/PerfectUtilitares/git/blobs',data=body,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json'},method='POST')
+              response = json.load(urllib.request.urlopen(request, timeout=30))
+              assert response['sha'] == item['new']
+              print(path, response['sha'])
+          print('Stored 18 verified source blobs only. Public compatibility remains failed; this is not release qualification.')
+          PY
