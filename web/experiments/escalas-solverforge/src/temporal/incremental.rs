@@ -15,7 +15,7 @@ pub(crate) struct TemporalAccumulator{
     rows:BTreeMap<usize,Member>,
     facts:Option<Arc<TemporalFacts>>,
     bands_by_day:[Vec<usize>;MAX_DAYS],
-    attendance:[[Presence;16];MAX_DAYS],
+    attendance:super::Attendance,
     role_members:BTreeMap<usize,Presence>,
     daily:[Daily;MAX_DAYS],
     personal:Cost,
@@ -23,7 +23,7 @@ pub(crate) struct TemporalAccumulator{
 impl Default for TemporalAccumulator{
     fn default()->Self{
         Self{rows:BTreeMap::new(),facts:None,bands_by_day:std::array::from_fn(|_|Vec::new()),
-            attendance:[[Presence::EMPTY;16];MAX_DAYS],role_members:BTreeMap::new(),
+            attendance:[[Presence::EMPTY;16];MAX_DAYS+1],role_members:BTreeMap::new(),
             daily:[Daily::default();MAX_DAYS],personal:[0;17]}
     }
 }
@@ -54,12 +54,17 @@ impl TemporalAccumulator{
         self.daily[day]=daily;
     }
     fn apply(&mut self,row:&Member,insert:bool){
-        let Some(p)=row.pattern else{return;};
         let bit=Presence::one(row.id);
         let sign=if insert{1}else{-1};
         let role=self.role_members.entry(row.role).or_default();
         if insert{*role|=bit;}else{*role&=!bit;}
         if role.is_empty(){self.role_members.remove(&row.role);}
+        if let Some(state)=row.carry_in{
+            let cell=&mut self.attendance[MAX_DAYS][usize::from(state)];
+            if insert{*cell|=bit;}else{*cell&=!bit;}
+            self.refresh(0);
+        }
+        let Some(p)=row.pattern else{return;};
         for (day,&state) in p.states.iter().enumerate().take(row.facts.days){
             if !work(state){continue;}
             let cell=&mut self.attendance[day][usize::from(state)];

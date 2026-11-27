@@ -5,7 +5,7 @@ use std::collections::{BTreeMap,BTreeSet};
 use std::time::Instant;
 use serde_json::Value as V;
 use crate::model::Presence;
-use super::{Calendar,MAX_DAYS,TemporalFacts,Result,array,check,civil_presence,number,range,text};
+use super::{Calendar,TemporalFacts,Result,array,check,civil_presence,number,range,text};
 
 const MAX_PEAK:i64=12_000*250;
 const MAX_MINUTES:i64=MAX_PEAK*42*1440;
@@ -138,7 +138,7 @@ pub(super) fn read(input:&V,calendar:&Calendar,sectors:&BTreeMap<String,usize>,r
     }
     Ok(())
 }
-pub(super) fn deficit(f:&TemporalFacts,attendance:&[[Presence;16];MAX_DAYS],members:&BTreeMap<usize,Presence>)->i64{
+pub(super) fn deficit(f:&TemporalFacts,attendance:&super::Attendance,members:&BTreeMap<usize,Presence>)->i64{
     let Some(bounds)=&f.comparison else{return 0;};
     let mut totals=[0i64;6];
     let gaps:Vec<_>=f.bands.iter().map(|b|{

@@ -5,14 +5,14 @@ use std::time::Instant;
 use super::{Calendar,MAX_DAYS,Presence,Result,TemporalEmployee,TemporalFacts,
     check,civil_presence,clock,comparison,service_bounds};
 
-type Attendance=[[Presence;16];MAX_DAYS];
+type Attendance=super::Attendance;
 pub(super) struct BandConflict{pub(super) date:String,pub(super) start:i32,pub(super) end:i32}
 
 struct Sector{
     attendance:Box<Attendance>,roles:BTreeMap<usize,Presence>,days:Vec<(usize,u64)>,
 }
 impl Default for Sector{
-    fn default()->Self{Self{attendance:Box::new([[Presence::EMPTY;16];MAX_DAYS]),roles:BTreeMap::new(),days:Vec::new()}}
+    fn default()->Self{Self{attendance:Box::new([[Presence::EMPTY;16];MAX_DAYS+1]),roles:BTreeMap::new(),days:Vec::new()}}
 }
 #[derive(Default)]
 pub(super) struct Upper{sectors:BTreeMap<usize,Sector>}
@@ -37,6 +37,7 @@ impl Upper{
         }
         let sector=self.sectors.entry(p.sector).or_default();let bit=Presence::one(p.id);
         *sector.roles.entry(p.role).or_default()|=bit;
+        if let Some(state)=p.carry_in{sector.attendance[MAX_DAYS][usize::from(state)]|=bit;}
         let mut days=0u64;
         for (day,&mask) in masks.iter().enumerate().take(p.facts.days){
             if mask!=0{days|=1u64<<day;}

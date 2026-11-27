@@ -59,12 +59,20 @@ impl Rules{
         }
         let occupied=|d:i32|state(d).is_some_and(work)
             ||state(d-1).and_then(|s|clock(clocks,s)).is_some_and(Clock::overnight);
-        for d in 0..len{
+        // Only transitions touching this requested horizon are constrained;
+        // past contradictory records are not rewritten. Unknown future days
+        // are not invented as WORK, but an explicit future rest remains binding.
+        for d in -1..len{
             if state(d).and_then(|s|clock(clocks,s)).is_some_and(Clock::overnight)
-                &&(d+1<len||full)&&!state(d+1).is_some_and(work){return false;}
+                &&(d+1<len||full)&&match state(d+1){
+                    Some(next)=>!work(next),None=>d+1<len||!self.service,
+                }{return false;}
         }
         let sunday=-(self.offset as i32);
         for start in (sunday-self.cap*7..len).step_by(7){
+            // History constrains windows touching the current horizon. A
+            // past-only violation is immutable, not a reason to reject repair.
+            if start+self.cap*7<0{continue;}
             if (start..=start+self.cap*7).step_by(7).all(occupied){return false;}
         }
         if self.personal.variable{
@@ -139,11 +147,19 @@ impl Rules{
             }
             rest[0]=(rest[1]+imposed-2).max(0)-(imposed-2).max(0);
         }
-        let civil_work=active.iter().enumerate().fold(0u64,|mask,(day,&s)|{
+        let carry= u64::from(self.context.get(&-1).and_then(|&s|clock(clocks,s)).is_some_and(Clock::overnight));
+        let civil_work=active.iter().enumerate().fold(carry,|mask,(day,&s)|{
             if !work(s){return mask;}
             let mask=mask|1u64<<day;
             if clock(clocks,s).is_some_and(Clock::overnight)&&day+1<self.days{mask|1u64<<(day+1)}else{mask}
         });
+        let mut prior_occupied=BTreeSet::new();
+        for (&day,&state) in &self.context{
+            if day>=0||!work(state){continue;}
+            for civil in day..=day+i32::from(clock(clocks,state).is_some_and(Clock::overnight)){
+                if (-21..0).contains(&civil)&&self.employed(civil){prior_occupied.insert(civil);}
+            }
+        }
         let mut rates=[None;2];let mut sunday_opportunities=0u64;
         for weekday in 0..7{
             let prior:Vec<_>=self.context.iter().filter(|(d,s)|(-21..0).contains(*d)&&self.weekday(**d)==weekday&&(work(**s)||**s==OFF)).map(|(_,s)|*s).collect();
@@ -157,8 +173,12 @@ impl Rules{
                 let eligible:Vec<_>=actual.filter(|&d|!self.closed[d]&&active[d]!=ABS&&self.fixed&(1<<weekday)==0
                     &&!self.old[d].is_some_and(|r|r.locked==Some(true)&&r.state==OFF)).collect();
                 if !eligible.is_empty(){
-                    let used=prior.iter().filter(|&&s|work(s)).count()+eligible.iter().filter(|&&d|civil_work&(1u64<<d)!=0).count();
-                    rates[usize::from(weekday==6)]=Some(used as i64*10_000/(prior.len()+eligible.len()) as i64);
+                    let occupied:BTreeSet<_>=prior_occupied.iter().copied().filter(|&d|self.weekday(d)==weekday).collect();
+                    let mut known=occupied.clone();
+                    known.extend(self.context.iter().filter(|(d,s)|(-21..0).contains(*d)
+                        &&self.weekday(**d)==weekday&&(work(**s)||**s==OFF)).map(|(&d,_)|d));
+                    let used=occupied.len()+eligible.iter().filter(|&&d|civil_work&(1u64<<d)!=0).count();
+                    rates[usize::from(weekday==6)]=Some(used as i64*10_000/(known.len()+eligible.len()) as i64);
                     if weekday==0{for d in eligible{sunday_opportunities|=1u64<<d;}}
                 }
             }

@@ -32,22 +32,28 @@ impl Snapshot{
             let edges:Vec<_>=edges.into_iter().collect();
             let mut counts=BTreeMap::<(usize,usize,usize),i64>::new();
             for p in &people{
-                let Some(pattern)=p.pattern else{continue;};
-                for (day,&state) in pattern.states.iter().enumerate().take(facts.days){
+                let mut hits=BTreeSet::new();
+                let current=p.pattern.into_iter().flat_map(|pattern|pattern.states.into_iter()
+                    .take(facts.days).enumerate().map(|(day,state)|(day as i32,state)));
+                let prior=p.carry_in.map(|state|(-1,state));
+                for (day,state) in prior.into_iter().chain(current){
                     let Some(c)=clock(&facts.clocks,state) else{continue;};
                     for (offset,a,b) in c.civil_parts(){
-                        let civil=day+offset;
-                        if civil>=facts.days{continue;}
-                        result.days.insert((sector,civil));
+                        let civil=day+offset as i32;
+                        if !(0..facts.days as i32).contains(&civil){continue;}
+                        let civil=civil as usize;result.days.insert((sector,civil));
                         for (part,bounds) in edges.windows(2).enumerate(){
-                            if a<=bounds[0]&&b>=bounds[1]{
-                                *counts.entry((civil,p.role,part)).or_default()+=1;
-                                for scope in 0..4u8{
-                                    if scope&1!=0&&!facts.visible[civil]||scope&2!=0&&facts.weekday(civil)!=0{continue;}
-                                    *result.service.entry((sector,p.role,scope,bounds[0],bounds[1])).or_default()+=1;
-                                }
-                            }
+                            if a<=bounds[0]&&b>=bounds[1]{hits.insert((civil,part));}
                         }
+                    }
+                }
+                // One person is counted once even at overlapping day boundaries.
+                for (civil,part) in hits{
+                    let bounds=&edges[part..=part+1];
+                    *counts.entry((civil,p.role,part)).or_default()+=1;
+                    for scope in 0..4u8{
+                        if scope&1!=0&&!facts.visible[civil]||scope&2!=0&&facts.weekday(civil)!=0{continue;}
+                        *result.service.entry((sector,p.role,scope,bounds[0],bounds[1])).or_default()+=1;
                     }
                 }
             }

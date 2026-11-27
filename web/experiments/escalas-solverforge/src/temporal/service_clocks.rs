@@ -7,7 +7,7 @@ pub(super) struct Admission{meal:i32,block:i32,long:bool}
 impl Admission{
     pub(super) fn allowed(&self,c:&Clock,policy:Policy,mixed:bool)->bool{
         let long=mixed&&self.long;
-        if c.end>policy.closing||c.end>1440||mixed&&c.paid!=480&&!long{return false;}
+        if c.end>policy.closing||mixed&&c.paid!=480&&!long{return false;}
         if !long&&c.paid>policy.daily{return false;}
         if c.paid>480&&!policy.simulation&&!policy.compensation{return false;}
         if policy.limit_blocks&&self.block>270{return false;}
@@ -45,8 +45,8 @@ pub(super) fn read(row:&V)->Result<(Clock,Admission)>{
     }
     longest=longest.max(block);
     check(range(paid,1,600)&&end-start<=1080,"CLOCK_GEOMETRY")?;
-    // Overnight carry-in/out remains a separate unsupported contract.
-    check(end<=1440,"OVERNIGHT_CONTEXT_PENDING")?;
+    // Historical clocks retain their true civil geometry. Current choices
+    // are checked separately against explicit closing and personal rules.
     let long=raw.len()==3&&text(&raw[0],"kind")?=="WORK"&&text(&raw[1],"kind")?=="BREAK"
         &&text(&raw[2],"kind")?=="WORK"&&number(&raw[0],"end")?-start==270
         &&number(&raw[1],"end")?-number(&raw[1],"start")?==180

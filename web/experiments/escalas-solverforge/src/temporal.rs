@@ -117,7 +117,7 @@ impl TemporalFacts{
 }
 #[derive(Clone)]
 pub struct Member{
-    pub id:usize,pub sector:usize,pub role:usize,pub rest_role:usize,pub cohort:usize,pub leader_targets:Arc<Vec<usize>>,pub leader_label:bool,pub untimed:bool,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
+    pub id:usize,pub sector:usize,pub role:usize,pub rest_role:usize,pub cohort:usize,pub leader_targets:Arc<Vec<usize>>,pub leader_label:bool,pub untimed:bool,pub carry_in:Option<u8>,pub facts:Arc<TemporalFacts>,pub pattern:Option<Pattern>,
 }
 mod incremental;
 pub(crate) use incremental::TemporalAccumulator;
@@ -130,9 +130,11 @@ fn clock_masks(clocks:&[Clock],a:i32,b:i32)->(u16,u16){
         (current,previous)
     })
 }
-fn civil_presence(attendance:&[[Presence;16];MAX_DAYS],day:usize,current:u16,previous:u16)->Presence{
+// Final slot is assignment day -1, not a 43rd requested civil date.
+type Attendance=[[Presence;16];MAX_DAYS+1];
+fn civil_presence(attendance:&Attendance,day:usize,current:u16,previous:u16)->Presence{
     let mut present=Presence::EMPTY;
-    for (d,mut mask) in [(Some(day),current),(day.checked_sub(1),previous)]{
+    for (d,mut mask) in [(Some(day),current),(Some(day.checked_sub(1).unwrap_or(MAX_DAYS)),previous)]{
         let Some(d)=d else{continue;};
         while mask!=0{
             let state=mask.trailing_zeros() as usize;mask&=mask-1;
@@ -147,13 +149,14 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let Some(first)=rows.first() else{return result;};
     let facts=&first.facts;
     let mut sunday=[0i64;6];let mut sunday_ref=[false;6];
-    let mut attendance=[[Presence::EMPTY;16];MAX_DAYS];
+    let mut attendance=[[Presence::EMPTY;16];MAX_DAYS+1];
     let mut role_members=BTreeMap::<usize,Presence>::new();
     for row in &rows{
+        let bit=Presence::one(row.id);
+        *role_members.entry(row.role).or_default()|=bit;
+        if let Some(state)=row.carry_in{attendance[MAX_DAYS][usize::from(state)]|=bit;}
         if let Some(p)=row.pattern{
             add(&mut result,p.personal);
-            let bit=Presence::one(row.id);
-            *role_members.entry(row.role).or_default()|=bit;
             for (d,&state) in p.states.iter().enumerate().take(facts.days){
                 if work(state){attendance[d][usize::from(state)]|=bit;}
             }
@@ -167,7 +170,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         let mut present=Presence::EMPTY;
         for (state,mask) in attendance[band.day].iter().enumerate(){
             if band.clock_mask&(1u16<<state)!=0{present|=*mask;}
-            if band.day>0&&band.previous_mask&(1u16<<state)!=0{present|=attendance[band.day-1][state];}
+            if band.previous_mask&(1u16<<state)!=0{present|=attendance[band.day.checked_sub(1).unwrap_or(MAX_DAYS)][state];}
         }
         let role_gap:i64=band.roles.iter().map(|(r,n)|{
             let members=role_members.get(r).copied().unwrap_or_default();
@@ -666,7 +669,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         let allowed_clock=|s:u8,day:usize|!untimed&&clock(&clocks,s).is_some_and(|c|{
             let ceiling=daily.min(calendar::daily_ceiling(&labels[day]));
             if service{return admissions[usize::from(s-3)].allowed(c,service_clocks::Policy{
-                closing,daily:ceiling,meal,max_meal,simulation,compensation,short_pause,limit_blocks
+                closing:if input.get("storeClosingMinutes").is_none(){2880}else{closing},daily:ceiling,meal,max_meal,simulation,compensation,short_pause,limit_blocks
             },mixed[calendar.week(day)]&&calendar::weekly_ceiling(&labels[day])>=42);}
 
             if mixed[calendar.week(day)]{c.paid==540&&calendar::weekly_ceiling(&labels[day])>=42||c.paid==480&&c.paid<=ceiling}
@@ -689,12 +692,13 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
                 check(local.insert(d),"DUPLICATE_CONTEXT")?;
                 check(employed(d),"OUTSIDE_EMPLOYMENT")?;
                 let record=code(row,&ids,pid,true)?;
-                // Published overnight carry-in/out needs its own immutable
-                // civil service ledger; reject rather than invent it.
-                check(clock(&clocks,record.state).is_none_or(|c|!c.overnight()),"OVERNIGHT_CONTEXT_PENDING")?;
+                // Service history is immutable, with civil carry-in captured
+                // separately from the selectable current assignments.
+                check(service||clock(&clocks,record.state).is_none_or(|c|!c.overnight()),"OVERNIGHT_CONTEXT_PENDING")?;
                 context.insert(d,record.state);
             }
         }
+        let carry_in=if service&&!untimed{context.get(&-1).copied().filter(|&s|clock(&clocks,s).is_some_and(Clock::overnight))}else{None};
         let mut daily_options=vec![Vec::<u8>::new();days];
         for (day,out) in daily_options.iter_mut().enumerate(){
             let saved=old[day];let date=day as i32;
@@ -724,8 +728,8 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
                 if force_off{out.retain(|&s|s==OFF);}
             }
             out.retain(|&s|clock(&clocks,s).is_none_or(|c|!c.overnight()
-                ||day+1<days&&employed(date+1)&&!closed.contains(&(date+1))
-                &&(!holidays.contains(&(date+1))||authorized.contains(&(date+1)))));
+                ||(day+1<days||service)&&employed(date+1)&&!closed.contains(&(date+1))
+                &&(service||!holidays.contains(&(date+1))||authorized.contains(&(date+1)))));
             if let Some(r)=saved{
                 if r.locked==Some(true){out.retain(|&s|s==r.state);}
                 if mode=="HOURS_ONLY"{out.retain(|&s|if work(r.state){work(s)&&(s==DUTY)==(r.state==DUTY)}else{s==r.state});}
@@ -775,7 +779,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             p.states.iter().zip(ranks).filter(|(state,_)|**state==OFF).map(|(_,rank)|rank).sum::<u16>()
         ).collect::<Vec<_>>());
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
-            catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,rest_group,rest_weight:0,preferred_clock,tie_costs,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
+            catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,carry_in,rest_group,rest_weight:0,preferred_clock,tie_costs,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
         if let Some(options)=proof_options{coverage_upper.observe(employees.last().unwrap(),&options,deadline)?;}
     }
@@ -878,7 +882,7 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
     let remaining=(start+budget-Duration::from_millis(500)).saturating_duration_since(Instant::now()).as_secs();
     let attempted=remaining>0&&plan.employees.iter().any(|p|!p.pinned);
     let search_start=Instant::now();
-    let mut native_candidate=None;let mut guard_preserved=None;let mut native_accepted=false;
+    let mut native_candidate=None;let mut guard_preserved=None;let mut component_guard=None;let mut native_accepted=false;
     if attempted{
         let mut config=match SolverConfig::from_toml_str(include_str!("../solver.toml")){
             Ok(v)=>v,Err(_)=>return super::failure(500,"SPIKE_FAILED","FACTORY","CONFIG")
@@ -895,7 +899,11 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
             &&service_guard.as_ref().is_none_or(|before|before.preserves(&plan))
             &&rest_guard.as_ref().is_none_or(|before|before.preserves(&plan));
         guard_preserved=Some(preserves);
-        native_accepted=preserves&&cost<initial;
+        // A feasible incumbent is the public nonregression baseline. A better
+        // lexicographic prefix cannot buy a worse published component.
+        let component_preserved=initial[0]!=0||cost.iter().zip(initial).all(|(next,prior)|*next<=prior);
+        component_guard=Some(component_preserved);
+        native_accepted=preserves&&component_preserved&&cost<initial;
         if !native_accepted{for (p,s) in plan.employees.iter_mut().zip(saved){p.pattern=s;}}
     }
     let cost=evaluate(&plan);
@@ -961,7 +969,7 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
         "temporal":{"version":2,"scope":if service{"SERVICE_TEMPORAL"}else if civil_night{"SYNTHETIC_CIVIL_NIGHT"}else{"SYNTHETIC_TEMPORAL"},"days":days,"untimed":untimed,"activePositions":active_positions,"untimedPositions":untimed_positions,
             "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,"visibleDays":plan.employees[0].facts.visible.iter().filter(|&&v|v).count(),"seedSeconds":seed_seconds,
             "searchSeconds":search_seconds,"nativeSearch":attempted,
-            "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,
+            "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,"componentGuardPreserved":component_guard,
             "resultSource":if native_accepted{"NATIVE"}else if attempted{"SEED_RETAINED"}else{"CONSTRUCTOR_ONLY"},
             "entities":plan.employees.len(),"patterns":patterns,"restWeight":rest_weight,"restPairs":rest_pairs,"restExcess":rest_excess,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}});
     if service{reply["body"]["optimization"]=report::metadata(&plan,initial,cost,[mapped,seed_seconds,search_seconds],attempted,native_accepted);}
@@ -1480,3 +1488,6 @@ mod tests{
 
 #[cfg(test)]
 mod service_contract_tests;
+
+#[cfg(test)]
+mod boundary_tests;

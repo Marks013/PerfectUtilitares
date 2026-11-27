@@ -83,6 +83,20 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
     for person in &plan.employees{
         if !person.untimed{*timed_roles.entry((person.sector,person.role)).or_default()+=1;}
     }
+    // Immutable preceding-night service is available before any choice. It
+    // never becomes a selectable shift or hourly coverage from DUTY.
+    for p in &plan.employees{
+        let Some(state)=p.carry_in else{continue;};
+        let sector=sectors.entry(p.sector).or_insert_with(||Sector{
+            facts:Arc::clone(&p.facts),counts:p.facts.bands.iter().map(Counts::new).collect(),presence:[0;MAX_DAYS],timed:[0;MAX_DAYS]
+        });
+        if clock(&p.facts.clocks,state).is_some_and(|c|c.civil_parts().any(|(offset,_,_)|offset==1)){
+            sector.timed[0]+=1;
+        }
+        for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
+            if band.day==0&&band.previous_mask&(1u16<<state)!=0{count.insert(band,p.role);}
+        }
+    }
     let order=construction_order(plan);
     for i in order{
         let p=&plan.employees[i];
@@ -97,6 +111,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
         else{
             let mut benefits=[[[0i64;6];16];MAX_DAYS];
             for (b,count) in sector.facts.bands.iter().zip(&sector.counts){
+                if b.day==0&&p.carry_in.is_some_and(|s|b.previous_mask&(1u16<<s)!=0){continue;}
                 let gain=count.gain(b,p.role)*i64::from(b.end-b.start);
                 if gain==0{continue;}
                 for (assignment_day,mask) in [(Some(b.day),b.clock_mask),(b.day.checked_sub(1),b.previous_mask)]{
@@ -155,11 +170,16 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
             let serves=|d:usize,mask:u16|work(pattern.states[d])&&mask&(1u16<<pattern.states[d])!=0;
-            if serves(band.day,band.clock_mask)||band.day>0&&serves(band.day-1,band.previous_mask){count.insert(band,p.role);}
+            let carried=band.day==0&&p.carry_in.is_some_and(|s|band.previous_mask&(1u16<<s)!=0);
+            if !carried&&(serves(band.day,band.clock_mask)||band.day>0&&serves(band.day-1,band.previous_mask)){count.insert(band,p.role);}
         }
         plan.employees[i].pattern=Some(choice);
     }
-    if !complete { polish::improve(plan,deadline); }
+    // A complete suggestion is not a lock. Repair its real estimated gap
+    // during construction, before establishing the refinement baseline.
+    // An already covered saved roster remains unchanged here.
+    let recover=complete&&super::evaluate(plan)[1]>0;
+    if !complete||recover { polish::improve(plan,deadline); }
 }
 
 #[cfg(test)]

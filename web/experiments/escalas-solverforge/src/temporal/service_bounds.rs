@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap,BTreeSet};
 use serde_json::Value as V;
 use crate::model::Presence;
-use super::{Calendar,MAX_DAYS,TemporalFacts,Result,array,check,civil_presence,clock_masks,number,range,text};
+use super::{Calendar,TemporalFacts,Result,array,check,civil_presence,clock_masks,number,range,text};
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 pub(super) struct Bound{
     role:usize,scope:u8,mask:u16,previous_mask:u16,minimum:i64,minutes:i64,
@@ -55,7 +55,7 @@ pub(super) fn read(input:&V,calendar:&Calendar,sectors:&BTreeMap<String,usize>,r
     }
     Ok(())
 }
-pub(super) fn deficit(facts:&TemporalFacts,attendance:&[[Presence;16];MAX_DAYS],role_members:&BTreeMap<usize,Presence>)->i64{
+pub(super) fn deficit(facts:&TemporalFacts,attendance:&super::Attendance,role_members:&BTreeMap<usize,Presence>)->i64{
     if facts.protected_days==0&&facts.protected_bands.is_empty(){return 0;}
     let mut missing=0i64;
     let masks=facts.clocks.iter().enumerate().fold((0u16,0u16),|(mut current,mut previous),(i,c)|{

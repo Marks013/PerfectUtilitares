@@ -187,6 +187,44 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(all('shiftId' not in a for a in result['assignments']))
         self.assertEqual(data, before)
 
+    def test_real_http_preserves_each_objective_of_a_feasible_saved_grid(self):
+        data = fixture(40, people=3)
+        data["assignments"] = [{"employeeId": p["id"], "date": f"2026-11-{d:02}",
+                                "kind": "WORK" if d <= 6 else "OFF",
+                                **({"shiftId": "day"} if d <= 6 else {})}
+                               for p in data["employees"] for d in range(2, 9)]
+        for person in data["employees"]:
+            person["preferredOffDays"] = [4]
+        data["demands"] = [{"date": "2026-11-02", "sector": "Reposição", "start": 480,
+                            "end": 720, "minimum": 2, "estimated": True}]
+        original = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input": data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertTrue(all(p["incumbentValue"] <= p["initialValue"] for p in result["optimization"]["phases"]))
+        self.assertEqual(result["assignments"], data["assignments"])
+        self.assertEqual(data, original)
+
+    def test_real_http_historical_night_counts_for_sunday_without_reopening_the_store(self):
+        data = fixture(40, people=2, weeks=2)
+        data["storeClosingMinutes"] = 1200
+        data["shifts"].append({"id": "night", "segments": [
+            {"kind": "WORK", "start": 1200, "end": 1440},
+            {"kind": "BREAK", "start": 1440, "end": 1500},
+            {"kind": "WORK", "start": 1500, "end": 1740}]})
+        data["employees"][0]["history"][-2].update(kind="WORK", shiftId="night")
+        data["demands"] = [{"date": d, "sector": "Reposição", "start": 480, "end": 720, "minimum": 1}
+                           for d in ("2026-11-08", "2026-11-15")]
+        original = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input": data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        totals = {pid: sum(a["employeeId"] == pid and a["kind"] == "WORK" and a["date"] in
+                           ("2026-11-08", "2026-11-15") for a in result["assignments"]) for pid in ("p0", "p1")}
+        self.assertEqual(totals["p0"] + 1, totals["p1"])
+        self.assertTrue(all(a.get("shiftId") != "night" for a in result["assignments"]))
+        self.assertEqual(data, original)
+
     def test_authentication_precedes_parsing_and_slot_allocation(self):
         status, result = self.request(
             "/solve", {"bad": "input"}, self.identity(), auth=False

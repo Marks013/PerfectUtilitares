@@ -14,6 +14,7 @@ pub struct TemporalEmployee {
     pub leader_label: bool,
     pub rest_role: usize,
     pub untimed: bool,
+    pub carry_in: Option<u8>,
     pub preferred_clock: [bool;16],
     pub rest_group: usize,
     pub rest_weight: i64,
@@ -37,7 +38,7 @@ impl TemporalEmployee {
         cost
     }
     pub fn member(&self)->Member {
-        Member{id:self.id,sector:self.sector,role:self.role,rest_role:self.rest_role,cohort:self.cohort,leader_targets:Arc::clone(&self.leader_targets),leader_label:self.leader_label,untimed:self.untimed,facts:Arc::clone(&self.facts),
+        Member{id:self.id,sector:self.sector,role:self.role,rest_role:self.rest_role,cohort:self.cohort,leader_targets:Arc::clone(&self.leader_targets),leader_label:self.leader_label,untimed:self.untimed,carry_in:self.carry_in,facts:Arc::clone(&self.facts),
             pattern:self.pattern.and_then(|i|self.catalog.get(i).copied().map(|mut p|{p.personal=self.pattern_cost(i);p}))}
     }
 }
