@@ -1,0 +1,22 @@
+# SolverForge — porte do calendário LOCAL
+
+## Contrato implementado
+
+Candidata `a9100f395b801554dd568231d9d743b2e5a6d5d7`, árvore `e813e551f2d71824c2073ad1091997c27388e426`, sobre `5550dc0`. O teste anterior, documentado em [fase 2](SOLVERFORGE-FASE2-2026-11-27.md), registrou 25 respostas HTTP 422 com diagnóstico nativo `MAPPING/POLICY`. Os dados oficiais não foram editados para contornar a guarda.
+
+O serviço Rust passa a admitir `LOCAL` com as quatro listas de datas já resolvidas pelo aplicativo (feriados, fechamentos, feriados autorizados e abonos). O motor não resolve município nem infere feriados, fechamentos ou permissões. As validações de consistência continuam: abono deve ser feriado fechado, e autorização tem de apontar para feriado. No modo `LOCAL` só as datas de abono que o aplicativo admite (Ano Novo, Dia do Trabalhador e Natal) passam. O comportamento legado `MANUAL` e a interface sintética permanecem iguais.
+
+## Bancada de dezembro
+
+Janela de 01 a 31/12/2026, com as mesmas nove revisões de rascunho da fase anterior (01/r7, 02/r16, 06/r14, 07/r14, 08/r11, 10/r4, 11/r14, 16/r4, 18/r9). A coleta foi somente leitura; identificadores e textos livres mascarados antes da transferência. Nenhuma proposta ou escala foi gravada, publicada ou enviada para um servidor externo.
+
+O comparador usa o mesmo cliente congelado do OR-Tools `f78c691`, com a correção de admissão de estados HTTP da fase anterior. O controle só é reutilizado com SHA-256 do envelope idêntico; se mudar ou se for necessária comparação de duas propostas atribuíveis ao motor, os dois lados são verificados no mesmo envelope em memória. Contêineres amd64 diagnósticos isolados com 1 CPU, 1536 MiB, 64 PIDs e sem rede externa. Há até 25 pares do motor e dois cenários de referência sem chamada. Não se mede P95, nem se deduz superioridade de latência a partir de uma rejeição.
+
+## Validação e decisão
+
+- **Regressões:** a versão anterior devolveu HTTP 422 no novo teste de calendário resolvido. Com o porte, passaram 8 testes Rust focados e 13 testes amd64 de HTTP/feriados. A prova positiva conserva o feriado aberto como dia de trabalho, o fechamento comum sem abono e o Natal como `HOLIDAY`, sem relógio; a tentativa de abonar o fechamento comum é recusada. Também foram exercitados listas ausentes ou incoerentes, modo desconhecido e manutenção da rejeição de `LOCAL` na interface sintética.
+- **ARM64:** binário ELF64 AArch64/musl estático, Rust 1.100.0, em QEMU 8.2.2. Os 52 testes de executor, contrato HTTP, feriados e migração de runtime passaram. SHA-256 do binário: `30afdc987875c66cd48386e7d2668c413448502909c31ae2d7efb09ab3a390bd`. Não é qualificação nativa ou de produção.
+- **Resultado nas nove filiais:** [27 cenários por filial, revisão e modo](solverforge-ensaio-dezembro-local-resultado.csv): 25 pares do motor e dois cenários que consultam apenas referência. O OR-Tools retornou uma grade válida e completa nos 25, com quatro retenções de referência. Foram reutilizados 23 resultados do controle sob hash idêntico, e dois foram reexecutados. O SolverForge passou de 25 rejeições de calendário para 25 respostas HTTP 200 com estado bruto `FEASIBLE`. A releitura confirmou as mesmas nove revisões em rascunho. Imagem candidata diagnóstica: `sha256:4172810b77b41a86a8ea4b1b802c4e2a3ea7559b5a3df14016e312e7d27256ec`.
+- **Novo bloqueio:** as 25 respostas brutas foram recusadas pelo cliente no esquema estrito de `optimization` (`SOLVER_INVALID_RESPONSE`, em `result-schema`). A [telemetria Rust](../../web/experiments/escalas-solverforge/src/temporal/report.rs) informa a busca lexicográfica limitada, incluindo `engine`, `method`, `scope`, `execution` e `proven`. O [contrato atual do cliente](../../web/src/lib/escalas/solver-client.ts) espera fases do CP-SAT com `budgetSeconds` e `wallTimeSeconds`, entre outras diferenças. A resposta não chegou à validação final da grade. **Zero pares aceitos para comparar qualidade ou desempenho.** `FEASIBLE` no motor não comprova aceitação final, não inferioridade ou velocidade.
+
+**Não migrar.** O próximo passo é um contrato de telemetria versionado e específico para a busca do SolverForge, sem esconder a telemetria nem fabricar duração, orçamento por fase ou prova de ótimo; preservar o contrato do OR-Tools e as verificações estritas de regras, bloqueios, cobertura e admissibilidade da grade. Provar a ida e a volta pelo cliente real antes de repetir os 25 pares. O gate dos 302 contratos continua aberto.
