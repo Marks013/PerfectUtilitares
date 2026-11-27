@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 5
+          fetch-depth: 8
           persist-credentials: false
       - name: Verify exact source tree and store blobs only
         env:
@@ -29,12 +29,12 @@ jobs:
           from pathlib import PurePosixPath
           from concurrent.futures import ThreadPoolExecutor
           base='5732c4e21d793a0e22149907cd3e78e563a1ed05'
-          expected='690da2e58d535be2fde4934a215ca66a2f463e82'
-          digest='65572614198254bbbbe5838a221f72c811924790081b06da8b559fea756c0e8b'
+          expected='d13b9b5ae5db7484220fc3a11c19a904ff50ba06'
+          digest='4bef290199397718e759818b3cfeb278b10979511e559deda70d6bd47f9380fa'
           subprocess.run(['git','merge-base','--is-ancestor',base,'HEAD'],check=True)
           with urllib.request.urlopen('https://sb-5a65yacf76ta.vercel.run/'+digest+'.json.gz',timeout=30) as response:
               data=response.read(100001)
-          assert len(data)==44222 and hashlib.sha256(data).hexdigest()==digest
+          assert len(data)==45643 and hashlib.sha256(data).hexdigest()==digest
           capsule=json.loads(gzip.decompress(data))
           assert capsule['base']==base and capsule['tree']==expected
           assert capsule['baseTree']=='937be14c7fe2567ac8de07c34903bdd710f651b7'
