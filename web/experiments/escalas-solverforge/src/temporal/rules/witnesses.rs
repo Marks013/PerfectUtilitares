@@ -84,10 +84,10 @@ pub(super) fn enrich(original:BTreeSet<Path>,options:&[Vec<u8>],rules:&Rules,
     for i in 0..keep{
         let index=if keep<=1{0}else{i*(old.len()-1)/(keep-1)};result.insert(old[index]);
     }
-    type Key=(u64,[u8;16]);
+    type Key=(u64,[u8;super::super::WORK_STATES]);
     let mut groups=BTreeMap::<Key,Vec<Path>>::new();
     for path in extra{
-        let mut sundays=0u64;let mut clocks_used=[0u8;16];
+        let mut sundays=0u64;let mut clocks_used=[0u8;super::super::WORK_STATES];
         for (day,&state) in path.iter().enumerate().take(rules.days){
             if work(state){
                 clocks_used[usize::from(state)]+=1;

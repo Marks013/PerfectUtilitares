@@ -1,25 +1,15 @@
 /** E1 exploratory baseline/cross-engine harness. Run from web/ on an isolated runner. */
-import { spawnSync } from "node:child_process";
 import { arch } from "node:os";
 import { isHoursReferenceOnly } from "../../../src/lib/escalas/hours-reference";
 import { compareRosterCoverage } from "../../../src/lib/escalas/roster-quality";
 import { makeScenario, scenarioIds, type ScenarioId } from "./fixtures";
 import { captureEnvelope, digest, envelopeProfile, measureReferences, pairOrder, runTrial } from "./core";
 import { baselineRevision, dockerAdapter, inspectImage, resources, validateBaselineEnvelope } from "./docker";
+import { currentBenchmarkSource } from "./solverforge-source";
 import { quantile } from "../benchmark-runtime";
 
-function git(args: string[]) {
-  const value = spawnSync("git", ["-C", "..", ...args], { encoding: "utf8", timeout: 5000 });
-  if (value.status !== 0 || value.error) throw new Error("CROSS_ENGINE_GIT_FAILED");
-  return value.stdout.trim();
-}
 function checkSource() {
-  if (git(["status", "--porcelain", "--untracked-files=normal"])) throw new Error("CROSS_ENGINE_DIRTY_SOURCE");
-  // The new test file is the sole permitted source-side change in the experimental PR.
-  git(["diff", "--quiet", baselineRevision, "--", "web/src", "web/ops/escalas", "web/package-lock.json",
-    "web/scripts/escalas/benchmark-metrics.ts", "web/scripts/escalas/benchmark-synthetic.ts",
-    ":(exclude)web/src/lib/escalas/cross-engine.test.ts"]);
-  return { revision: git(["rev-parse", "HEAD"]), evaluatorTree: git(["rev-parse", baselineRevision + ":web/src/lib/escalas"]) };
+  return currentBenchmarkSource(baselineRevision);
 }
 async function main() {
   if (process.env.ESCALAS_CROSS_ENGINE_ISOLATED !== "1") throw new Error("CROSS_ENGINE_ISOLATED_RUNNER_REQUIRED");
@@ -91,7 +81,7 @@ async function main() {
   }
 }
 main().catch((error: unknown) => {
-  const code = error instanceof Error && /^CROSS_ENGINE_[A-Z_]+$/.test(error.message) ? error.message : "CROSS_ENGINE_FAILED";
+  const code = error instanceof Error && /^(CROSS_ENGINE|FORGE)_[A-Z_]+$/.test(error.message) ? error.message : "CROSS_ENGINE_FAILED";
   console.error("Cross-engine benchmark stopped: " + code + "; no production service was targeted.");
   process.exitCode = 1;
 });

@@ -187,6 +187,10 @@ impl Rules{
     }
 }
 
+pub(super) fn wide_week(options:&[Vec<u8>])->bool{
+    options.iter().fold(1usize,|n,day|n.saturating_mul(day.len()))>MAX_WEEK
+}
+
 fn weekly(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],week:usize,deadline:Instant)->Result<Vec<[u8;7]>>{
     fn visit(day:usize,states:&mut [u8;7],options:&[Vec<u8>],profile:(&Rules,usize),clocks:&[Clock],deadline:Instant,out:&mut Vec<[u8;7]>)->Result<()>{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
@@ -199,8 +203,28 @@ fn weekly(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],week:usize,deadline:In
         }
         Ok(())
     }
-    let mut out=Vec::new();visit(0,&mut [OFF;7],options,(rules,week),clocks,deadline,&mut out)?;
-    Ok(out)
+    if !rules.service||!wide_week(options){
+        let mut out=Vec::new();visit(0,&mut [OFF;7],options,(rules,week),clocks,deadline,&mut out)?;
+        return Ok(out);
+    }
+    // Bound weekly enumeration without hiding any individual clock. Each
+    // rolling window admits two adjacent ordinary choices per day and
+    // preserves every non-clock or singleton constraint. This is a sample,
+    // not an exhaustive proof about arbitrary combinations of clocks.
+    let timed:Vec<Vec<u8>>=options.iter().map(|day|day.iter().copied().filter(|&s|clock(clocks,s).is_some()).collect()).collect();
+    let windows=timed.iter().map(Vec::len).max().unwrap_or(0).max(1);
+    let mut sampled=BTreeSet::new();
+    for window in 0..windows{
+        let local:Vec<Vec<u8>>=options.iter().zip(&timed).map(|(full,choices)|{
+            if choices.len()<=2{return full.clone();}
+            let a=choices[window%choices.len()];let b=choices[(window+1)%choices.len()];
+            full.iter().copied().filter(|&s|s==a||s==b||clock(clocks,s).is_none()).collect()
+        }).collect();
+        let mut out=Vec::new();
+        visit(0,&mut [OFF;7],&local,(rules,week),clocks,deadline,&mut out)?;
+        sampled.extend(out);
+    }
+    Ok(sampled.into_iter().collect())
 }
 fn mix(mut n:u64)->u64{
     n=(n^(n>>30)).wrapping_mul(0xbf58476d1ce4e5b9);
@@ -210,13 +234,16 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
     type WeeklyKey=(Vec<Vec<u8>>,i32,bool,bool,usize);
     let mut cache=BTreeMap::<WeeklyKey,Vec<[u8;7]>>::new();
     let mut weeks=Vec::new();
+    let mut exhaustive_weekly=true;
     for (week,&(a,b)) in rules.weeks.iter().enumerate(){
         let part=&options[a..b];
+        let sampled=rules.service&&wide_week(part);
+        exhaustive_weekly&=!sampled;
         let key=(part.to_vec(),rules.targets[week],rules.mixed[week],rules.cutover&&week==0,rules.weekday(a as i32));
         let values=if let Some(v)=cache.get(&key){v.clone()}else{
             let v=weekly(part,rules,clocks,week,deadline)?;cache.insert(key,v.clone());v
         };
-        check(!values.is_empty(),if rules.service{"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;weeks.push(values);
+        check(!values.is_empty(),if rules.service&&!sampled{"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;weeks.push(values);
     }
     let mut paths=BTreeSet::new();
     let small_exact=rules.service&&weeks.iter().try_fold(1usize,|n,w|
@@ -261,6 +288,6 @@ pub(super) fn enumerate(options:&[Vec<u8>],rules:&Rules,clocks:&[Clock],deadline
         }
     }
     paths=witnesses::enrich(paths,options,rules,clocks,deadline);
-    check(!paths.is_empty(),if rules.service&&(rules.days==7||small_exact){"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;
+    check(!paths.is_empty(),if rules.service&&exhaustive_weekly&&(rules.days==7||small_exact){"INFEASIBLE_PERSONAL_DOMAIN"}else{"NO_PERSONAL_PATTERN"})?;
     Ok(paths.into_iter().map(|p|rules.pattern(p,clocks)).collect())
 }

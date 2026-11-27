@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use solverforge::stream::collector::Accumulator;
 use crate::model::Presence;
-use super::{Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,civil_presence,clock,comparison,service_bounds,work};
+use super::{Attendance,Cost,MAX_DAYS,Member,TemporalFacts,add_fairness,civil_presence,clock,comparison,service_bounds};
 
 #[derive(Clone,Copy,Default)]
 struct Daily{
@@ -23,7 +23,7 @@ pub(crate) struct TemporalAccumulator{
 impl Default for TemporalAccumulator{
     fn default()->Self{
         Self{rows:BTreeMap::new(),facts:None,bands_by_day:std::array::from_fn(|_|Vec::new()),
-            attendance:[[Presence::EMPTY;16];MAX_DAYS+1],role_members:BTreeMap::new(),
+            attendance:Attendance::default(),role_members:BTreeMap::new(),
             daily:[Daily::default();MAX_DAYS],personal:[0;17]}
     }
 }
@@ -66,11 +66,11 @@ impl TemporalAccumulator{
         }
         let Some(p)=row.pattern else{return;};
         for (day,&state) in p.states.iter().enumerate().take(row.facts.days){
-            if !work(state){continue;}
+            let Some(c)=clock(&row.facts.clocks,state) else{continue;};
             let cell=&mut self.attendance[day][usize::from(state)];
             if insert{*cell|=bit;}else{*cell&=!bit;}
             self.refresh(day);
-            if day+1<row.facts.days&&clock(&row.facts.clocks,state).is_some_and(|c|c.overnight()){self.refresh(day+1);}
+            if day+1<row.facts.days&&c.overnight(){self.refresh(day+1);}
         }
         for (total,value) in self.personal.iter_mut().zip(p.personal){*total+=sign*value;}
     }
@@ -103,6 +103,7 @@ impl Accumulator<Member,Cost> for TemporalAccumulator{
         if let Some(f)=&self.facts{assert!(Arc::ptr_eq(f,&row.facts),"temporal facts drift");}
         else{
             self.facts=Some(Arc::clone(&row.facts));
+            self.attendance=Attendance::new(row.facts.clocks.len());
             for (i,b) in row.facts.bands.iter().enumerate(){self.bands_by_day[b.day].push(i);}
             for day in 0..row.facts.days{self.refresh(day);}
         }

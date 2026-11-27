@@ -35,6 +35,8 @@ jobs:
       CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
       CARGO_INCREMENTAL: '0'
       RAYON_NUM_THREADS: '1'
+      ESCALAS_FORGE_CANDIDATE_ROOT: ${{ github.workspace }}
+      ESCALAS_FORGE_CANDIDATE_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -55,6 +57,18 @@ jobs:
           test "$(git hash-object experiments/escalas-solverforge/src/e2-wire-contract.json)" = "6f0f97b8aaadfe1c94034937ff4f134fb4f388a5"
           test "$(git hash-object experiments/escalas-solverforge/src/e3a-fixed-clock-contract.json)" = "2972584ac91979b65bb7782aa8374fcbb86f7b90"
           node --conditions=react-server --import tsx node_modules/vitest/vitest.mjs run src/lib/escalas/cross-engine.test.ts
+          node --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts
+          test "$(git rev-parse HEAD)" = "$ESCALAS_FORGE_CANDIDATE_REVISION"
+          if ! git cat-file -e "$TIMEFOLD_CONTROL^{commit}"; then
+            git fetch --no-tags origin "$TIMEFOLD_CONTROL"
+          fi
+          evaluator="$RUNNER_TEMP/solverforge-evaluator"
+          git clone --local --no-checkout "$ESCALAS_FORGE_CANDIDATE_ROOT" "$evaluator"
+          git -C "$evaluator" checkout --detach "$BASE"
+          npm ci --prefix "$evaluator/web"
+          mkdir -p "$RUNNER_TEMP/forge-evidence"
+          node --import tsx scripts/escalas/cross-engine/solverforge-source.ts "$evaluator" "$BASE" "$ESCALAS_FORGE_CANDIDATE_ROOT" "$ESCALAS_FORGE_CANDIDATE_REVISION" "$TIMEFOLD_CONTROL" |
+            tee "$RUNNER_TEMP/forge-evidence/source-identity.json"
       - name: Install reviewed Rust toolchain and native musl linker
         shell: bash
         run: |
@@ -126,7 +140,7 @@ jobs:
           set -euo pipefail
           image() { docker image inspect "$1" --format '{{.Id}}'; }
           output="$RUNNER_TEMP/forge-evidence/scale.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale | tee "$output"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" scale) | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" scale | tee "$RUNNER_TEMP/forge-evidence/scale-summary.json"
       - name: SF54d-f combined temporal feature and scale comparison through original client
         id: temporal
@@ -136,7 +150,7 @@ jobs:
           set -euo pipefail
           image() { docker image inspect "$1" --format '{{.Id}}'; }
           output="$RUNNER_TEMP/forge-evidence/temporal.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" temporal | tee "$output"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" temporal) | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" temporal | tee "$RUNNER_TEMP/forge-evidence/temporal-summary.json"
       - name: Expanded scale and temporal noninferiority qualification (not production parity)
         id: expanded_quality
@@ -168,7 +182,7 @@ jobs:
           forge=$(image escalas-solverforge:ci)
           for mode in smoke paired; do
             output="$RUNNER_TEMP/forge-evidence/$mode.jsonl"
-            node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode" | tee "$output"
+            (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" "$mode") | tee "$output"
             python3 experiments/escalas-solverforge/verify_comparison.py "$output" "$mode" | tee "$RUNNER_TEMP/forge-evidence/$mode-summary.json"
           done
       - name: E2 candidate noninferiority gate (not production parity)
@@ -186,7 +200,7 @@ jobs:
           set -euo pipefail
           image() { docker image inspect "$1" --format '{{.Id}}'; }
           output="$RUNNER_TEMP/forge-evidence/personal.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" personal | tee "$output"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" personal) | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" personal | tee "$RUNNER_TEMP/forge-evidence/personal-summary.json"
       - name: Candidate-only time budget and seed ablation
         id: curve
@@ -199,7 +213,7 @@ jobs:
           timefold=$(image escalas-forge-timefold:ci)
           forge=$(image escalas-solverforge:ci)
           output="$RUNNER_TEMP/forge-evidence/curve.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve | tee "$output"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$baseline" "$timefold" "$forge" curve) | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" curve | tee "$RUNNER_TEMP/forge-evidence/curve-summary.json"
       - name: Independent 32-repeat tail latency and adaptive qualification
         id: tail
@@ -209,7 +223,7 @@ jobs:
           set -euo pipefail
           image() { docker image inspect "$1" --format '{{.Id}}'; }
           output="$RUNNER_TEMP/forge-evidence/tail.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" tail | tee "$output"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/solverforge-compare.ts "$(image escalas-forge-baseline:ci)" "$(image escalas-forge-timefold:ci)" "$(image escalas-solverforge:ci)" tail) | tee "$output"
           python3 experiments/escalas-solverforge/verify_comparison.py "$output" tail | tee "$RUNNER_TEMP/forge-evidence/tail-summary.json"
       - name: Require measured adaptive gain (not production certification)
         id: adaptive_gain

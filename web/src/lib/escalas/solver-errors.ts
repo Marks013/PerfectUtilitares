@@ -1,7 +1,8 @@
-type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_INPUT" | "SOLVER_INTERNAL_ERROR" | "SOLVER_INVALID_RESPONSE" | "SOLVER_RESPONSE_INCOMPLETE" | "SOLVER_PROTECTED_RECORD_CHANGED" | "SOLVER_RULES_INVALID" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
+type SolverErrorCode = "SOLVER_BUSY" | "SOLVER_UNAVAILABLE" | "SOLVER_INVALID_INPUT" | "SOLVER_UNSUPPORTED_INPUT" | "SOLVER_INTERNAL_ERROR" | "SOLVER_INVALID_RESPONSE" | "SOLVER_RESPONSE_INCOMPLETE" | "SOLVER_PROTECTED_RECORD_CHANGED" | "SOLVER_RULES_INVALID" | "SOLVER_AUTH_FAILED" | "SOLVER_CANCELLED" | "SOLVER_TIMED_OUT" | "SOLVER_INPUT_TOO_LARGE" | "SOLVER_REFINEMENT_FAILED";
 
 const messages: Record<SolverErrorCode, string> = {
   SOLVER_INVALID_INPUT: "Algum dado deste planejamento não pôde ser lido pelo cálculo. Confira a equipe, os horários e as restrições; sua escala salva foi mantida.",
+  SOLVER_UNSUPPORTED_INPUT: "O motor de cálculo ainda não suporta uma configuração deste planejamento. A escala salva foi preservada. Informe o problema ao suporte sem alterar o cadastro.",
   SOLVER_INTERNAL_ERROR: "O cálculo encontrou uma falha interna. Sua escala salva foi mantida; tente novamente e, se persistir, avise o responsável pelo sistema.",
   SOLVER_BUSY: "Há um cálculo em andamento. Aguarde o cálculo atual terminar e tente novamente.",
   SOLVER_UNAVAILABLE: "Não foi possível acessar o cálculo. Sua escala salva foi mantida; tente novamente.",

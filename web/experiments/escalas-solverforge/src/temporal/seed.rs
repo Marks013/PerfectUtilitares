@@ -94,7 +94,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             sector.timed[0]+=1;
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
-            if band.day==0&&band.previous_mask&(1u16<<state)!=0{count.insert(band,p.role);}
+            if band.day==0&&band.previous_mask&super::clock_bit(usize::from(state))!=0{count.insert(band,p.role);}
         }
     }
     let order=construction_order(plan);
@@ -109,15 +109,16 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
         let choice=if let Some(index)=p.pattern{index}
         else if Instant::now()>=deadline{0}
         else{
-            let mut benefits=[[[0i64;6];16];MAX_DAYS];
+            let width=sector.facts.clocks.len()+super::CLOCK_START;
+            let mut benefits=vec![[0i64;6];width*sector.facts.days];
             for (b,count) in sector.facts.bands.iter().zip(&sector.counts){
-                if b.day==0&&p.carry_in.is_some_and(|s|b.previous_mask&(1u16<<s)!=0){continue;}
+                if b.day==0&&p.carry_in.is_some_and(|s|b.previous_mask&super::clock_bit(usize::from(s))!=0){continue;}
                 let gain=count.gain(b,p.role)*i64::from(b.end-b.start);
                 if gain==0{continue;}
                 for (assignment_day,mask) in [(Some(b.day),b.clock_mask),(b.day.checked_sub(1),b.previous_mask)]{
                     let Some(assignment_day)=assignment_day else{continue;};
-                    for (state,benefit) in benefits[assignment_day].iter_mut().enumerate(){
-                    if mask&(1u16<<state)==0{continue;}
+                    for state in super::clock_states(mask){
+                    let benefit=&mut benefits[assignment_day*width+state];
                     if b.estimated{
                         benefit[1]+=gain;
                         if sector.facts.weekday(b.day)==0{benefit[2]+=gain;}
@@ -136,7 +137,10 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                 let mut clock_preference=[0i64;3];
                 for (day,&state) in p.catalog[index].states.iter().enumerate().take(p.facts.days){
                     if state==INACTIVE{continue;}
-                    for (cost,gain) in score[..6].iter_mut().zip(benefits[day][usize::from(state)]){*cost-=gain;}
+                    let state_index=usize::from(state);
+                    if state_index<width{
+                        for (cost,gain) in score[..6].iter_mut().zip(benefits[day*width+state_index]){*cost-=gain;}
+                    }
                     if work(state){
                         score[11]+=sector.presence[day];
                         if sector.facts.weekday(day)==0{sunday_days+=1;sunday_load+=sector.presence[day];}
@@ -147,7 +151,7 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
                             clock_preference[0]+=i64::from(c.end()-c.start()-c.paid);
                             clock_preference[1]+=i64::from((sector.facts.closing-c.end()).max(0));
                         }
-                        clock_preference[2]+=i64::from(!p.preferred_clock[usize::from(state)]);
+                        clock_preference[2]+=i64::from(p.preferred_clock&super::clock_bit(usize::from(state))==0);
                         if sector.facts.weekday(day)==0{sunday_minutes+=i64::from(c.paid);}
                     }
                 }
@@ -169,8 +173,8 @@ pub(super) fn construct(plan:&mut TemporalPlan,deadline:Instant){
             if clock(&sector.facts.clocks,state).is_some(){sector.timed[day]+=1;}
         }
         for (band,count) in sector.facts.bands.iter().zip(&mut sector.counts){
-            let serves=|d:usize,mask:u16|work(pattern.states[d])&&mask&(1u16<<pattern.states[d])!=0;
-            let carried=band.day==0&&p.carry_in.is_some_and(|s|band.previous_mask&(1u16<<s)!=0);
+            let serves=|d:usize,mask:super::ClockMask|mask&super::clock_bit(usize::from(pattern.states[d]))!=0;
+            let carried=band.day==0&&p.carry_in.is_some_and(|s|band.previous_mask&super::clock_bit(usize::from(s))!=0);
             if !carried&&(serves(band.day,band.clock_mask)||band.day>0&&serves(band.day-1,band.previous_mask)){count.insert(band,p.role);}
         }
         plan.employees[i].pattern=Some(choice);

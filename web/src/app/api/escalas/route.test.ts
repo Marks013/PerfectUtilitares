@@ -367,6 +367,10 @@ describe("/api/escalas", () => {
     const invalid = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ error: { code: "SOLVER_INVALID_INPUT" } });
+    mocks.generate.mockRejectedValue(new EscalaSolverError("SOLVER_UNSUPPORTED_INPUT"));
+    const unsupported = await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }));
+    expect(unsupported.status).toBe(503);
+    expect(await unsupported.json()).toMatchObject({ error: { code: "SOLVER_UNSUPPORTED_INPUT" } });
     mocks.generate.mockRejectedValue(new EscalaSolverError("SOLVER_INTERNAL_ERROR"));
     expect((await POST(command({ action: "GENERATE", id: "w1", expectedRevision: 1 }))).status).toBe(500);
     mocks.generate.mockRejectedValue(new EscalaSolverError("SOLVER_INPUT_TOO_LARGE"));

@@ -26,6 +26,9 @@ jobs:
       CI: 'true'
       ESCALAS_CROSS_ENGINE_ISOLATED: '1'
       BASE: 'f78c691edbeaf16283f534bcacd8db1b4b7d5e66'
+      TIMEFOLD_CONTROL: '71945cd6e73c48b424dab1297fbc3bf8a15ae585'
+      ESCALAS_FORGE_CANDIDATE_ROOT: ${{ github.workspace }}
+      ESCALAS_FORGE_CANDIDATE_REVISION: ${{ github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -41,6 +44,21 @@ jobs:
         run: npm exec -- vitest run src/lib/escalas/cross-engine.test.ts src/lib/escalas/benchmark-synthetic-input.test.ts src/lib/escalas/solver-client.test.ts
       - name: Verify JSONL gate with mutation tests
         run: python3 -m unittest discover -s scripts/escalas/cross-engine -p 'test_verify_metrics.py'
+      - name: Prepare the frozen evaluator checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx --test scripts/escalas/cross-engine/solverforge-source.test.ts
+          test "$(git rev-parse HEAD)" = "$ESCALAS_FORGE_CANDIDATE_REVISION"
+          if ! git cat-file -e "$TIMEFOLD_CONTROL^{commit}"; then
+            git fetch --no-tags origin "$TIMEFOLD_CONTROL"
+          fi
+          evaluator="$RUNNER_TEMP/solverforge-evaluator"
+          git clone --local --no-checkout "$ESCALAS_FORGE_CANDIDATE_ROOT" "$evaluator"
+          git -C "$evaluator" checkout --detach "$BASE"
+          npm ci --prefix "$evaluator/web"
+          node --import tsx scripts/escalas/cross-engine/solverforge-source.ts "$evaluator" "$BASE" "$ESCALAS_FORGE_CANDIDATE_ROOT" "$ESCALAS_FORGE_CANDIDATE_REVISION" "$TIMEFOLD_CONTROL" |
+            tee "$RUNNER_TEMP/cross-engine-source.json"
       - name: Build exact baseline image in isolated checkout
         shell: bash
         run: |
@@ -55,7 +73,7 @@ jobs:
           set -euo pipefail
           image=$(docker image inspect escalas-cross-engine-baseline:ci --format '{{.Id}}')
           for scenario in december-representative december-presence-recovery team-10-week branch-50-four-weeks branch-115-six-weeks hours-only-with-grid team-10-week-repair stress-250-six-weeks; do
-            node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" preflight "$image"
+            (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" preflight "$image")
           done
       - name: Run bounded exploratory baseline and reference-only flow
         shell: bash
@@ -63,15 +81,15 @@ jobs:
           set -euo pipefail
           image=$(docker image inspect escalas-cross-engine-baseline:ci --format '{{.Id}}')
           : > "$RUNNER_TEMP/cross-engine-smoke.jsonl"
-          node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts hours-reference-only 1 | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"
+          (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts hours-reference-only 1) | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"
           failed=0
           for scenario in december-representative team-10-week branch-50-four-weeks branch-115-six-weeks hours-only-with-grid team-10-week-repair; do
-            if ! node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 5 "$image" | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"; then
+            if ! (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 5 "$image") | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"; then
               failed=1
             fi
           done
           for scenario in december-presence-recovery stress-250-six-weeks; do
-            if ! node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 1 "$image" | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"; then
+            if ! (cd "$RUNNER_TEMP/solverforge-evaluator/web" && node --conditions=react-server --import tsx scripts/escalas/cross-engine/cli.ts "$scenario" 1 "$image") | tee -a "$RUNNER_TEMP/cross-engine-smoke.jsonl"; then
               failed=1
             fi
           done
@@ -82,6 +100,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: escalas-cross-engine-smoke
-          path: ${{ runner.temp }}/cross-engine-smoke.jsonl
+          path: |
+            ${{ runner.temp }}/cross-engine-smoke.jsonl
+            ${{ runner.temp }}/cross-engine-source.json
           if-no-files-found: ignore
           retention-days: 7

@@ -39,6 +39,12 @@ describe("plain language planning recovery", () => {
     expect(problem.action).toBe("generate");
     expect(problem.explanation).toContain("não foi aplicada");
   });
+  it("does not tell the operator to change a valid roster for an unsupported processor configuration", () => {
+    const problem = toEscalaProblem(new EscalaRequestError("SOLVER_UNSUPPORTED_INPUT", 503, "private"));
+    expect(problem.message).toContain("não suporta");
+    expect(problem.explanation).toContain("não altere equipe");
+    expect(problem.action).toBeUndefined();
+  });
   it("explains a processor size limit without blaming the connection or suggesting data removal", () => {
     const problem = toEscalaProblem(new EscalaRequestError("SOLVER_INPUT_TOO_LARGE", 413, "raw"));
     expect(problem.message).toContain("grande demais");

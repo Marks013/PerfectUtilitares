@@ -1,4 +1,5 @@
 """Preserved HTTP security contracts; original assertions, native service fixture."""
+import copy
 import http.client
 import json
 import multiprocessing
@@ -16,7 +17,61 @@ from control import SolveCancelled,SolveControl,SolveTimedOut
 from server import MAX_BODY,SolverHTTPServer
 from service_operations import OperationError,Operations
 from service_security import load_secret,operation_identity
-from contract_fixtures import supported_fixture
+from contract_fixtures import fixture, supported_fixture
+from solver import solve as solve_native
+
+
+def _shifted_clock(day_shift, shift_id, delta):
+    shift = copy.deepcopy(day_shift)
+    shift["id"] = shift_id
+    for segment in shift["segments"]:
+        segment["start"] += delta
+        segment["end"] += delta
+    return shift
+
+
+def _catalog_fixture(clock_count, options_count):
+    data = fixture(40)
+    for index in range(1, clock_count):
+        data["shifts"].append(_shifted_clock(data["shifts"][0], f"clock-{index}", -index))
+    choices = data["shifts"][:options_count - 1] + data["shifts"][-1:]
+    data["employees"][0]["shiftIds"] = [shift["id"] for shift in choices]
+    earliest = choices[-1]["segments"][0]["start"]
+    data["demands"] = [
+        {"date": "2026-11-04", "sector": "Reposição", "role": "Repositor",
+         "start": earliest, "end": earliest + 1, "minimum": 1}
+    ]
+    return data
+
+
+def _manual_period_fixture():
+    data = fixture(40)
+    data["restRulesVersion"] = 2
+    data["generationMode"] = "HOURS_ONLY"
+    data["shifts"].append(_shifted_clock(data["shifts"][0], "local-early", -60))
+    data["employees"][0].update(
+        scheduleMode="TIMED",
+        fixedImportedShiftId="day",
+        manualShiftBaseIds=["day"],
+        manualShiftOverrides=[
+            {"catalogCode": 1500, "shiftId": "local-early",
+             "markings": ["07:00", "11:00", "12:00", "16:00"],
+             "effectiveFrom": "2026-11-03", "effectiveUntil": "2026-11-04"}
+        ],
+        manualShiftByDate={"2026-11-03": "local-early", "2026-11-04": "local-early"},
+    )
+    for offset in range(2, 9):
+        day = f"2026-11-{offset:02d}"
+        row = {"employeeId": "p0", "date": day,
+               "kind": "OFF" if offset in (4, 8) else "WORK"}
+        if row["kind"] == "WORK":
+            row["shiftId"] = "day"
+        if offset == 2:
+            row.update(locked=True, note="Bloqueio legítimo")
+        data["assignments"].append(row)
+    data["demands"] = [{"date": "2026-11-03", "sector": "Reposição",
+                        "start": 420, "end": 480, "minimum": 1}]
+    return data
 
 class LegacyServiceTests(unittest.TestCase):
     def setUp(self):
@@ -61,6 +116,107 @@ class LegacyServiceTests(unittest.TestCase):
         while self.server.operations.active_id is None and time.monotonic() < until:
             time.sleep(0.01)
         self.assertIsNotNone(self.server.operations.active_id)
+
+    def test_native_catalog_at_and_beyond_old_limits_can_use_the_last_choice(self):
+        for clocks, options in ((13, 5), (120, 12)):
+            with self.subTest(clocks=clocks, options=options):
+                data = _catalog_fixture(clocks, options)
+                status, result = self.solve(data)
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result["status"], "FEASIBLE", result)
+                self.assertEqual(len(result["assignments"]), 7)
+                worked = {row["date"]: row["shiftId"] for row in result["assignments"]
+                          if row["kind"] == "WORK"}
+                self.assertEqual(len(worked), 5)
+                self.assertEqual(worked["2026-11-04"], f"clock-{clocks - 1}")
+                self.assertLessEqual(set(worked.values()), set(data["employees"][0]["shiftIds"]))
+
+    def test_transport_still_rejects_catalog_and_employee_option_overflow(self):
+        for clocks, options, field in ((121, 12, "shifts"), (120, 13, "employees[0].shiftIds")):
+            with self.subTest(clocks=clocks, options=options):
+                status, result = self.solve(_catalog_fixture(clocks, options))
+                self.assertEqual(status, 400, result)
+                self.assertEqual(result["error"], "INVALID_MODEL_INPUT")
+                self.assertIn({"path": field, "reason": "TOO_MANY_ITEMS"}, result["fields"])
+                self.assertIsNone(self.server.operations.active_id)
+
+    def test_native_manual_period_changes_only_work_within_the_period(self):
+        data = _manual_period_fixture()
+        status, result = self.solve(data)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
+        original = {row["date"]: row for row in data["assignments"]}
+        proposed = {row["date"]: row for row in result["assignments"]}
+        self.assertEqual(len(result["assignments"]), 7)
+        self.assertEqual(proposed["2026-11-03"],
+                         {**original["2026-11-03"], "shiftId": "local-early"})
+        for day in original.keys() - {"2026-11-03"}:
+            with self.subTest(day=day):
+                self.assertEqual(proposed[day], original[day])
+        self.assertEqual(data["employees"][0]["manualShiftBaseIds"], ["day"])
+
+    def test_native_manual_period_rejects_inconsistent_effective_map_base_or_mode(self):
+        for field, change in (
+            ("manualShiftByDate", {"2026-11-03": "day", "2026-11-04": "local-early"}),
+            ("manualShiftBaseIds", ["day", "local-early"]),
+            ("scheduleMode", None),
+        ):
+            with self.subTest(field=field):
+                data = _manual_period_fixture()
+                if change is None:
+                    del data["employees"][0][field]
+                else:
+                    data["employees"][0][field] = change
+                status, result = self.solve(data)
+                self.assertEqual(status, 422, result)
+                self.assertEqual(result["error"], "SOLVER_UNSUPPORTED_INPUT")
+                self.assertNotIn("assignments", result)
+                self.assertIsNone(self.server.operations.active_id)
+
+    def test_manual_period_cannot_replace_locked_work(self):
+        data = _manual_period_fixture()
+        data["assignments"][1]["locked"] = True
+        status, result = self.solve(data)
+        self.assertEqual(status, 400, result)
+        self.assertEqual(result["error"], "INVALID_MODEL_INPUT")
+        self.assertIn({"path": "employees[0].manualShiftByDate[0].shiftId",
+                       "reason": "MANUAL_SHIFT_LOCK_CONFLICT"}, result["fields"])
+        self.assertNotIn("assignments", result)
+        self.assertIsNone(self.server.operations.active_id)
+
+    def test_authenticated_real_native_cancellation_releases_slot_for_next_solve(self):
+        phase_reached = threading.Event()
+        release_phase = threading.Event()
+
+        def observed_solve(data, control):
+            def synchronize_on_native_phase(phase):
+                if phase == "CONSTRUCTION":
+                    phase_reached.set()
+                    if not release_phase.wait(5):
+                        raise AssertionError("HTTP cancellation was not exercised")
+
+            control.on_phase = synchronize_on_native_phase
+            return solve_native(data, control)
+
+        self.server.solver_target = observed_solve
+        identity = self.identity()
+        cancelled = []
+        request = threading.Thread(target=lambda: cancelled.append(self.solve(identity=identity)))
+        request.start()
+        try:
+            self.assertTrue(phase_reached.wait(5), "native construction phase not observed")
+            self.assertEqual(self.cancel(identity)[0], 200)
+        finally:
+            release_phase.set()
+            request.join(5)
+        self.assertFalse(request.is_alive())
+        status, result = cancelled[0]
+        self.assertEqual((status, result["error"]), (409, "SOLVER_CANCELLED"))
+        self.assertIsNone(self.server.operations.active_id)
+        self.server.solver_target = solve_native
+        status, result = self.solve()
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE", result)
 
     def test_unauthorized_call_is_rejected_before_body_or_slot(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)

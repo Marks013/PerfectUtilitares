@@ -18,6 +18,7 @@ mod rest_guard;
 mod feasibility;
 mod report;
 mod service_clocks;
+mod manual_shift;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
 use crate::model::Presence;
@@ -31,9 +32,14 @@ pub(crate) const OFF:u8=0;
 const ABS:u8=1;
 const HOL:u8=2;
 pub const MAX_DAYS:usize=42;
-const DUTY:u8=15;
+const SYNTHETIC_CLOCKS:usize=12;
+const SERVICE_CLOCKS:usize=120;
+const CLOCK_START:usize=3;
+const DUTY:u8=(CLOCK_START+SERVICE_CLOCKS) as u8;
 // Not an assignment, never a rest, absence, coverage or opportunity.
-const INACTIVE:u8=16;
+const INACTIVE:u8=DUTY+1;
+const WORK_STATES:usize=DUTY as usize+1;
+type ClockMask=u128;
 const OBJECTIVES:[(&str,&str);16]=[
     ("COVERAGE","SCOPED"),("SUNDAY_COVERAGE","SCOPED"),("SUNDAY_PEAK","PARTIAL_GLOBAL_BOUND"),
     ("MOVEMENT_COVERAGE","SCOPED"),("CLOSING_COVERAGE","SCOPED"),
@@ -99,14 +105,21 @@ fn read_clock(row:&V,closing:i32,daily:i32,meal:i32,limit_blocks:bool,civil_nigh
         &&(!limit_blocks||blocks.into_iter().max().unwrap_or(0)<=270),"CLOCK_GEOMETRY")?;
     Ok(Clock{id:identifier(row,"id")?.to_string(),segments:service,paid,start,end})
 }
-fn clock(clocks:&[Clock],state:u8)->Option<&Clock>{state.checked_sub(3).and_then(|i|clocks.get(i as usize))}
-fn work(state:u8)->bool{(3..=DUTY).contains(&state)}
+fn clock(clocks:&[Clock],state:u8)->Option<&Clock>{usize::from(state).checked_sub(CLOCK_START).and_then(|i|clocks.get(i))}
+fn work(state:u8)->bool{(CLOCK_START as u8..=DUTY).contains(&state)}
+fn clock_bit(state:usize)->ClockMask{1<<state}
+fn clock_states(mut mask:ClockMask)->impl Iterator<Item=usize>{
+    std::iter::from_fn(move ||{
+        if mask==0{return None;}
+        let state=mask.trailing_zeros() as usize;mask&=mask-1;Some(state)
+    })
+}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,Hash)]
 pub struct Pattern{pub(crate) states:[u8;MAX_DAYS],pub(crate) personal:Cost,rates:[Option<i64>;2],sunday_opportunities:u64,civil_work:u64,pub(crate) rest:[i64;5]}
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord)]
 struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
-struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16,previous_mask:u16}
+struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:ClockMask,previous_mask:ClockMask}
 #[cfg_attr(test,derive(Clone))]
 #[derive(Debug,PartialEq,Eq,Hash)]
 pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,week_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
@@ -123,24 +136,36 @@ pub struct Member{
 mod incremental;
 pub(crate) use incremental::TemporalAccumulator;
 fn add(a:&mut Cost,b:Cost){for (x,y) in a.iter_mut().zip(b){*x+=y;}}
-fn clock_masks(clocks:&[Clock],a:i32,b:i32)->(u16,u16){
+fn clock_masks(clocks:&[Clock],a:i32,b:i32)->(ClockMask,ClockMask){
     clocks.iter().enumerate().fold((0,0),|(mut current,mut previous),(i,c)|{
-        let bit=1u16<<(i+3);
+        let bit=clock_bit(i+CLOCK_START);
         if c.covers(a,b){current|=bit;}
         if c.covers(a+1440,b+1440){previous|=bit;}
         (current,previous)
     })
 }
 // Final slot is assignment day -1, not a 43rd requested civil date.
-type Attendance=[[Presence;16];MAX_DAYS+1];
-fn civil_presence(attendance:&Attendance,day:usize,current:u16,previous:u16)->Presence{
+// Only real clocks need coverage bitmaps. Allocate by catalogue size, not the service maximum.
+#[derive(Default)]
+struct Attendance{cells:Box<[Presence]>,width:usize}
+impl Attendance{
+    fn new(clocks:usize)->Self{
+        let width=CLOCK_START+clocks;
+        Self{cells:vec![Presence::EMPTY;width*(MAX_DAYS+1)].into_boxed_slice(),width}
+    }
+    fn row(&self,d:usize)->std::ops::Range<usize>{d*self.width..(d+1)*self.width}
+}
+impl std::ops::Index<usize> for Attendance{
+    type Output=[Presence];
+    fn index(&self,d:usize)->&Self::Output{&self.cells[self.row(d)]}
+}
+impl std::ops::IndexMut<usize> for Attendance{
+    fn index_mut(&mut self,d:usize)->&mut Self::Output{let row=self.row(d);&mut self.cells[row]}
+}
+fn civil_presence(attendance:&Attendance,day:usize,current:ClockMask,previous:ClockMask)->Presence{
     let mut present=Presence::EMPTY;
-    for (d,mut mask) in [(Some(day),current),(Some(day.checked_sub(1).unwrap_or(MAX_DAYS)),previous)]{
-        let Some(d)=d else{continue;};
-        while mask!=0{
-            let state=mask.trailing_zeros() as usize;mask&=mask-1;
-            present|=attendance[d][state];
-        }
+    for (d,mask) in [(day,current),(day.checked_sub(1).unwrap_or(MAX_DAYS),previous)]{
+        for state in clock_states(mask){present|=attendance[d][state];}
     }
     present
 }
@@ -150,7 +175,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
     let Some(first)=rows.first() else{return result;};
     let facts=&first.facts;
     let mut sunday=[0i64;6];let mut sunday_ref=[false;6];
-    let mut attendance=[[Presence::EMPTY;16];MAX_DAYS+1];
+    let mut attendance=Attendance::new(facts.clocks.len());
     let mut role_members=BTreeMap::<usize,Presence>::new();
     for row in &rows{
         let bit=Presence::one(row.id);
@@ -159,7 +184,7 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         if let Some(p)=row.pattern{
             add(&mut result,p.personal);
             for (d,&state) in p.states.iter().enumerate().take(facts.days){
-                if work(state){attendance[d][usize::from(state)]|=bit;}
+                if clock(&facts.clocks,state).is_some(){attendance[d][usize::from(state)]|=bit;}
             }
         }
     }
@@ -170,8 +195,8 @@ fn sector_cost<'a>(members:impl Iterator<Item=&'a Member>)->Cost{
         // assignment-day bitmaps on this civil interval.
         let mut present=Presence::EMPTY;
         for (state,mask) in attendance[band.day].iter().enumerate(){
-            if band.clock_mask&(1u16<<state)!=0{present|=*mask;}
-            if band.previous_mask&(1u16<<state)!=0{present|=attendance[band.day.checked_sub(1).unwrap_or(MAX_DAYS)][state];}
+            if band.clock_mask&clock_bit(state)!=0{present|=*mask;}
+            if band.previous_mask&clock_bit(state)!=0{present|=attendance[band.day.checked_sub(1).unwrap_or(MAX_DAYS)][state];}
         }
         let role_gap:i64=band.roles.iter().map(|(r,n)|{
             let members=role_members.get(r).copied().unwrap_or_default();
@@ -460,12 +485,12 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         }
     }
     let clock_rows=array(input,"shifts")?;
-    check(clock_rows.len()<=12,"CLOCK_LIMIT")?;
+    check(clock_rows.len()<=if service{SERVICE_CLOCKS}else{SYNTHETIC_CLOCKS},"CLOCK_LIMIT")?;
     let mut clocks=Vec::new();let mut ids=BTreeMap::new();let mut admissions=Vec::new();
     for row in clock_rows{
         let c=if service{let (c,admission)=service_clocks::read(row)?;admissions.push(admission);c}
             else{read_clock(row,closing,daily,meal,limit_blocks,civil_night)?};
-        check(ids.insert(c.id.clone(),(clocks.len()+3) as u8).is_none(),"DUPLICATE_CLOCK")?;
+        check(ids.insert(c.id.clone(),(clocks.len()+CLOCK_START) as u8).is_none(),"DUPLICATE_CLOCK")?;
         clocks.push(c);
     }
     let clocks=Arc::new(clocks);
@@ -598,16 +623,21 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         }else{i32::MAX};
         check(active_start<=active_end&&active_start<days as i32&&active_end>=0,"EMPLOYMENT_WINDOW")?;
         let employed=|d:i32|(active_start..=active_end).contains(&d);
-        for k in ["manualShiftOverrides","manualShiftBaseIds"]{check(empty_array(p,k),"MANUAL_PROVENANCE_UNSUPPORTED")?;}
-        let mut manual=BTreeMap::new();
-        if !empty(p,"manualShiftByDate"){
-            check(!untimed,"DATED_OVERRIDE_UNTIMED")?;
-            let entries=p["manualShiftByDate"].as_object().ok_or("DATED_OVERRIDE")?;
-            for (date,sid) in entries{
-                let day=relative(date)?;check((0..days as i32).contains(&day),"DATED_OVERRIDE_DATE")?;
-                manual.insert(day,*ids.get(sid.as_str().ok_or("DATED_OVERRIDE")?).ok_or("CLOCK_REFERENCE")?);
+        let manual=if service{
+            manual_shift::read(p,&ids,&clocks,days,(active_start,active_end),relative)?
+        }else{
+            for k in ["manualShiftOverrides","manualShiftBaseIds"]{check(empty_array(p,k),"MANUAL_PROVENANCE_UNSUPPORTED")?;}
+            let mut dated=BTreeMap::new();
+            if !empty(p,"manualShiftByDate"){
+                check(!untimed,"DATED_OVERRIDE_UNTIMED")?;
+                let entries=p["manualShiftByDate"].as_object().ok_or("DATED_OVERRIDE")?;
+                for (date,sid) in entries{
+                    let day=relative(date)?;check((0..days as i32).contains(&day),"DATED_OVERRIDE_DATE")?;
+                    dated.insert(day,*ids.get(sid.as_str().ok_or("DATED_OVERRIDE")?).ok_or("CLOCK_REFERENCE")?);
+                }
             }
-        }
+            dated
+        };
         let sector_name=text(p,"sector")?;let sector=sectors[sector_name];let role_name=text(p,"role")?;let role=roles[role_name];
         let upper=role_name.trim().to_uppercase();
         let rest_role=rest_roles[&upper];
@@ -652,7 +682,7 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
             let id=v.as_str().ok_or("CLOCK_REFERENCE")?;let s=*ids.get(id).ok_or("CLOCK_REFERENCE")?;
             check(unique.insert(s),"DUPLICATE_CLOCK")?;options.push(s);
         }
-        check(if untimed{options.is_empty()}else{!options.is_empty()&&options.len()<=4},"TEMPORAL_CLOCK_OPTIONS")?;
+        check(if untimed{options.is_empty()}else{!options.is_empty()&&options.len()<=if service{12}else{4}},"TEMPORAL_CLOCK_OPTIONS")?;
         let imported=optional_text(p,"fixedImportedShiftId","")?;
         if !imported.is_empty(){
             check(!untimed,"CLOCK_REFERENCE")?;
@@ -660,10 +690,10 @@ fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_de
         }else if mode=="REST_ONLY"{
             let mut durations=BTreeSet::new();options.retain(|&s|durations.insert(clock(&clocks,s).unwrap().paid));
         }
-        let mut preferred_clock=[false;16];
+        let mut preferred_clock=0;
         let mut duration_seen=BTreeSet::new();
         for &state in &options{
-            if duration_seen.insert(clock(&clocks,state).unwrap().paid){preferred_clock[usize::from(state)]=true;}
+            if duration_seen.insert(clock(&clocks,state).unwrap().paid){preferred_clock|=clock_bit(usize::from(state));}
         }
         let compensation=boolean(policy,"compensationAuthorized",false)?;
         let short_pause=boolean(policy,"allowShortMealSimulation",false)?;
@@ -872,7 +902,11 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
                 "proofMethod":"EXHAUSTIVE_PERSONAL_DOMAIN","solverDiagnostics":diagnostics,
                 "assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null});
         },
-        Err("NO_PERSONAL_PATTERN")=>return unknown(start),Err("MAPPING_TIMEOUT")=>return super::failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
+        Err("NO_PERSONAL_PATTERN")=>return unknown(start),
+        // The service accepts a wider catalogue than the original synthetic model.
+        // Resource caps do not establish infeasibility or invalidate an otherwise legal request.
+        Err("TEMPORAL_DOMAIN_LIMIT"|"TEMPORAL_TOTAL_DOMAIN_LIMIT") if service=>return unknown(start),
+        Err("MAPPING_TIMEOUT")=>return super::failure(504,"SOLVER_TIMED_OUT","MAPPING","MAPPING_TIMEOUT"),
         Err(e)=>return super::failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING",e)
     };
     let mapped=start.elapsed().as_secs_f64();
@@ -1498,6 +1532,9 @@ mod tests{
 
 #[cfg(test)]
 mod service_contract_tests;
+
+#[cfg(test)]
+mod admission_tests;
 
 #[cfg(test)]
 mod boundary_tests;

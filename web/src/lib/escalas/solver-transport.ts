@@ -154,15 +154,18 @@ export async function requestSolver(input: EscalaInput, options: SolverOptions &
   }
   if (!response.ok) logSolverRejection("transport-http", "HTTP_REJECTED", { httpStatus: response.status });
   if ([401, 403].includes(response.status)) throw new EscalaSolverError("SOLVER_AUTH_FAILED");
+  if (response.status === 409 || response.status === 422 || response.status === 502) {
+    const result = z.object({ error: z.string() }).safeParse(await boundedJson(response, 2048).catch(() => null));
+    const code = result.success ? result.data.error : undefined;
+    if (response.status === 409 && code === "SOLVER_CANCELLED") throw new EscalaSolverError("SOLVER_CANCELLED");
+    if (response.status === 422 && code === "SOLVER_UNSUPPORTED_INPUT") throw new EscalaSolverError("SOLVER_UNSUPPORTED_INPUT");
+    if (response.status === 502 && code === "SOLVER_RESPONSE_INVALID") throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");
+  }
   if (response.status === 400 || response.status === 422) throw new EscalaSolverError("SOLVER_INVALID_INPUT");
   if (response.status === 500) throw new EscalaSolverError("SOLVER_INTERNAL_ERROR");
   if (response.status === 429) throw new EscalaSolverError("SOLVER_BUSY");
   if (response.status === 413) throw new EscalaSolverError("SOLVER_INPUT_TOO_LARGE");
   if (response.status === 504) throw new EscalaSolverError("SOLVER_TIMED_OUT");
-  if (response.status === 409) {
-    const body = await response.json().catch(() => null);
-    if (body?.error === "SOLVER_CANCELLED") throw new EscalaSolverError("SOLVER_CANCELLED");
-  }
   if (!response.ok) throw new EscalaSolverError("SOLVER_UNAVAILABLE");
   if (options.signal?.aborted) throw new EscalaSolverError("SOLVER_CANCELLED");
   throw new EscalaSolverError("SOLVER_INVALID_RESPONSE");

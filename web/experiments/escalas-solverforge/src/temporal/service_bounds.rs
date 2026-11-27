@@ -4,10 +4,10 @@
 use std::collections::{BTreeMap,BTreeSet};
 use serde_json::Value as V;
 use crate::model::Presence;
-use super::{Calendar,TemporalFacts,Result,array,check,civil_presence,clock_masks,number,range,text};
+use super::{CLOCK_START,Calendar,ClockMask,TemporalFacts,Result,array,check,civil_presence,clock_bit,clock_masks,number,range,text};
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 pub(super) struct Bound{
-    role:usize,scope:u8,mask:u16,previous_mask:u16,minimum:i64,minutes:i64,
+    role:usize,scope:u8,mask:ClockMask,previous_mask:ClockMask,minimum:i64,minutes:i64,
 }
 fn fields(row:&V,names:&[&str])->bool{
     row.as_object().is_some_and(|o|o.len()==names.len()&&names.iter().all(|k|o.contains_key(*k)))
@@ -58,9 +58,9 @@ pub(super) fn read(input:&V,calendar:&Calendar,sectors:&BTreeMap<String,usize>,r
 pub(super) fn deficit(facts:&TemporalFacts,attendance:&super::Attendance,role_members:&BTreeMap<usize,Presence>)->i64{
     if facts.protected_days==0&&facts.protected_bands.is_empty(){return 0;}
     let mut missing=0i64;
-    let masks=facts.clocks.iter().enumerate().fold((0u16,0u16),|(mut current,mut previous),(i,c)|{
-        if c.civil_parts().any(|(offset,_,_)|offset==0){current|=1u16<<(i+3);}
-        if c.civil_parts().any(|(offset,_,_)|offset==1){previous|=1u16<<(i+3);}
+    let masks=facts.clocks.iter().enumerate().fold((0,0),|(mut current,mut previous),(i,c)|{
+        if c.civil_parts().any(|(offset,_,_)|offset==0){current|=clock_bit(i+CLOCK_START);}
+        if c.civil_parts().any(|(offset,_,_)|offset==1){previous|=clock_bit(i+CLOCK_START);}
         (current,previous)
     });
     for d in 0..facts.days{

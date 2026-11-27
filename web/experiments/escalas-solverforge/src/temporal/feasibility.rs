@@ -2,56 +2,52 @@
 //! A sampled catalogue is never used to certify that a request is infeasible.
 use std::collections::BTreeMap;
 use std::time::Instant;
-use super::{Calendar,MAX_DAYS,Presence,Result,TemporalEmployee,TemporalFacts,
-    check,civil_presence,clock,comparison,service_bounds};
-
-type Attendance=super::Attendance;
+use super::{Attendance,Calendar,MAX_DAYS,Presence,Result,TemporalEmployee,TemporalFacts,
+    check,civil_presence,clock,clock_bit,clock_states,comparison,service_bounds};
 pub(super) struct BandConflict{pub(super) date:String,pub(super) start:i32,pub(super) end:i32}
 
 struct Sector{
-    attendance:Box<Attendance>,roles:BTreeMap<usize,Presence>,days:Vec<(usize,u64)>,
+    attendance:Attendance,roles:BTreeMap<usize,Presence>,days:Vec<(usize,u64)>,
 }
-impl Default for Sector{
-    fn default()->Self{Self{attendance:Box::new([[Presence::EMPTY;16];MAX_DAYS+1]),roles:BTreeMap::new(),days:Vec::new()}}
+impl Sector{
+    fn new(clocks:usize)->Self{Self{attendance:Attendance::new(clocks),roles:BTreeMap::new(),days:Vec::new()}}
 }
 #[derive(Default)]
 pub(super) struct Upper{sectors:BTreeMap<usize,Sector>}
 impl Upper{
     pub(super) fn observe(&mut self,p:&TemporalEmployee,raw:&[Vec<u8>],deadline:Instant)->Result<()>{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
-        let mut masks=[0u16;MAX_DAYS];
-        if p.facts.days==7{
-            // One-week enumeration is exhaustive and enrichment never prunes it.
+        let mut masks=[0;MAX_DAYS];
+        if p.facts.days==7&&!super::rules::wide_week(raw){
+            // Narrow one-week enumeration is exhaustive and enrichment never prunes it.
             for &i in p.allowed.iter(){
                 check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
                 for (d,&state) in p.catalog[i].states.iter().enumerate().take(7){
-                    if clock(&p.facts.clocks,state).is_some(){masks[d]|=1u16<<state;}
+                    if clock(&p.facts.clocks,state).is_some(){masks[d]|=clock_bit(usize::from(state));}
                 }
             }
         }else{
             // This intentionally overestimates: incompatible clocks/days may coexist.
             // Keeping pre-sampling options prevents false negative certificates.
             for (d,states) in raw.iter().enumerate(){for &state in states{
-                if clock(&p.facts.clocks,state).is_some(){masks[d]|=1u16<<state;}
+                if clock(&p.facts.clocks,state).is_some(){masks[d]|=clock_bit(usize::from(state));}
             }}
         }
-        let sector=self.sectors.entry(p.sector).or_default();let bit=Presence::one(p.id);
+        let sector=self.sectors.entry(p.sector).or_insert_with(||Sector::new(p.facts.clocks.len()));let bit=Presence::one(p.id);
         *sector.roles.entry(p.role).or_default()|=bit;
         if let Some(state)=p.carry_in{sector.attendance[MAX_DAYS][usize::from(state)]|=bit;}
         let mut days=0u64;
         for (day,&mask) in masks.iter().enumerate().take(p.facts.days){
             if mask!=0{days|=1u64<<day;}
-            for (state,present) in sector.attendance[day].iter_mut().enumerate().take(15).skip(3){
-                if mask&(1u16<<state)!=0{*present|=bit;}
-            }
+            for state in clock_states(mask){sector.attendance[day][state]|=bit;}
         }
         sector.days.push((p.role,days));Ok(())
     }
     pub(super) fn verify(&self,facts:&[std::sync::Arc<TemporalFacts>],calendar:&Calendar,deadline:Instant,detail:&mut Option<BandConflict>)->Result<()>{
         for (id,f) in facts.iter().enumerate(){
             check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
-            let empty=Sector::default();
-            let s=self.sectors.get(&id).unwrap_or(&empty);
+            let empty;
+            let s=if let Some(found)=self.sectors.get(&id){found}else{empty=Sector::new(f.clocks.len());&empty};
             let mut required=[0i64;MAX_DAYS];let mut role_required=BTreeMap::<usize,[i64;MAX_DAYS]>::new();
             for b in &f.bands{
                 check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;

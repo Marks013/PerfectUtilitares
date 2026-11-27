@@ -1,7 +1,6 @@
 /** Three engines, one frozen envelope and original product evaluator.
  * A separate Rust PR, never import the Timefold implementation into its source.
  */
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { newInput,newEmployee } from "../../../src/components/escalas/workspace-model";
 import { escalaInputSchema } from "../../../src/lib/escalas/schema";
@@ -15,9 +14,9 @@ import { arch } from "node:os";
 import { makeScenario, type ScenarioId, type Scenario } from "./fixtures";
 import { captureEnvelope, digest, envelopeProfile, runTrial, type Adapter } from "./core";
 import { baselineRevision, dockerAdapter, inspectImage, resources, solverforgeAdapter, temporalForgeAdapter, validateBaselineEnvelope, type ForgeTelemetry } from "./docker";
+import { currentBenchmarkSource, timefoldControlRevision as CONTROL } from "./solverforge-source";
 import { compareRosterCoverage, coverageQuality, preservesAdmittedDecemberCoverage, selectVerifiedRoster, type RosterSelectionReason } from "../../../src/lib/escalas/roster-quality";
 
-const CONTROL = "71945cd6e73c48b424dab1297fbc3bf8a15ae585";
 const CASES = ["team-10-week", "branch-50-four-weeks", "team-10-week-repair"] as const;
 const ORDERS = [
   ["ortools","timefold","solverforge"], ["ortools","solverforge","timefold"],
@@ -27,19 +26,8 @@ const ORDERS = [
 type Engine = typeof ORDERS[number][number];
 type Trial = Awaited<ReturnType<typeof runTrial>>;
 
-function git(args: string[]) {
-  const result = spawnSync("git", ["-C", "..", ...args], {encoding:"utf8", timeout:5000, killSignal:"SIGKILL"});
-  if (result.error || result.status !== 0) throw Error("FORGE_GIT_IDENTITY");
-  return result.stdout.trim();
-}
 function source() {
-  if (git(["status","--porcelain","--untracked-files=normal"])) throw Error("FORGE_DIRTY_SOURCE");
-  git(["diff","--quiet",baselineRevision,"--","web/src","web/ops/escalas","web/package-lock.json",
-    "web/scripts/escalas/benchmark-metrics.ts","web/scripts/escalas/benchmark-synthetic.ts",
-    ":(exclude)web/src/lib/escalas/cross-engine.test.ts"]);
-  git(["diff","--quiet",CONTROL,"--","web/scripts/escalas/cross-engine/core.ts","web/scripts/escalas/cross-engine/fixtures.ts"]);
-  return {revision:git(["rev-parse","HEAD"]),evaluatorTree:git(["rev-parse",baselineRevision+":web/src/lib/escalas"]),
-    comparatorBlob:git(["rev-parse",CONTROL+":web/scripts/escalas/cross-engine/core.ts"])};
+  return currentBenchmarkSource(baselineRevision);
 }
 function valid(trial: Trial) {
   return trial.engineNew && trial.timely && trial.rawAssessment?.valid === true && trial.rawAssessment.complete

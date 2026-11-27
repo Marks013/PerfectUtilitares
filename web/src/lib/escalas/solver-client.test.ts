@@ -610,6 +610,18 @@ describe("isolated schedule processor client", () => {
     await expect(solveEscala(fixture())).rejects.not.toThrow("private payload");
   });
 
+  it.each([
+    [422, "SOLVER_UNSUPPORTED_INPUT", "SOLVER_UNSUPPORTED_INPUT"],
+    [422, "INVALID_MODEL_INPUT", "SOLVER_INVALID_INPUT"],
+    [502, "SOLVER_RESPONSE_INVALID", "SOLVER_INVALID_RESPONSE"],
+    [502, "UPSTREAM_ERROR", "SOLVER_UNAVAILABLE"],
+  ])("maps the bounded processor error %s/%s to %s", async (status, error, code) => {
+    vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error, details: "private payload" }, { status })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code });
+    await expect(solveEscala(fixture())).rejects.not.toThrow("private payload");
+  });
+
   it("accepts bounded production timings and sufficient conflict families without inventing assignments", async () => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
     const solverDiagnostics = [{ family: "WEEKLY_MINUTES", message: "Os horários permitidos não completam a jornada semanal." }];

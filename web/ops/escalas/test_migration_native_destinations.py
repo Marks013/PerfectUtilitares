@@ -21,8 +21,9 @@ class NativeMigrationDestinationTests(unittest.TestCase):
         self.write(self.source)
 
     def write(self, text):
-        (self.root / self.path).write_text(text)
-        self.entry["destination_file_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+        content = text.encode("utf-8")
+        (self.root / self.path).write_bytes(content)
+        self.entry["destination_file_sha256"] = hashlib.sha256(content).hexdigest()
 
     def verify(self, entry=None):
         self.assertTrue(hasattr(readiness, "validate_native_destination"), "native port destinations must be checked, not silently credited")

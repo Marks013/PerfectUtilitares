@@ -291,7 +291,7 @@ mod tests{
                 plan.employees.iter().map(|p|p.catalog[p.pattern.unwrap()].states[..21].to_vec()).collect::<Vec<_>>(),evaluate(&plan));
         }
         let p=&plan.employees[1];let path=p.catalog[p.pattern.unwrap()];
-        assert!(path.states[..3].iter().chain(&path.states[17..21]).all(|&s|s==16));assert_eq!(path.states[4],3);
+        assert!(path.states[..3].iter().chain(&path.states[17..21]).all(|&s|s==super::super::INACTIVE));assert_eq!(path.states[4],3);
         assert_eq!(p.lock_flags[4],Some(true));
     }
 

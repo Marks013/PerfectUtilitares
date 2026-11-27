@@ -15,7 +15,7 @@ pub struct TemporalEmployee {
     pub rest_role: usize,
     pub untimed: bool,
     pub carry_in: Option<u8>,
-    pub preferred_clock: [bool;16],
+    pub preferred_clock: u128,
     pub rest_group: usize,
     pub rest_weight: i64,
     pub tie_costs: Arc<[u16]>,
