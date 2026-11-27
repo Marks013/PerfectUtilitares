@@ -15,6 +15,8 @@ mod service_guard;
 mod service_bounds;
 mod comparison;
 mod rest_guard;
+mod feasibility;
+mod report;
 use rules::{Rules,enumerate,PATH_LIMIT};
 use calendar::Calendar;
 use crate::model::Presence;
@@ -105,12 +107,12 @@ struct Record{state:u8,locked:Option<bool>,manual_absence:bool}
 #[derive(Clone,Debug,PartialEq,Eq,Hash)]
 struct Band{day:usize,start:i32,end:i32,estimated:bool,general:i64,roles:Vec<(usize,i64)>,clock_mask:u16,previous_mask:u16}
 #[derive(Debug,PartialEq,Eq,Hash)]
-pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
+pub struct TemporalFacts{pub(crate) days:usize,dates:Arc<Vec<String>>,weekday_offset:usize,week_offset:usize,visible:[bool;MAX_DAYS],clocks:Arc<Vec<Clock>>,bands:Vec<Band>,closed:[bool;MAX_DAYS],closing:i32,
     priority:[Option<i64>;MAX_DAYS],movement_enabled:bool,peak_weight:i64,peak_quantum:i64,
     protected_days:u64,protected_bands:Vec<service_bounds::Bound>,comparison:Option<comparison::Bounds>}
 impl TemporalFacts{
     fn weekday(&self,day:usize)->usize{(self.weekday_offset+day)%7}
-    fn week(&self,day:usize)->usize{(self.weekday_offset+day)/7}
+    fn week(&self,day:usize)->usize{(self.week_offset+day)/7}
 }
 #[derive(Clone)]
 pub struct Member{
@@ -378,14 +380,19 @@ fn read_mode(root:&V,deadline:Instant,civil_night:bool)->Result<TemporalPlan>{
     read_admitted(root,deadline,civil_night,false)
 }
 fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result<TemporalPlan>{
+    read_detailed(root,deadline,civil_night,service,&mut None)
+}
+fn read_detailed(root:&V,deadline:Instant,civil_night:bool,service:bool,proof_detail:&mut Option<feasibility::BandConflict>)->Result<TemporalPlan>{
     check(root.as_object().is_some_and(|o|o.len()==1)&&root["input"].is_object(),"ENVELOPE")?;
     let input=&root["input"];let policy=&input["policy"];
     let branch=identifier(input,"branchCode")?;let simulation=boolean(input,"simulation",false)?;
     let convention=if service{optional_text(input,"planningWeekStartsOn","MONDAY")?}
         else{text(input,"planningWeekStartsOn")?};
     let rest_version=if service&&input.get("restRulesVersion").is_none(){1}else{number(input,"restRulesVersion")?};
-    check(number(input,"schemaVersion")?==1&&(service||branch=="SYNTH"&&simulation)
-        &&text(input,"timeZone")?=="America/Sao_Paulo"
+    let version=if service&&input.get("schemaVersion").is_none(){1}else{number(input,"schemaVersion")?};
+    let zone=if service{optional_text(input,"timeZone","America/Sao_Paulo")?}else{text(input,"timeZone")?};
+    check(version==1&&(service||branch=="SYNTH"&&simulation)
+        &&zone=="America/Sao_Paulo"
         &&if service{["MONDAY","SUNDAY"].contains(&convention)&&(1..=3).contains(&rest_version)}
             else{convention=="SUNDAY"&&rest_version==3},"TEMPORAL_HORIZON")?;
     let branch_two=service&&rest_version>=3&&!branch.trim().is_empty()
@@ -460,7 +467,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
     type DemandGroups=BTreeMap<(usize,usize,bool),Vec<(i32,i32,i64,Option<usize>)>>;
     let mut demand_groups=DemandGroups::new();let mut demand_ids=BTreeSet::new();
     for d in array(input,"demands")?{
-        check(demand_ids.insert(identifier(d,"id")?),"DUPLICATE_DEMAND")?;
+        if !service||d.get("id").is_some(){check(demand_ids.insert(identifier(d,"id")?),"DUPLICATE_DEMAND")?;}
         let day=relative(text(d,"date")?)?;let a=number(d,"start")?;let b=number(d,"end")?;let n=number(d,"minimum")?;
         check((0..days as i32).contains(&day)&&a>=0&&a<b&&b<=1440&&range(n,0,250),"DEMAND")?;
         let sector=*sectors.get(text(d,"sector")?).ok_or("DEMAND_SECTOR")?;
@@ -499,7 +506,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
         }
     }
     let mut facts:Vec<_>=(0..sectors.len()).map(|sector|TemporalFacts{
-        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,protected_days:0,protected_bands:Vec::new(),comparison:None,
+        days,dates:Arc::clone(&labels),weekday_offset:calendar.offset,week_offset:(calendar.offset+7-usize::from(convention=="MONDAY"))%7,visible:calendar.visible,clocks:Arc::clone(&clocks),bands:Vec::new(),closed:closed_days,closing,movement_enabled:!priorities.is_empty(),peak_weight:1,peak_quantum:1,protected_days:0,protected_bands:Vec::new(),comparison:None,
         priority:std::array::from_fn(|d|{
             let matches=|p:&&(i32,i32,i64,Option<usize>)|p.0<=d as i32&&p.1>=d as i32;
             priorities.iter().filter(matches).filter(|p|p.3==Some(sector)).map(|p|p.2).max()
@@ -531,6 +538,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
     service_bounds::read(input,&calendar,&sectors,&roles,&mut facts)?;
     let facts:Vec<_>=facts.into_iter().map(Arc::new).collect();
     let mut employees=Vec::new();let mut seen=BTreeSet::new();
+    let mut coverage_upper=feasibility::Upper::default();
     type CohortKey=(usize,usize,bool,Vec<Vec<(i32,i32)>>,[i32;6],i32);
     let mut cohorts=BTreeMap::<CohortKey,usize>::new();
     let mut rest_groups=BTreeMap::<(usize,bool,[i32;6],i32),usize>::new();
@@ -543,7 +551,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
     for p in people{
         check(Instant::now()<deadline,"MAPPING_TIMEOUT")?;
         let pid=identifier(p,"id")?;
-        let name=identifier(p,"name")?;
+        let name=if service&&p.get("name").is_none(){""}else{identifier(p,"name")?};
         check((service||pid.strip_prefix("person-").is_some_and(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_digit()))
             &&name.starts_with("Synthetic person "))&&seen.insert(pid),"PERSON_IDENTITY")?;
         let active=text(p,"activeFrom")?;
@@ -701,6 +709,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
             if complete&&rules.legal_prefix(&states[..days],&clocks){Some(rules.pattern(states,&clocks))}else{None}
         };
         witnesses.push(hint);
+        let proof_options=service.then(||daily_options.clone());
         let key=(rules,daily_options);
         let (catalog,allowed)=match domains.entry(key){
             std::collections::btree_map::Entry::Occupied(entry)=>entry.get().clone(),
@@ -723,6 +732,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
         employees.push(TemporalEmployee{id:employees.len(),name_id:pid.to_string(),sector,role,cohort,facts:Arc::clone(&facts[sector]),
             catalog,allowed,pinned,leader_targets,leader_label,rest_role,untimed,rest_group,rest_weight:0,preferred_clock,tie_costs,lock_flags:std::array::from_fn(|d|old[d].and_then(|r|r.locked)),
             manual_absences:std::array::from_fn(|d|old[d].is_some_and(|r|r.manual_absence)),pattern:if pinned{Some(0)}else{None}});
+        if let Some(options)=proof_options{coverage_upper.observe(employees.last().unwrap(),&options,deadline)?;}
     }
     check(assignment_rows.iter().all(|r|r["employeeId"].as_str().is_some_and(|id|seen.contains(id))),"ASSIGNMENT_REFERENCE")?;
     for p in &mut employees{p.rest_weight=rest_weight;}
@@ -748,6 +758,7 @@ fn read_admitted(root:&V,deadline:Instant,civil_night:bool,service:bool)->Result
             person.catalog=Arc::new(catalog);person.pinned=person.allowed.len()==1;person.pattern=Some(index);
         }
     }
+    if service{coverage_upper.verify(&facts,&calendar,deadline,proof_detail)?;}
     let mut plan=TemporalPlan{employees,score:None};
     if complete&&evaluate(&plan)[0]!=0{
         // A complete but globally infeasible hint cannot replace construction.
@@ -768,8 +779,21 @@ fn solve_mode(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool)->V{
 fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,service:bool)->V{
     let root:V=match serde_json::from_slice(bytes){Ok(v)=>v,Err(_)=>return super::failure(400,"SPIKE_UNSUPPORTED_INPUT","MAPPING","JSON")};
     let deadline=start+budget-Duration::from_secs(1);
-    let mut plan=match if service{read_admitted(&root,deadline,false,true)}else if civil_night{read_mode(&root,deadline,true)}else{read(&root,deadline)}{
+    let mut proof_detail=None;
+    let mut plan=match if service{read_detailed(&root,deadline,false,true,&mut proof_detail)}else if civil_night{read_mode(&root,deadline,true)}else{read(&root,deadline)}{
         Ok(v)=>v,
+        Err(code @ ("INFEASIBLE_COVERAGE_BOUND"|"INFEASIBLE_COMPARISON_BOUND")) if service=>{
+            let message=if code=="INFEASIBLE_COMPARISON_BOUND"{
+                "A disponibilidade máxima não atende ao limite de desfalque configurado."
+            }else{"A disponibilidade máxima não atende à cobertura obrigatória; nenhuma proteção foi removida."};
+            let message=proof_detail.as_ref().map_or_else(||message.to_string(),|d|format!(
+                "Cobertura obrigatória indisponível em {}, das {:02}:{:02} às {:02}:{:02}; intervalos de refeição não contam como trabalho. Nenhuma proteção foi removida.",
+                d.date,d.start/60,d.start%60,d.end/60,d.end%60));
+            return json!({"httpStatus":200,"body":{"status":"INFEASIBLE","assignments":[],
+                "message":message,"rejectionStage":"SEARCH","proofMethod":"RELAXED_CAPACITY_BOUND",
+                "solverDiagnostics":[{"family":"COVERAGE","message":message}],
+                "wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null});
+        },
         Err("INFEASIBLE_PERSONAL_DOMAIN") if service=>return json!({"httpStatus":200,"body":{
             "status":"INFEASIBLE","message":"Exhaustive personal constraints admit no legal path",
             "assignments":[],"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null}),
@@ -815,6 +839,7 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
     if cost[0]!=0||start.elapsed()>budget||!plan.employees.iter().all(|p|p.pattern.is_some_and(|i|p.allowed.binary_search(&i).is_ok())){
         return unknown(start);
     }
+    let search_seconds=if attempted{search_start.elapsed().as_secs_f64()}else{0.0};
     let mut assignments=Vec::new();
     for person in &plan.employees{
         let p=person.catalog[person.pattern.unwrap()];
@@ -847,14 +872,16 @@ fn solve_admitted(bytes:&[u8],start:Instant,budget:Duration,civil_night:bool,ser
         };
         json!({"name":name,"status":status,"cost":if status.starts_with("SCOPED")||status.starts_with("PARTIAL"){Some(cost[i+1])}else{None}})
     }).collect();
-    json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":if service{"Bounded SolverForge candidate; independent validation required"}else{"Synthetic bounded temporal candidate; independent validation required"},
+    let mut reply=json!({"httpStatus":200,"body":{"status":"FEASIBLE","message":if service{"Bounded SolverForge candidate; independent validation required"}else{"Synthetic bounded temporal candidate; independent validation required"},
         "assignments":assignments,"wallTimeSeconds":start.elapsed().as_secs_f64()},"maxRssKiB":null,
         "temporal":{"version":2,"scope":if service{"SERVICE_TEMPORAL"}else if civil_night{"SYNTHETIC_CIVIL_NIGHT"}else{"SYNTHETIC_TEMPORAL"},"days":days,"untimed":untimed,"activePositions":active_positions,"untimedPositions":untimed_positions,
             "domainMode":if days==7{"EXACT_WEEK"}else{"BOUNDED_PATHS"},"pathLimit":if days==7{30000}else{PATH_LIMIT},"partialModel":true,"mapSeconds":mapped,"visibleDays":plan.employees[0].facts.visible.iter().filter(|&&v|v).count(),"seedSeconds":seed_seconds,
-            "searchSeconds":if attempted{search_start.elapsed().as_secs_f64()}else{0.0},"nativeSearch":attempted,
+            "searchSeconds":search_seconds,"nativeSearch":attempted,
             "nativeCandidateCost":native_candidate,"nativeAccepted":native_accepted,"guardPreserved":guard_preserved,
             "resultSource":if native_accepted{"NATIVE"}else if attempted{"SEED_RETAINED"}else{"CONSTRUCTOR_ONLY"},
-            "entities":plan.employees.len(),"patterns":patterns,"restWeight":rest_weight,"restPairs":rest_pairs,"restExcess":rest_excess,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}})
+            "entities":plan.employees.len(),"patterns":patterns,"restWeight":rest_weight,"restPairs":rest_pairs,"restExcess":rest_excess,"initialCost":initial,"finalCost":cost,"objectives":objective_audit}});
+    if service{reply["body"]["optimization"]=report::metadata(&plan,initial,cost,[mapped,seed_seconds,search_seconds],attempted,native_accepted);}
+    reply
 }
 #[cfg(test)]
 mod tests{

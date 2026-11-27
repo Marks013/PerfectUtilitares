@@ -1,65 +1,88 @@
-# SolverForge — runtime migrado, qualificação para main bloqueada
+# SolverForge — contratos recuperados; main continua bloqueada
 
-Atualização: 27/11/2026.
-Branch: `experiment/solverforge-consolidado-2026-11-26`.
-Base funcional anterior: `5732c4e21d793a0e22149907cd3e78e563a1ed05`.
+Atualização: 27/11/2026. Branch: `experiment/solverforge-consolidado-2026-11-26`.
+Base desta rodada: `c08e5a588c21902fd99b8be83156a12bac89aabe`.
+Árvore de código efetivamente compilada e testada, antes desta atualização documental: `2823f2b698f1e850a71c51054d6d590c4c7f3c3b`.
 
-## Runtime desta branch
+## Runtime preservado
 
-`web/ops/escalas/solver.py` chama exclusivamente o executável SolverForge por `--service`. O Python restante atende transporte HTTP, autenticação, validação estrutural, prazos, cancelamento e supervisão do processo. Não existe fallback para OR-Tools/CP-SAT no serviço.
+O serviço desta branch continua chamando exclusivamente o executável SolverForge por `--service`. O Python mantém transporte HTTP, autenticação, validação estrutural, prazos, cancelamento e supervisão de processos. Não há fallback OR-Tools/CP-SAT. O controle OR-Tools histórico permanece isolado no benchmark, fora do runtime.
 
-O Dockerfile compila o upstream SolverForge fixado em `78889c3ff9fda158c70e6a1f67f8c7f0fdae922e`, com Rust 1.100.0 e o Cargo.lock existente. O estágio final copia somente o executável e os módulos de transporte necessários. Compose e os builds da CI usam o contexto `web/`. Foram retirados a implementação CP-SAT, módulos de otimização antigos e o requirements.txt científico do runtime. Não foi executado build Docker nem deploy nesta rodada.
+Rust 1.100.0, upstream `78889c3ff9fda158c70e6a1f67f8c7f0fdae922e` e Cargo.lock permanecem fixados. Não houve alteração do comparador, das fixtures externas, dos limites de execução, das verificações de aprovação ou do inventário histórico. Não houve build Docker, deploy ou merge. A limpeza e a equivalência funcional não são declaradas completas.
 
-O OR-Tools congelado permanece exclusivamente como controle externo dos benchmarks, construído a partir da revisão histórica. Ele não é instalado pelo novo Dockerfile de runtime. O comparador do produto, suas fixtures e os critérios de não inferioridade não foram alterados. A limpeza e a migração dos contratos não são declaradas completas.
+## Correções desta rodada
 
-## Correções implementadas na continuação
+### Calendário de seis semanas
 
-A admissão nativa de serviço reconhece os padrões do contrato legado sem reescrever o payload: semana iniciada na segunda-feira quando omitida, regras de folgas v1 quando omitidas, modo TIMED quando omitido e calendário MANUAL quando omitido. Valores explícitos malformados continuam rejeitados. Semanas de segunda-feira e domingo mantêm os dias civis corretos. Restrições de sábado v2/v3 não são impostas silenciosamente a uma entrada v1. A filial numérica 02 tem o fechamento dominical v3 aplicado sem inventar feriados.
+O teste de 150 pessoas, 42 dias e 6.300 demandas estimadas expôs um panic. A admissão de semanas iniciadas na segunda-feira estava correta, mas a agregação de custos reutilizava o deslocamento do dia civil para indexar a semana de planejamento. O último domingo tentava acessar o índice 6 de um vetor de seis posições.
 
-Duas respostas indevidamente viáveis foram reproduzidas na suíte pública e corrigidas: jornada acima de oito horas sem a autorização de compensação exigida pelo contrato configurado, e uma folga fixa na fronteira que dependia de um feriado futuro no qual a folga não era permitida. As asserções públicas originais de ambos os casos passaram depois da correção.
+A regressão foi reproduzida em um teste nativo antes da correção. `TemporalFacts` agora separa `week_offset` de `weekday_offset`. O último domingo permanece na sexta semana; nenhuma data, demanda ou regra foi descartada. O teste público original de 6.300 demandas passou depois da correção.
 
-Domínios pessoais exatos vazios podem produzir INFEASIBLE. Isso só ocorre após enumeração semanal completa ou enumeração completa de um produto pequeno de semanas, limitado a 384 combinações. Uma busca amostrada sem resultado continua UNKNOWN; não se afirma inviabilidade matemática por falta de uma amostra.
+### Provas de conflito de cobertura
 
-Foram acrescentados sete testes Rust e um teste de sucesso HTTP real. Restauraram-se decoradores estáticos e classes auxiliares perdidos na extração anterior dos testes. Uma chamada de calendário em teste usa o auxiliar neutro original. Foram conferidas por AST 104 expressões de asserção preservadas nos três arquivos de testes ajustados. O teste de identidade com carga de 42h passou a fornecer autorização explícita de compensação; as asserções de identidade e imutabilidade foram mantidas. O teste HTTP de contrato não suportado mantém a resposta 422 usando uma política realmente não implementada, e o novo teste separado exige sucesso para o contrato legado agora admitido.
+O novo módulo `temporal/feasibility.rs` calcula condições necessárias sobre uma aproximação otimista das disponibilidades legais. Para uma semana usa a enumeração pessoal completa; em horizontes maiores usa as opções anteriores à amostragem. Uma amostra incompleta nunca é usada para afirmar inviabilidade.
 
-## Verificação local do código publicado
+Verifica capacidade obrigatória por data/cargo/faixa, proteções de presença, limites privados de desfalque e a capacidade semanal de dias trabalhados. A desigualdade por dias civis é omitida quando há jornada que cruza meia-noite, pois cinco jornadas podem ocupar mais de cinco datas. DUTY, folgas, afastamentos e intervalos não são contados como trabalho com horário.
 
-Ambiente: laboratório Linux x86_64/gnu isolado, Rust 1.100.0. Não é a qualificação ARM64/musl nem o ambiente de produção.
+Somente uma contradição dessas condições produz INFEASIBLE com `proofMethod=RELAXED_CAPACITY_BOUND`, atribuições vazias e diagnóstico COVERAGE. Expiração continua timeout; falta de resultado na busca amostrada continua UNKNOWN. O diagnóstico de uma faixa impossível informa a data e o horário efetivos. O teste público do almoço passou com suas asserções originais, incluindo 12:00 e a explicação sobre intervalos de refeição.
+
+A segurança do certificado foi confrontada com todas as 128 combinações de dias exigidos de um domínio semanal exato, além de testes contra falsa inviabilidade por redução de catálogo e contra uso após o prazo.
+
+### Metadados e entrada pública
+
+O serviço passou a devolver custos inicial/final e tempos efetivamente medidos. `optimization.method=BOUNDED_LEXICOGRAPHIC_SEARCH`, `globalOptimalityProven=false` e `partialModel=true`. Os elementos de `phases` são identificados como níveis do escore lexicográfico, não buscas sequenciais independentes, e não recebem prova de ótimo. O indicador de liderança deriva das atribuições efetivas e não é convertido em cobertura horária.
+
+Identificadores opcionais de demanda e metadados legados omitidos são aceitos conforme o contrato público existente. Valores explícitos malformados continuam rejeitados; identificadores de colaboradores e payload não são reescritos. A admissão sintética continua separada e estrita. Há dois novos testes de sucesso HTTP real para metadados e conflito comprovado.
+
+## Verificação executada
+
+Laboratório Linux x86_64/GNU, Rust 1.100.0. Os arquivos publicados foram comparados byte a byte com a cópia compilada. Este resultado não equivale à homologação ARM64/musl, de contêiner ou de produção.
 
 | Verificação | Resultado |
 |---|---|
-| Testes Rust release completos | 100 aprovados; zero falhas, ignorados ou filtrados |
-| Testes Python do experimento | 45 aprovados |
-| Contratos de processo, transporte e HTTP real | 47 aprovados |
+| Rust release, conjunto completo | 109 aprovados; zero falhas, ignorados ou filtrados |
+| Python do experimento | 45 aprovados |
+| Transporte, HTTP e processo | 49 aprovados |
 | Clippy all-targets com -D warnings | Aprovado |
 | Build release | Aprovado |
-| Ruff de ops/escalas | Aprovado |
-| Cargo.lock e git diff --check | Aprovados |
-| Suíte pública completa, sem filtro | 227 testes; 17 falhas e 89 erros; zero ignorados |
+| Ruff, Cargo.lock e git diff --check | Aprovados |
+| Suíte pública completa, sem filtro | 229 testes; 4 falhas, 53 erros; zero ignorados |
 
-O processo de verificação completo terminou com código 1 por causa da suíte pública. Os 47 testes de fronteira também fazem parte da suíte maior; não devem ser somados como cobertura independente. Os 40 arquivos da árvore de fontes Rust foram comparados byte a byte com a cópia compilada. O binário final foi o mesmo usado nos testes públicos.
+A suíte pública continua REPROVADA e terminou com código 1. Os 49 testes de transporte estão contidos nessa suíte, não são cobertura adicional independente. O registro anterior c08e5a5 tinha 227 testes, 17 falhas e 89 erros. Foram acrescentados nove testes Rust e dois testes HTTP, sem retirar asserções públicas existentes. A regressão nova de calendário teve um quantificador de teste corrigido para exigir que todos os dias pertençam às seis semanas; nenhuma asserção histórica foi afrouxada.
 
-Na suíte completa restam 70 erros de entrada não suportada, 12 erros por ausência dos metadados optimization esperados e outros erros de compatibilidade ou auxiliares da implementação anterior. Treze asserções ainda esperam INFEASIBLE onde a busca retorna UNKNOWN. Há também contratos de rotação, controle cooperativo antigo e a verificação de prontidão reprovados. Nenhum desses resultados foi transformado em aprovação.
+As 12 ausências de metadados optimization e as 13 asserções UNKNOWN versus INFEASIBLE do registro anterior não reapareceram no conjunto final. Isso é evidência deste conjunto, não prova de completude do modelo.
 
-## Contratos preservados e impedimentos à promoção
+## Medição direcionada de diagnóstico
 
-`ops/escalas/migration-test-inventory.json` conserva 481 registros históricos: 126 testes retidos na preparação e 355 contratos ainda sujeitos a portabilidade ou revisão explícita de aposentadoria. A origem imutável de cada arquivo é registrada. Esses 355 contratos não são considerados redundantes automaticamente: `test_migration_readiness.py` reprova enquanto houver pendências. Os arquivos de testes ligados ao mecanismo removido não foram usados para alegar equivalência funcional.
+Três pares sequenciais com a mesma entrada inviável, um colaborador e seis datas obrigatórias na semana:
 
-Continuam necessárias a cobertura de políticas/calendários e funcionalidades ainda não admitidas, a equivalência de diagnóstico e metadados, a recuperação temporal por cargo/faixa, vigência parcial e dezembro, e os déficits dominicais residuais. Não foi executada nova comparação ampliada ou de 32 repetições para esta migração. Ganhos anteriores não certificam este runtime.
+| Código | Mediana externa do processo | Resultado |
+|---|---:|---|
+| c08e5a5 | 11,001962 s | UNKNOWN |
+| candidato desta rodada | 0,001355 s | INFEASIBLE com certificado de capacidade |
 
-## CI e preservação
+Todos os pares devolveram atribuições vazias. SHA-256 da entrada: `433be36630e7eaea793c54621d121ab186518ff15ce9a0225e9a6ea424b96051`.
 
-O workflow ARM64 existente agora também dispara para alterações nesta branch e executa os contratos HTTP e a suíte pública completa, além da compilação, Clippy, lock e auditoria já existentes. Mantém permissions contents: read e preservação de artefatos. O workflow temporário usado apenas para transferir objetos Git conferidos por hash foi removido da árvore final; seu sucesso não constitui qualificação.
+É uma medição restrita de rejeição antecipada, não benchmark geral de escalas viáveis, ganho de qualidade ou qualificação de estabilidade. Não foram executados nesta rodada o comparador ampliado nem as 32 repetições; ganhos anteriores não certificam o código novo.
 
-Esta publicação é um checkpoint de desenvolvimento solicitado, não uma aprovação para main. Não houve merge, deploy, alteração na main, no Timefold #74 ou na branch original do PR #75. A mudança de referência foi feita sem forçar nem reescrever o histórico.
+## Pendências verificadas
 
-## Evidência
+As quatro falhas finais são: o bloqueio de prontidão de migração, a rotação de líderes sem horário que ainda esvazia um setor e duas expectativas antigas de controle cooperativo da busca. Os 53 erros incluem 46 entradas ainda não suportadas, dependências de auxiliares removidos do solver anterior e uma incompatibilidade de validação. Não houve panic na execução final do caso de 6.300 demandas.
 
-Árvore de fontes e configuração executada antes desta atualização documental: `d13b9b5ae5db7484220fc3a11c19a904ff50ba06`.
-SHA-256 dos logs locais:
+O inventário mantém 481 contratos históricos, dos quais 355 aguardam portabilidade ou revisão explícita de aposentadoria. Eles não foram considerados redundantes nem removidos para liberar a CI. Continuam obrigatórias a compatibilidade integral, a qualidade ampliada por cargo/faixa, vigência parcial, dezembro e domingos, a validação de segurança/contêiner e a comparação completa de desempenho antes de main.
 
-- Rust: `32d91e9063d12d1b545c6742f873026ce4d8a76c4b989732460dd12a2d8d0f11`.
-- Clippy: `2953ceba66bd00433726bfc34d1b443e56083773ab88c15049123dfd0a3cc578`.
-- Build: `bf50fe235ef24b8d1d891b290c7f7b0efa9630642549aee8b2c96f6df3d52ec9`.
-- Fronteira HTTP/processo: `01e3f38eb5051f34795258fe3870e99749444ad369b2e597cbdc0c9fd8132f0b`.
-- Suíte completa: `4270c7424c2d485a3ef88a3de63eabc544f837f4fa643a849ee7bc4ef10d7a1e`.
+## Publicação e preservação
+
+Mudanças limitadas a cinco arquivos de código/testes e este relatório. O workflow temporário de transferência de objetos verificados por hash é removido da árvore final. A qualificação ARM64 existente e sua suíte pública sem filtro permanecem obrigatórias, com permissões de leitura. A transferência de objetos não é uma aprovação de release.
+
+Publicação apenas na branch consolidada, sem força nem reescrita de histórico. Main, Timefold #74, a branch original do PR #75 e produção permanecem fora desta intervenção.
+
+## Evidências locais
+
+Diretório: `/vercel/lab/contracts-round3`.
+
+- Rust completo: `3f9d60553c3eacebcfade070bffe7f4bcd546cafc03d75e2cc2a81ac97614a5e`.
+- Clippy: `a05e9e001e57b86d472bc20c7a9f219314b9a613d9b5dbdf55517d13bbf08cbe`.
+- Build: `9257d34735517fc5c5a0fa8a9ea59a981d733f1484489ba047fbbab53d04b403`.
+- HTTP/processo: `3f74041fb13c2576d3cc14c8a7e14ff18938702292ff361768d1f7314c492fab`.
+- Suíte completa: `47adb0873b33f013fba283692f6f5ad4cca1a8af05bc98c770ecb2108adba6af`.

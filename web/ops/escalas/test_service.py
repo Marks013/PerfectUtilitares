@@ -78,6 +78,32 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(sum(a["kind"] == "WORK" for a in result["assignments"]), 5)
         self.assertEqual(data, before)
 
+    def test_real_http_returns_measured_native_metadata_for_optional_demand_id(self):
+        data = fixture(40)
+        data["demands"] = [{"date": "2026-11-04", "sector": "Reposição",
+                            "start": 480, "end": 540, "minimum": 1, "estimated": True}]
+        original = copy.deepcopy(data)
+        status, result = self.request("/solve", {"input": data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "FEASIBLE")
+        metadata = result["optimization"]
+        self.assertEqual(metadata["method"], "BOUNDED_LEXICOGRAPHIC_SEARCH")
+        self.assertFalse(metadata["globalOptimalityProven"])
+        self.assertTrue(metadata["phases"])
+        self.assertTrue(all(not phase["proven"] for phase in metadata["phases"]))
+        self.assertEqual(data, original)
+
+    def test_real_http_distinguishes_proven_coverage_conflict_without_assignments(self):
+        data = fixture(40)
+        data["demands"] = [{"date": "2026-11-04", "sector": "Reposição",
+                            "start": 480, "end": 540, "minimum": 2}]
+        status, result = self.request("/solve", {"input": data}, self.identity())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "INFEASIBLE")
+        self.assertEqual(result["assignments"], [])
+        self.assertEqual(result["proofMethod"], "RELAXED_CAPACITY_BOUND")
+        self.assertEqual(result["solverDiagnostics"][0]["family"], "COVERAGE")
+
     def test_unsupported_real_contract_is_explicit_not_fabricated_feasibility(self):
         data = fixture()
         data["policy"]["normativeProfile"] = "UNMODELED_POLICY"
