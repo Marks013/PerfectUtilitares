@@ -20,7 +20,7 @@ pub(super) fn metadata(plan:&TemporalPlan,initial:Cost,final_cost:Cost,times:[f6
         active.then(||json!({"objective":name,"scope":scope,"execution":"LEXICOGRAPHIC_SCORE_LEVEL",
             "status":"FEASIBLE","proven":false,"initialValue":initial[i+1],"incumbentValue":final_cost[i+1]}))
     }).collect();
-    let mut out=json!({"engine":"SolverForge","method":"BOUNDED_LEXICOGRAPHIC_SEARCH",
+    let mut out=json!({"engine":"SolverForge","version":1,"method":"BOUNDED_LEXICOGRAPHIC_SEARCH",
         "globalOptimalityProven":false,"partialModel":true,"phases":phases,
         "constructionSeconds":times[0],"feasibilitySeconds":times[1],"refinementSeconds":times[2],
         "stopReason":"BOUNDED_REFINEMENT","nativeSearchAttempted":attempted,"nativeCandidateAccepted":accepted});

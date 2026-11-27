@@ -244,8 +244,8 @@ export type EscalaSolveResult = {
     search: { attempted: boolean; retainedReference: boolean; retentionReason?: string };
     preparationSeconds: number; requestSeconds: number;
   };
-  /** Numeric diagnostics only; no employee identifiers or personal payload. */
-  optimization?: { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][];
+  /** Structured diagnostics only; no employee identifiers or personal payload. */
+  optimization?: import("./solverforge-optimization").SolverForgeOptimization | { budgetSeconds: number; phases: EscalaOptimizationPhase[]; unattemptedObjectives?: EscalaOptimizationPhase["objective"][];
     constructionSeconds?: number; feasibilitySeconds?: number; refinementSeconds?: number; stopReason?: string;
     leadership?: { criticalSectorDays: number; criticalSectorDaysWithoutLeader: number; prioritizedSectorDays: number;
       prioritizedSectorDaysWithoutLeader: number; timedCoverageIncluded: false } };

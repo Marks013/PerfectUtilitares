@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EscalaSolverError } from "./solver-errors";
+import { solverForgeOptimizationSchema } from "./solverforge-optimization";
 import { requestSolver, type SolverOptions } from "./solver-transport";
 export { EscalaSolverError } from "./solver-errors";
 import { escalaInputSchema } from "./schema";
@@ -38,7 +39,7 @@ const resultSchema = z.strictObject({
     family: z.enum(["AVAILABILITY", "BLOCKS", "DAYS_WORKED", "WEEKLY_MINUTES", "COVERAGE", "REST"]), message: z.string().min(1).max(500),
     dates: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(42).optional(),
   })).max(12).optional(),
-  optimization: z.strictObject({
+  optimization: z.union([z.strictObject({
     budgetSeconds: z.number().finite().min(0).max(60),
     constructionSeconds: z.number().finite().min(0).max(60).optional(),
     feasibilitySeconds: z.number().finite().min(0).max(60).optional(),
@@ -90,7 +91,7 @@ const resultSchema = z.strictObject({
       }
     // Operational rest objectives and at most four bounded sector repairs.
     })).max(20),
-  }).optional(),
+  }), solverForgeOptimizationSchema]).optional(),
   assignments: z.array(z.strictObject({
     employeeId: z.string().max(100), date: z.string().max(10),
     kind: z.enum(["WORK", "DUTY", "OFF", "ABSENCE", "HOLIDAY"]),
@@ -100,15 +101,24 @@ const resultSchema = z.strictObject({
   if (result.rejectionStage !== undefined && result.status !== "INFEASIBLE") {
     context.addIssue({ code: "custom", path: ["rejectionStage"], message: "Etapa de rejeição exige resultado inviável" });
   }
+  if (result.optimization && "engine" in result.optimization && result.status !== "FEASIBLE") {
+    context.addIssue({ code: "custom", path: ["status"], message: "Telemetria SolverForge v1 requer resultado viável sem prova de ótimo" });
+  }
 });
 
-function normalizeSkippedObjectives(optimization: NonNullable<EscalaSolveResult["optimization"]>) {
+function normalizeSkippedObjectives(optimization: Exclude<NonNullable<EscalaSolveResult["optimization"]>, { engine: "SolverForge" }>) {
   const skipped = optimization.phases.filter(phase => phase.searchSkippedReason).map(phase => phase.objective);
   if (!skipped.length) return optimization;
   const attempted = new Set(optimization.phases.filter(phase => !phase.searchSkippedReason)
     .flatMap(phase => [phase.objective, ...(phase.members?.map(member => member.objective) ?? [])]));
   const objectives = new Set([...(optimization.unattemptedObjectives ?? []), ...skipped]);
   return { ...optimization, unattemptedObjectives: [...objectives].filter(name => !attempted.has(name)) };
+}
+
+function searchedRestSpacing(optimization: EscalaSolveResult["optimization"]): boolean {
+  if (!optimization) return false;
+  if ("engine" in optimization && !optimization.nativeSearchAttempted) return false;
+  return optimization.phases.some(phase => phase.objective === "REST_SPACING");
 }
 
 /** Pending days are permitted in drafts, never in an incumbent used to replace a calculated roster. */
@@ -264,7 +274,7 @@ export async function solveEscala(
     && (parsed.generationMode === "HOURS_ONLY" || day.kind === "HOLIDAY" || implicit.has(assignmentKey(day)));
   try {
     const { rejectionStage, ...result } = resultSchema.parse(payload);
-    if (result.optimization) result.optimization = normalizeSkippedObjectives(result.optimization);
+    if (result.optimization && !("engine" in result.optimization)) result.optimization = normalizeSkippedObjectives(result.optimization);
     if (result.status === "FEASIBLE" || result.status === "OPTIMAL") {
       const previous = new Map(parsed.assignments.map(day => [`${day.employeeId}\0${day.date}`, day]));
       const excluded = new Set(parsed.employees.filter(person => person.planningEnabled === false).map(person => person.id));
@@ -427,7 +437,7 @@ export async function solveEscala(
       if (!comparisonNotice && finalMerit.comparable && !originalReferenceReusable) retentionReason = `REPAIR_COMPARABLE:${finalMerit.reason}`;
       const restQuality = {
         before: restPairSummary(finalMerit.comparable ? qualityReference : parsed), after: restPairSummary(selected.input),
-        search: { attempted: restSpacing || refined.assignments !== parsed.assignments || (result.optimization?.phases.some(phase => phase.objective === "REST_SPACING") ?? false),
+        search: { attempted: restSpacing || refined.assignments !== parsed.assignments || searchedRestSpacing(result.optimization),
           retainedReference: selected.retainedReference, retentionReason },
         preparationSeconds: Math.round(preparationSeconds * 1000) / 1000,
         requestSeconds: Math.round((performance.now() - started)) / 1000,

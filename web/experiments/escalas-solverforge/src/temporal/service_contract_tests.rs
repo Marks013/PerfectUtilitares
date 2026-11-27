@@ -98,6 +98,8 @@ fn service_metadata_describes_actual_lexicographic_search_not_proven_phases(){
     let answer=solve_service(&serde_json::to_vec(&legacy()).unwrap(),Instant::now(),Duration::from_secs(4));
     assert_eq!(answer["body"]["status"],"FEASIBLE","{answer}");
     let metadata=&answer["body"]["optimization"];
+    assert_eq!(metadata["engine"],"SolverForge");
+    assert_eq!(metadata["version"],1);
     assert_eq!(metadata["method"],"BOUNDED_LEXICOGRAPHIC_SEARCH");
     assert_eq!(metadata["globalOptimalityProven"],false);
     assert_eq!(metadata["constructionSeconds"],answer["temporal"]["mapSeconds"]);

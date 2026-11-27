@@ -246,6 +246,11 @@ const optimizationLabels: Partial<Record<Optimization["phases"][number]["objecti
 
 function OptimizationSearchSummary({ optimization }: { optimization?: Optimization }) {
   if (!optimization) return null;
+  if ("engine" in optimization) return <p className={styles.muted}>{
+    optimization.nativeCandidateAccepted ? "O refinamento do SolverForge melhorou a solução inicial do modelo parcial." :
+    optimization.nativeSearchAttempted ? "A busca limitada do SolverForge manteve a solução inicial." :
+    "O SolverForge montou uma solução inicial sem iniciar o refinamento."
+  } Não há prova de ótimo global.</p>;
 
   const recorded = new Set<Optimization["phases"][number]["objective"]>();
   const skipped = new Set<string>();

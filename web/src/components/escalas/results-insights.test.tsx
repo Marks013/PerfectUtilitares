@@ -35,6 +35,22 @@ describe("buscas no resumo da proposta", () => {
     expect(html).not.toContain("Solução viável encontrada");
   });
 
+  it("não apresenta pontuações do SolverForge como fases independentes ou ótimas", () => {
+    const html = renderProposal({
+      engine: "SolverForge", version: 1, method: "BOUNDED_LEXICOGRAPHIC_SEARCH",
+      globalOptimalityProven: false, partialModel: true, nativeSearchAttempted: true, nativeCandidateAccepted: false,
+      constructionSeconds: 0.1, feasibilitySeconds: 0.2, refinementSeconds: 0.3, stopReason: "BOUNDED_REFINEMENT",
+      phases: [{ objective: "REST_SPACING", status: "FEASIBLE", scope: "SCOPED_MONTHLY_EXCESS_AND_PAIRS",
+        execution: "LEXICOGRAPHIC_SCORE_LEVEL", proven: false, initialValue: 0, incumbentValue: 0 }],
+      leadership: { criticalSectorDaysWithoutLeader: 1, timedCoverageIncluded: false },
+    });
+    expect(html).toContain("A busca limitada do SolverForge manteve a solução inicial.");
+    expect(html).toContain("Não há prova de ótimo global.");
+    expect(html).toContain("setor(es)/dia de maior movimento sem responsável");
+    expect(html).not.toContain("presenças planejadas");
+    expect(html).not.toContain("Buscas iniciadas e sem conclusão");
+  });
+
   it("separa a fase pulada dos objetivos sem registro de tentativa", () => {
     const html = renderProposal({
       budgetSeconds: 12,

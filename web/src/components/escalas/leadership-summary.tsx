@@ -1,7 +1,13 @@
 import type { EscalaSolveResult } from "@/lib/escalas/types";
 
 export function LeadershipSummary({ counts }: { counts: NonNullable<EscalaSolveResult["optimization"]>["leadership"] }) {
-  if (!counts?.prioritizedSectorDays) return null;
+  if (!counts) return null;
+  if (!("prioritizedSectorDays" in counts)) {
+    return counts.criticalSectorDaysWithoutLeader > 0 ? <p className="text-sm">
+      {counts.criticalSectorDaysWithoutLeader} setor(es)/dia de maior movimento sem responsável planejado. Esse indicador não mede cobertura por horário.
+    </p> : null;
+  }
+  if (!counts.prioritizedSectorDays) return null;
   const present = counts.prioritizedSectorDays - counts.prioritizedSectorDaysWithoutLeader;
   return <section aria-label="Presença dos responsáveis" className="space-y-1 rounded-lg border border-[color:var(--app-border)] p-3 text-sm">
     <h3 className="font-semibold">Presença dos responsáveis</h3>

@@ -51,6 +51,50 @@ function expectViableWorkerResult(input: EscalaInput) {
 
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
+describe("SolverForge optimization wire v1", () => {
+  const optimization = {
+    engine: "SolverForge", version: 1, method: "BOUNDED_LEXICOGRAPHIC_SEARCH",
+    globalOptimalityProven: false, partialModel: true, nativeSearchAttempted: false, nativeCandidateAccepted: false,
+    constructionSeconds: 0.1, feasibilitySeconds: 0.2, refinementSeconds: 0,
+    stopReason: "BOUNDED_REFINEMENT",
+    leadership: { criticalSectorDaysWithoutLeader: 2, timedCoverageIncluded: false },
+    phases: [{ objective: "REST_SPACING", scope: "SCOPED_MONTHLY_EXCESS_AND_PAIRS", execution: "LEXICOGRAPHIC_SCORE_LEVEL",
+      status: "FEASIBLE", proven: false, initialValue: 1, incumbentValue: 1 }],
+  };
+  const response = { status: "FEASIBLE", assignments: completeAssignments(), message: "Proposta", wallTimeSeconds: 0.3, optimization };
+
+  beforeEach(() => vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080"));
+
+  it.each([false, true])("preserves the real diagnostics and distinguishes native search (%s)", async nativeSearchAttempted => {
+    const metadata = { ...optimization, nativeSearchAttempted, nativeCandidateAccepted: nativeSearchAttempted };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...response, optimization: metadata })));
+    const result = await solveEscala(fixture());
+    expect(result).toMatchObject({ status: "FEASIBLE", optimization: metadata, restQuality: { search: { attempted: nativeSearchAttempted } } });
+    expect(result.assignments).toEqual(response.assignments.map(day => ({ ...day, locked: false })));
+    expect(result.optimization).not.toHaveProperty("budgetSeconds");
+    expect(result.optimization?.phases[0]).not.toHaveProperty("wallTimeSeconds");
+  });
+
+  it.each([
+    { optimization: { ...optimization, version: 2 } },
+    { optimization: { ...optimization, globalOptimalityProven: true } },
+    { optimization: { ...optimization, budgetSeconds: 2 } },
+    { optimization: { ...optimization, nativeCandidateAccepted: true } },
+    { optimization: { ...optimization, phases: [...optimization.phases, ...optimization.phases] } },
+    { optimization: { ...optimization, phases: [{ ...optimization.phases[0], scope: "SCOPED" }] } },
+    { optimization: { ...optimization, phases: [{ ...optimization.phases[0], proven: true }] } },
+    { status: "OPTIMAL" },
+  ])("rejects invalid or misleading native diagnostics %#", async patch => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...response, ...patch })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_INVALID_RESPONSE" });
+  });
+
+  it("does not let valid diagnostics bypass validation of the proposed assignments", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ...response, assignments: response.assignments.slice(1) })));
+    await expect(solveEscala(fixture())).rejects.toMatchObject({ code: "SOLVER_RESPONSE_INCOMPLETE" });
+  });
+});
+
 describe("December conversion coverage", () => {
   it.each([
     ["UNKNOWN", { kind: "SEARCH_UNFINISHED", reason: "SOLVER_UNKNOWN" }],
@@ -283,7 +327,7 @@ describe("isolated schedule processor client", () => {
     const result = await solveEscala(input);
     expect(result.status).toBe("FEASIBLE");
     expect(result.optimization).toEqual({ ...optimization, unattemptedObjectives: ["COVERAGE"] });
-    expect(result.optimization?.phases[0].preparationSeconds).toBe(0.27);
+    expect(result.optimization?.phases[0]).toHaveProperty("preparationSeconds", 0.27);
     expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
   });
   it("counts a local repair when global coverage search was skipped", async () => {
@@ -905,7 +949,7 @@ describe("isolated schedule processor client", () => {
     expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
     expect(result.optimization).toEqual(optimization);
     if (decisionHintStatus === undefined) expect(result.optimization?.phases[0]).not.toHaveProperty("decisionHintStatus");
-    else expect(result.optimization?.phases[0].decisionHintStatus).toBe(decisionHintStatus);
+    else expect(result.optimization?.phases[0]).toHaveProperty("decisionHintStatus", decisionHintStatus);
   });
   it.each(["UNSUPPORTED", "failed", null, 42, true, [], {}].map(decisionHintStatus => ({ decisionHintStatus })))("rejects invalid decision hint status=$decisionHintStatus through the real parser", async ({ decisionHintStatus }) => {
     vi.stubEnv("ESCALAS_SOLVER_URL", "http://escalas-solver:8080");
@@ -972,7 +1016,8 @@ describe("isolated schedule processor client", () => {
     expect(result.status).toBe("FEASIBLE");
     expect(result.assignments).toEqual(completeAssignments().map(day => ({ ...day, locked: false })));
     expect(result.optimization).toEqual(optimization);
-    expect(result.optimization?.phases[0].preparationSeconds).toBe(preparationSeconds);
+    if (preparationSeconds === undefined) expect(result.optimization?.phases[0]).not.toHaveProperty("preparationSeconds");
+    else expect(result.optimization?.phases[0]).toHaveProperty("preparationSeconds", preparationSeconds);
     expect(result.optimization?.phases[0]).not.toHaveProperty("bestBound");
     expect(result.optimization?.phases[1]).not.toHaveProperty("preparationSeconds");
   });
