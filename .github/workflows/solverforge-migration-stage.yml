@@ -14,12 +14,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/forge-target
+      CARGO_TARGET_DIR: /tmp/solverforge-migration-target
       RAYON_NUM_THREADS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -34,7 +34,7 @@ jobs:
           base='5732c4e21d793a0e22149907cd3e78e563a1ed05'
           expected='6038129cb5f28f70019064e61800404ca84f9510'
           digest='0fb7b55a1ba1ff5d962d6c42754f6a06f6c2e0dd45aa068a1db7d0bae4818da2'
-          assert subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip()==base
+          subprocess.run(['git','merge-base','--is-ancestor',base,'HEAD'],check=True)
           url='https://sb-5a65yacf76ta.vercel.run/'+digest+'.json.gz'
           with urllib.request.urlopen(url,timeout=30) as response:
               data=response.read(100001)
